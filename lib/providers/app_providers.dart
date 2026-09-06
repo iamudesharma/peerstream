@@ -1,0 +1,255 @@
+import 'dart:async';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../models/media_details.dart';
+import '../models/media_item.dart';
+import '../models/saved_item.dart';
+import '../models/season.dart';
+import '../models/torrent_models.dart';
+import '../models/watch_progress.dart';
+import '../repositories/media_repository.dart';
+import '../services/history/watch_history_store.dart';
+import '../services/mylist/my_list_store.dart';
+import '../services/streaming/streaming_service.dart';
+import '../services/playback/playback_cache.dart';
+import '../services/tmdb/tmdb_service.dart';
+import '../services/torrent/torrent_engine_factory.dart';
+import '../services/torrent/source_policy.dart';
+import '../services/torrent/source_policy_loader.dart';
+import '../services/torrent/bundled_torrent_api.dart';
+import '../services/torrent/torrent_provider.dart';
+import '../services/torrent/addon_provider.dart';
+import '../services/torrent/addon_settings.dart';
+import '../services/torrent/provider_catalog.dart';
+import '../services/subtitles/subtitle_provider.dart';
+
+final tmdbServiceProvider = Provider((ref) => TmdbService());
+final mediaRepositoryProvider = Provider(
+  (ref) => MediaRepository(ref.watch(tmdbServiceProvider)),
+);
+final addonSubtitleProvider = Provider<AddonSubtitleProvider>(
+  (ref) => AddonSubtitleProvider(
+    resolveImdbId: ref.read(tmdbServiceProvider).imdbId,
+  ),
+);
+final bundledTorrentApiProvider = Provider<BundledLegalTorrentApi>(
+  (ref) => const BundledLegalTorrentApi(),
+);
+final torrentProvider = Provider<TorrentProvider>(
+  (ref) =>
+      WebTorrentLegalDemoProvider(api: ref.watch(bundledTorrentApiProvider)),
+);
+final sourcePolicyProvider = FutureProvider<SourcePolicy>(
+  (ref) => loadSourcePolicy(),
+);
+final playbackCacheProvider = Provider<PlaybackCacheStore>(
+  (ref) => PlaybackCacheStore(),
+);
+final playbackCacheSummaryProvider = FutureProvider(
+  (ref) => ref.watch(playbackCacheProvider).summary(),
+);
+final playbackCacheEntriesProvider = FutureProvider(
+  (ref) => ref.watch(playbackCacheProvider).entries(),
+);
+final streamingServiceProvider = Provider<StreamingService>((ref) {
+  final service = StreamingService(
+    createTorrentEngine(),
+    ref.watch(playbackCacheProvider),
+  );
+  ref.onDispose(service.dispose);
+  unawaited(service.warmUp());
+  return service;
+});
+
+final trendingMoviesProvider = FutureProvider<List<MediaItem>>(
+  (ref) => ref.watch(mediaRepositoryProvider).trendingMovies(),
+);
+final trendingSeriesProvider = FutureProvider<List<MediaItem>>(
+  (ref) => ref.watch(mediaRepositoryProvider).trendingSeries(),
+);
+final popularMoviesProvider = FutureProvider<List<MediaItem>>(
+  (ref) => ref.watch(mediaRepositoryProvider).popularMovies(),
+);
+final detailsProvider = FutureProvider.family<MediaDetails, MediaRef>(
+  (ref, mediaRef) => ref.watch(mediaRepositoryProvider).details(mediaRef),
+);
+
+class AddonUrls extends AsyncNotifier<List<String>> {
+  @override
+  Future<List<String>> build() async => readAddonUrls();
+  Future<void> save(List<String> urls) async {
+    final validated = urls
+        .map(AddonTorrentProvider.validateUrl)
+        .map((u) => u.toString())
+        .toSet()
+        .toList();
+    await writeAddonUrls(validated);
+    state = AsyncData(validated);
+  }
+}
+
+final addonUrlsProvider = AsyncNotifierProvider<AddonUrls, List<String>>(
+  AddonUrls.new,
+);
+
+class WatchHistory extends AsyncNotifier<List<WatchEntry>> {
+  @override
+  Future<List<WatchEntry>> build() => readWatchHistory();
+
+  Future<void> save(WatchEntry entry) async {
+    final current = state.value ?? await readWatchHistory();
+    final next = normalizeWatchHistory([
+      entry.copyWith(updatedAt: DateTime.now()),
+      ...current.where((item) => item.key != entry.key),
+    ]);
+    await writeWatchHistory(next);
+    state = AsyncData(next);
+  }
+
+  Future<void> remove(String key) async {
+    final current = state.value ?? await readWatchHistory();
+    final next = current.where((item) => item.key != key).toList();
+    await writeWatchHistory(next);
+    state = AsyncData(next);
+  }
+
+  Future<void> clear() async {
+    await writeWatchHistory(const []);
+    state = const AsyncData([]);
+  }
+
+  WatchEntry? entryFor(String key) {
+    return state.value?.where((item) => item.key == key).firstOrNull;
+  }
+}
+
+final watchHistoryProvider =
+    AsyncNotifierProvider<WatchHistory, List<WatchEntry>>(WatchHistory.new);
+
+class MyList extends AsyncNotifier<List<SavedItem>> {
+  @override
+  Future<List<SavedItem>> build() => readMyList();
+
+  Future<bool> toggle(SavedItem item) async {
+    final current = state.value ?? await readMyList();
+    if (current.any((entry) => entry.key == item.key)) {
+      final next = current.where((entry) => entry.key != item.key).toList();
+      await writeMyList(next);
+      state = AsyncData(next);
+      return false;
+    }
+    final next = normalizeMyList([
+      item.copyWithAddedAt(DateTime.now()),
+      ...current,
+    ]);
+    await writeMyList(next);
+    state = AsyncData(next);
+    return true;
+  }
+
+  Future<void> add(SavedItem item) async {
+    final current = state.value ?? await readMyList();
+    final next = normalizeMyList([
+      item.copyWithAddedAt(DateTime.now()),
+      ...current,
+    ]);
+    await writeMyList(next);
+    state = AsyncData(next);
+  }
+
+  Future<void> remove(String key) async {
+    final current = state.value ?? await readMyList();
+    final next = current.where((entry) => entry.key != key).toList();
+    await writeMyList(next);
+    state = AsyncData(next);
+  }
+
+  Future<void> clear() async {
+    await writeMyList(const []);
+    state = const AsyncData([]);
+  }
+
+  bool isSaved(MediaRef media) {
+    return state.value?.any((entry) => entry.media == media) ?? false;
+  }
+}
+
+final myListProvider = AsyncNotifierProvider<MyList, List<SavedItem>>(
+  MyList.new,
+);
+typedef SourceRequest = ({MediaRef media, int? season, int? episode});
+final sourceResultsProvider =
+    FutureProvider.family<List<ProviderResult>, SourceRequest>((
+      ref,
+      request,
+    ) async {
+      final urls = await ref.watch(addonUrlsProvider.future);
+      final policy = await ref.watch(sourcePolicyProvider.future);
+      final tmdb = ref.watch(tmdbServiceProvider);
+      Future<String>? imdb;
+      final providers = <TorrentProvider>[
+        ref.watch(torrentProvider),
+        for (final url in urls)
+          AddonTorrentProvider(
+            manifestUrl: AddonTorrentProvider.validateUrl(url),
+            resolveImdbId: (media) => imdb ??= tmdb.imdbId(media),
+          ),
+      ];
+      final results = await searchAllProviders(
+        providers,
+        request.media,
+        seasonNumber: request.season,
+        episodeNumber: request.episode,
+      );
+      return results.expand((r) {
+        final allowed = r.sources.where(policy.allows).toList();
+        if (r.name != 'torrentio.strem.fun' || r.error != null) {
+          return [ProviderResult(r.name, allowed, error: r.error)];
+        }
+        final names = {
+          ...supportedIndexers.values,
+          ...allowed.map((s) => s.providerName),
+        };
+        return names.map(
+          (name) => ProviderResult(
+            name,
+            allowed.where((s) => s.providerName == name).toList(),
+          ),
+        );
+      }).toList();
+    });
+final sourceListProvider = FutureProvider.family<List<TorrentSource>, MediaRef>(
+  (ref, media) async => (await ref.watch(
+    sourceResultsProvider((media: media, season: null, episode: null)).future,
+  )).expand((r) => r.sources).toList(),
+);
+final searchResultsProvider = FutureProvider.family<List<MediaItem>, String>(
+  (ref, query) => ref.watch(mediaRepositoryProvider).search(query),
+);
+
+typedef CategoryRequest = ({MediaType type, int genreId, int page});
+final categoryProvider =
+    FutureProvider.family<List<MediaItem>, CategoryRequest>((ref, request) {
+      final repo = ref.watch(mediaRepositoryProvider);
+      if (request.page == 1 && request.genreId == 0) {
+        if (request.type == MediaType.movie) return repo.popularMovies();
+        return repo.trendingSeries();
+      }
+      return repo.discover(request.type, request.genreId, page: request.page);
+    });
+
+typedef SeasonRequest = ({int seriesId, int seasonNumber});
+final episodeListProvider = FutureProvider.family<List<Episode>, SeasonRequest>(
+  (ref, request) => ref
+      .watch(mediaRepositoryProvider)
+      .episodes(request.seriesId, request.seasonNumber),
+);
+
+final streamingStateProvider = StreamProvider<StreamingState>((ref) {
+  final service = ref.watch(streamingServiceProvider);
+  return (() async* {
+    yield service.state;
+    yield* service.states;
+  })();
+});

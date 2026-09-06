@@ -1,0 +1,12 @@
+{
+  "blockedDomains": [
+    "untrusted-torrent-source.example",
+    "tracker.untrusted.example"
+  ],
+  "blockedProviderNames": [
+    "Untrusted Provider"
+  ],
+  "blockedSourceIds": [
+    "known-bad-source-id"
+  ]
+}
