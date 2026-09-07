@@ -1,0 +1,3 @@
+/Volumes/AppleExpanded/Code/steamio_clone/packages/libtorrent_flutter/src/build_macos/CMakeFiles/libtorrent_flutter.dir
+/Volumes/AppleExpanded/Code/steamio_clone/packages/libtorrent_flutter/src/build_macos/CMakeFiles/edit_cache.dir
+/Volumes/AppleExpanded/Code/steamio_clone/packages/libtorrent_flutter/src/build_macos/CMakeFiles/rebuild_cache.dir

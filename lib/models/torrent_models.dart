@@ -100,3 +100,36 @@ class TorrentStats {
   final int downloadedBytes;
   final int totalBytes;
 }
+
+/// Verified download/cache availability for one torrent file.
+///
+/// Raw torrent-domain signals only — byte offsets and piece counts, never
+/// media time. PeerStream converts this to player-agnostic time ranges with
+/// `torrentAvailabilityToBufferedRanges`; MediaForge only ever receives
+/// `MediaForgeBufferedRange` values and stays torrent-agnostic.
+class TorrentFileAvailability {
+  const TorrentFileAvailability({
+    required this.isComplete,
+    required this.fileSizeBytes,
+    required this.readHeadBytes,
+    required this.bufferedSecondsAhead,
+    required this.bufferedPiecesAhead,
+  });
+
+  /// Every piece of the file is downloaded and hash-verified (or the file
+  /// is a verified local cache hit). The whole timeline is available.
+  final bool isComplete;
+
+  /// Selected file size in bytes (0 when unknown).
+  final int fileSizeBytes;
+
+  /// Stream server read offset into the file in bytes.
+  final int readHeadBytes;
+
+  /// Verified contiguous seconds buffered ahead of the read head, as
+  /// reported by the native stream scheduler.
+  final double bufferedSecondsAhead;
+
+  /// Contiguous verified pieces ahead of the read head (diagnostics).
+  final int bufferedPiecesAhead;
+}

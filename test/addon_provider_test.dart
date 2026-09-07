@@ -158,5 +158,6 @@ class FakeProvider implements TorrentProvider {
     MediaRef content, {
     int? seasonNumber,
     int? episodeNumber,
+    CancelToken? cancelToken,
   }) => run();
 }

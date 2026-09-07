@@ -10,6 +10,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
   jni
   libtorrent_flutter
+  media_forge
 )
 
 set(PLUGIN_BUNDLED_LIBRARIES)

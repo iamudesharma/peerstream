@@ -3,7 +3,7 @@ import 'package:flutter/material.dart' hide Badge;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/config.dart';
+import '../../core/image_url.dart';
 import '../../core/design_tokens.dart';
 import '../../core/format.dart';
 import '../../core/widgets/app_error.dart';
@@ -25,6 +25,18 @@ class DetailsScreen extends ConsumerStatefulWidget {
 }
 
 class _DetailsScreenState extends ConsumerState<DetailsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Warm the torrent session while the user reads details/picks an
+    // episode, so Sources -> Play pays no cold-start cost.
+    Future.microtask(() {
+      if (!mounted) return;
+      // ignore: discarded_futures
+      ref.read(streamingServiceProvider).warmUp();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final details = ref.watch(detailsProvider(widget.mediaRef));
@@ -141,7 +153,7 @@ class _DetailsBodyState extends State<_DetailsBody> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final item = widget.details.item;
-    final backdrop = item.backdropPath;
+    final backdrop = resolveImageUrl(item.backdropPath, tmdbSize: 'w1280');
     return ListView(
       children: [
         AspectRatio(
@@ -151,9 +163,11 @@ class _DetailsBodyState extends State<_DetailsBody> {
             children: [
               if (backdrop != null)
                 CachedNetworkImage(
-                  imageUrl:
-                      '${AppConfig.tmdbImageBaseUrl}/w1280$backdrop',
+                  imageUrl: backdrop,
                   fit: BoxFit.cover,
+                  memCacheWidth: 1280,
+                  maxWidthDiskCache: 1280,
+                  fadeInDuration: const Duration(milliseconds: 150),
                   placeholder: (_, _) => const ColoredBox(
                     color: DesignTokens.surface2,
                   ),

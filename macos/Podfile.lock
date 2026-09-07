@@ -2,32 +2,44 @@ PODS:
   - FlutterMacOS (1.0.0)
   - libtorrent_flutter (1.7.0):
     - FlutterMacOS
+  - media_forge (0.1.0):
+    - FlutterMacOS
   - media_kit_libs_macos_video (1.0.4):
     - FlutterMacOS
   - media_kit_video (0.0.1):
+    - FlutterMacOS
+  - pixel_surface (1.0.0):
     - FlutterMacOS
 
 DEPENDENCIES:
   - FlutterMacOS (from `Flutter/ephemeral`)
   - libtorrent_flutter (from `Flutter/ephemeral/.symlinks/plugins/libtorrent_flutter/macos`)
+  - media_forge (from `Flutter/ephemeral/.symlinks/plugins/media_forge/macos`)
   - media_kit_libs_macos_video (from `Flutter/ephemeral/.symlinks/plugins/media_kit_libs_macos_video/macos`)
   - media_kit_video (from `Flutter/ephemeral/.symlinks/plugins/media_kit_video/macos`)
+  - pixel_surface (from `Flutter/ephemeral/.symlinks/plugins/pixel_surface/macos`)
 
 EXTERNAL SOURCES:
   FlutterMacOS:
     :path: Flutter/ephemeral
   libtorrent_flutter:
     :path: Flutter/ephemeral/.symlinks/plugins/libtorrent_flutter/macos
+  media_forge:
+    :path: Flutter/ephemeral/.symlinks/plugins/media_forge/macos
   media_kit_libs_macos_video:
     :path: Flutter/ephemeral/.symlinks/plugins/media_kit_libs_macos_video/macos
   media_kit_video:
     :path: Flutter/ephemeral/.symlinks/plugins/media_kit_video/macos
+  pixel_surface:
+    :path: Flutter/ephemeral/.symlinks/plugins/pixel_surface/macos
 
 SPEC CHECKSUMS:
   FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
   libtorrent_flutter: 24e7e3912e71a7d88c39792e02ad7fdbb4a92ad2
+  media_forge: 040fd1b0605fb909fded6c789625287e402811f0
   media_kit_libs_macos_video: 85a23e549b5f480e72cae3e5634b5514bc692f65
   media_kit_video: fa6564e3799a0a28bff39442334817088b7ca758
+  pixel_surface: 415771ab34c2e234ad2f521d5b2e33c0899f54a2
 
 PODFILE CHECKSUM: 1e95c36afbfd1cb6423ceca4de7a8e1b256fb6ac
 

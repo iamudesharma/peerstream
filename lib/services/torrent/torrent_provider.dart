@@ -1,3 +1,5 @@
+import 'package:dio/dio.dart';
+
 import '../../models/media_item.dart';
 import '../../models/torrent_models.dart';
 import 'bundled_torrent_api.dart';
@@ -8,6 +10,7 @@ abstract interface class TorrentProvider {
     MediaRef content, {
     int? seasonNumber,
     int? episodeNumber,
+    CancelToken? cancelToken,
   });
 }
 
@@ -26,7 +29,9 @@ class WebTorrentLegalDemoProvider implements TorrentProvider {
     MediaRef content, {
     int? seasonNumber,
     int? episodeNumber,
+    CancelToken? cancelToken,
   }) async {
+    if (cancelToken?.isCancelled == true) return const [];
     return api.findByContent(
       content,
       seasonNumber: seasonNumber,

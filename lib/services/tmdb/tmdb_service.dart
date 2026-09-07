@@ -22,6 +22,7 @@ class TmdbService {
           );
 
   final Dio _dio;
+  final Map<MediaRef, String> _imdbCache = {};
 
   void _requireToken() {
     if (!AppConfig.hasTmdbToken) throw const TmdbConfigurationException();
@@ -125,6 +126,8 @@ class TmdbService {
   }
 
   Future<String> imdbId(MediaRef ref) async {
+    final cached = _imdbCache[ref];
+    if (cached != null) return cached;
     _requireToken();
     final response = await _dio.get<Map<String, dynamic>>(
       '/${ref.type.name}/${ref.id}/external_ids',
@@ -133,6 +136,7 @@ class TmdbService {
     if (id is! String || !RegExp(r'^tt[0-9]+$').hasMatch(id)) {
       throw StateError('This title has no IMDb ID for addon source lookup.');
     }
+    _imdbCache[ref] = id;
     return id;
   }
 

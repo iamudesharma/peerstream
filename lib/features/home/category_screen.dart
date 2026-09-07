@@ -137,7 +137,11 @@ class _CategoryScreenState extends ConsumerState<CategoryScreen> {
                 gridDelegate:
                     const SliverGridDelegateWithMaxCrossAxisExtent(
                   maxCrossAxisExtent: DesignTokens.gridMaxExtent,
-                  mainAxisExtent: 278,
+                  // 170 * 1.5 (poster) + ~46 (title + meta + spacing) = 301.
+                  // 278 overflowed by 16px at 165.5w; 300 fits max extent and
+                  // keeps aspect intact. Expanded poster in MediaCard also
+                  // prevents overflow under textScale.
+                  mainAxisExtent: 300,
                   crossAxisSpacing: 12,
                   mainAxisSpacing: 16,
                 ),

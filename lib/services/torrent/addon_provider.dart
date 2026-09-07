@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 
 import '../../models/media_item.dart';
 import '../../models/torrent_models.dart';
+import 'provider_cache.dart';
 import 'torrent_provider.dart';
 
 /// Stremio stream protocol: exact IMDb movie / IMDb:season:episode lookup.
@@ -22,6 +23,15 @@ class AddonTorrentProvider implements TorrentProvider {
   final Uri manifestUrl;
   final Future<String> Function(MediaRef) resolveImdbId;
   final Dio _dio;
+
+  /// Bounded, expiring manifest cache shared across provider instances.
+  /// Manifests change rarely; a 10-minute TTL with 32-entry bound avoids a
+  /// manifest RTT on every source search while staying fresh.
+  static final ExpiringCache<String, Map<String, dynamic>?> _manifestCache =
+      ExpiringCache(maxEntries: 32, ttl: const Duration(minutes: 10));
+
+  /// Clears the shared manifest cache. Primarily for tests.
+  static void clearManifestCache() => _manifestCache.clear();
   @override
   String get name => manifestUrl.host;
 
@@ -45,9 +55,15 @@ class AddonTorrentProvider implements TorrentProvider {
     MediaRef content, {
     int? seasonNumber,
     int? episodeNumber,
+    CancelToken? cancelToken,
   }) async {
-    final manifest = (await _dio.getUri<Map<String, dynamic>>(manifestUrl))
-        .data;
+    final manifest = await _manifestCache.get(manifestUrl.toString(), () async {
+      final response = await _dio.getUri<Map<String, dynamic>>(
+        manifestUrl,
+        cancelToken: cancelToken,
+      );
+      return response.data;
+    });
     if (manifest == null) throw const FormatException('Empty addon manifest.');
     final type = content.type == MediaType.movie ? 'movie' : 'series';
     if (type == 'series' && (seasonNumber == null || episodeNumber == null)) {
@@ -66,6 +82,7 @@ class AddonTorrentProvider implements TorrentProvider {
       return [];
     }
     final imdb = await resolveImdbId(content);
+    if (cancelToken?.isCancelled == true) return [];
     final id = type == 'movie' ? imdb : '$imdb:$seasonNumber:$episodeNumber';
     final uri = manifestUrl.replace(
       pathSegments: [
@@ -75,7 +92,10 @@ class AddonTorrentProvider implements TorrentProvider {
         '$id.json',
       ],
     );
-    final data = (await _dio.getUri<Map<String, dynamic>>(uri)).data;
+    final data = (await _dio.getUri<Map<String, dynamic>>(
+      uri,
+      cancelToken: cancelToken,
+    )).data;
     if (data?['streams'] is! List) {
       throw const FormatException(
         'Addon response is missing its streams list.',
@@ -212,15 +232,20 @@ Future<List<ProviderResult>> searchAllProviders(
   MediaRef content, {
   int? seasonNumber,
   int? episodeNumber,
-  Duration timeout = const Duration(seconds: 35),
+  Duration timeout = const Duration(seconds: 20),
+  List<CancelToken?>? cancelTokens,
 }) => Future.wait(
   providers.map((provider) async {
+    final token = CancelToken();
+    // Track tokens so callers (Riverpod onDispose) can cancel network work.
+    if (cancelTokens != null) cancelTokens.add(token);
     try {
       final sources = await provider
           .findSources(
             content,
             seasonNumber: seasonNumber,
             episodeNumber: episodeNumber,
+            cancelToken: token,
           )
           .timeout(timeout);
       // Keep provider alternatives; deduplicate only identical entries per provider.
@@ -238,6 +263,9 @@ Future<List<ProviderResult>> searchAllProviders(
             .toList(),
       );
     } on DioException catch (error) {
+      if (error.type == DioExceptionType.cancel) {
+        return ProviderResult(provider.name, [], error: 'Search was cancelled.');
+      }
       return ProviderResult(
         provider.name,
         [],

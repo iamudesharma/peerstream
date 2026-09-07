@@ -18,7 +18,7 @@ class AppScaffold extends StatelessWidget {
   void _navigate(BuildContext context, int index) {
     if (index == 0) context.go('/');
     if (index == 1) context.go('/search');
-    if (index == 2) context.go('/storage');
+    if (index == 2) context.go('/settings');
   }
 
   @override
@@ -52,9 +52,9 @@ class AppScaffold extends StatelessWidget {
                   label: 'Search',
                 ),
                 NavigationDestination(
-                  icon: Icon(Icons.storage_outlined),
-                  selectedIcon: Icon(Icons.storage),
-                  label: 'Storage',
+                  icon: Icon(Icons.settings_outlined),
+                  selectedIcon: Icon(Icons.settings),
+                  label: 'Settings',
                 ),
               ],
             ),
@@ -100,9 +100,9 @@ class AppScaffold extends StatelessWidget {
                 label: Text('Search'),
               ),
               NavigationRailDestination(
-                icon: Icon(Icons.storage_outlined),
-                selectedIcon: Icon(Icons.storage),
-                label: Text('Storage'),
+                icon: Icon(Icons.settings_outlined),
+                selectedIcon: Icon(Icons.settings),
+                label: Text('Settings'),
               ),
             ],
           ),

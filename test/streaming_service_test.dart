@@ -21,10 +21,10 @@ final source = TorrentSource(
 );
 
 void main() {
-  test('slow startup schedules a five-minute stall timeout', () async {
+  test('slow startup warns early then fails after three minutes', () async {
     final service = StreamingService(FakeTorrentEngine(), _EmptyCacheStore());
-    Duration? delay;
-    void Function()? expire;
+    final delays = <Duration>[];
+    final callbacks = <void Function()>[];
     await runZoned(
       () => service.start(source),
       zoneSpecification: ZoneSpecification(
@@ -32,19 +32,33 @@ void main() {
           if (duration == Duration.zero) {
             return parent.createTimer(zone, duration, callback);
           }
-          delay = duration;
-          expire = callback;
+          delays.add(duration);
+          callbacks.add(callback);
           return _CapturedTimer();
         },
       ),
     );
-    expect(delay, const Duration(minutes: 5));
+    expect(delays, contains(const Duration(seconds: 25)));
+    expect(delays, contains(const Duration(minutes: 3)));
     expect(service.state.phase, isNot(StreamingPhase.error));
+    // Early warning keeps buffering but surfaces a hint message.
+    callbacks[delays.indexOf(const Duration(seconds: 25))]();
+    expect(service.state.phase, StreamingPhase.buffering);
+    expect(service.state.message, contains('Still connecting'));
     final failed = service.states.firstWhere(
       (s) => s.phase == StreamingPhase.error,
     );
-    expire!();
-    expect((await failed).message, contains('five minutes'));
+    callbacks[delays.indexOf(const Duration(minutes: 3))]();
+    expect((await failed).message, contains('three minutes'));
+    await service.dispose();
+  });
+
+  test('prefetch warms the engine without emitting player state', () async {
+    final engine = FakeTorrentEngine();
+    final service = StreamingService(engine, _EmptyCacheStore());
+    await service.prefetchSource(source);
+    expect(engine.added, isTrue);
+    expect(service.state.phase, StreamingPhase.idle);
     await service.dispose();
   });
 

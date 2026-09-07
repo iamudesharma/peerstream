@@ -47,7 +47,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final enabled = AppConfig.hasTmdbToken;
+    final tmdb = AppConfig.hasTmdbToken;
+    final enabled = tmdb || AppConfig.hasStreamingCatalogs;
     final results = (_query.isEmpty || !enabled)
         ? null
         : ref.watch(searchResultsProvider(_query));
@@ -97,8 +98,26 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   label: const Text('Back to Home'),
                 ),
               ),
-            )
-          else if (results == null)
+            ),
+          if (enabled && !tmdb)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  DesignTokens.pageGutter,
+                  0,
+                  DesignTokens.pageGutter,
+                  DesignTokens.space2,
+                ),
+                child: Text(
+                  'Keyless search via Cinemeta \u00b7 No API key',
+                  style: TextStyle(
+                    color: DesignTokens.textTertiary,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ),
+          if (enabled && results == null)
             SliverFillRemaining(
               child: AppEmpty(
                 icon: Icons.search,
@@ -124,8 +143,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   ],
                 ),
               ),
-            )
-          else
+            ),
+          if (enabled && results != null)
             results.when(
               loading: () => const SliverSkeletonGrid(),
               error: (error, _) => SliverFillRemaining(
@@ -154,7 +173,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                         gridDelegate:
                             const SliverGridDelegateWithMaxCrossAxisExtent(
                           maxCrossAxisExtent: DesignTokens.gridMaxExtent,
-                          mainAxisExtent: 278,
+                          mainAxisExtent: 300,
                           crossAxisSpacing: 12,
                           mainAxisSpacing: 16,
                         ),

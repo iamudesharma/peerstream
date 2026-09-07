@@ -126,7 +126,7 @@ class SkeletonGrid extends StatelessWidget {
       shrinkWrap: true,
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: DesignTokens.gridMaxExtent,
-        mainAxisExtent: 278,
+        mainAxisExtent: 300,
         crossAxisSpacing: 12,
         mainAxisSpacing: 16,
       ),
@@ -148,7 +148,7 @@ class SliverSkeletonGrid extends StatelessWidget {
       sliver: SliverGrid.builder(
         gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
           maxCrossAxisExtent: DesignTokens.gridMaxExtent,
-          mainAxisExtent: 278,
+          mainAxisExtent: 300,
           crossAxisSpacing: 12,
           mainAxisSpacing: 16,
         ),

@@ -2,8 +2,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/config.dart';
 import '../../core/design_tokens.dart';
+import '../../core/image_url.dart';
 import '../../core/widgets/media_meta.dart';
 import '../../models/media_item.dart';
 
@@ -13,61 +13,116 @@ class MediaCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final poster = item.posterPath;
+    final poster = resolveImageUrl(item.posterPath, tmdbSize: 'w342');
     final theme = Theme.of(context);
-    return SizedBox(
-      width: DesignTokens.cardWidth,
-      child: InkWell(
-        borderRadius:
-            BorderRadius.circular(DesignTokens.radiusCard),
-        onTap: () => context.push('/details/${item.ref.routeKey}'),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AspectRatio(
-              aspectRatio: DesignTokens.cardAspect,
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(
-                    DesignTokens.radiusCard,
-                  ),
-                  border: Border.all(color: DesignTokens.line),
+
+    Widget buildPoster() {
+      return Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(
+            DesignTokens.radiusCard,
+          ),
+          border: Border.all(color: DesignTokens.line),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: poster == null
+            ? _PosterFallback(title: item.title)
+            : CachedNetworkImage(
+                imageUrl: poster,
+                width: double.infinity,
+                height: double.infinity,
+                fit: BoxFit.cover,
+                // Downscale in memory + on disk to poster width to cut
+                // memory and decode cost on low-end devices.
+                memCacheWidth: 342,
+                maxWidthDiskCache: 342,
+                fadeInDuration: const Duration(milliseconds: 150),
+                placeholder: (_, _) => const ColoredBox(
+                  color: DesignTokens.surface2,
                 ),
-                clipBehavior: Clip.antiAlias,
-                child: poster == null
-                    ? _PosterFallback(title: item.title)
-                    : CachedNetworkImage(
-                        imageUrl:
-                            '${AppConfig.tmdbImageBaseUrl}/w342$poster',
-                        width: double.infinity,
-                        fit: BoxFit.cover,
-                        placeholder: (_, _) => const ColoredBox(
-                          color: DesignTokens.surface2,
-                        ),
-                        errorWidget: (_, _, _) =>
-                            _PosterFallback(title: item.title),
-                      ),
+                errorWidget: (_, _, _) => _PosterFallback(title: item.title),
+              ),
+      );
+    }
+
+    Widget buildInfo() {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            item.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.titleSmall
+                ?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 2),
+          MediaMeta(
+            year: item.releaseDate,
+            rating: item.rating,
+            typeLabel: item.type == MediaType.movie ? 'Movie' : 'Series',
+          ),
+        ],
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final hasBoundedWidth = constraints.maxWidth.isFinite;
+        final hasBoundedHeight = constraints.maxHeight.isFinite;
+        final isGridCell = hasBoundedWidth && hasBoundedHeight;
+
+        // Grid / SliverGrid gives a tight w + h (e.g. 165.5 x 278/300).
+        // Use a flexible layout that always fits the cell height and preserves
+        // 2/3 aspect when possible, shrinking only under textScale.
+        if (isGridCell) {
+          return SizedBox(
+            width: constraints.maxWidth,
+            height: constraints.maxHeight,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
+              onTap: () => context.push('/details/${item.ref.routeKey}'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Flexible(
+                    child: AspectRatio(
+                      aspectRatio: DesignTokens.cardAspect,
+                      child: buildPoster(),
+                    ),
+                  ),
+                  const SizedBox(height: DesignTokens.space2),
+                  buildInfo(),
+                ],
               ),
             ),
-            const SizedBox(height: DesignTokens.space2),
-            Text(
-              item.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.titleSmall
-                  ?.copyWith(fontWeight: FontWeight.w600),
+          );
+        }
+
+        // Horizontal ListView (MediaRow) or unconstrained: keep fixed
+        // cardWidth with intrinsic height. Parent SizedBox(height: 252) is
+        // tall enough for 132 * 1.5 = 198 poster + info.
+        return SizedBox(
+          width: DesignTokens.cardWidth,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
+            onTap: () => context.push('/details/${item.ref.routeKey}'),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AspectRatio(
+                  aspectRatio: DesignTokens.cardAspect,
+                  child: buildPoster(),
+                ),
+                const SizedBox(height: DesignTokens.space2),
+                buildInfo(),
+              ],
             ),
-            const SizedBox(height: 2),
-            MediaMeta(
-              year: item.releaseDate,
-              rating: item.rating,
-              typeLabel:
-                  item.type == MediaType.movie ? 'Movie' : 'Series',
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }

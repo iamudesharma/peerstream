@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/config.dart';
+import '../../core/image_url.dart';
 import '../../core/design_tokens.dart';
 import '../../core/format.dart';
 import '../../core/widgets/app_empty.dart';
@@ -168,7 +168,7 @@ class _EpisodeRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final still = episode.stillPath;
+    final still = resolveImageUrl(episode.stillPath, tmdbSize: 'w342');
     final runtime = formatRuntime(episode.runtimeMinutes);
     return InkWell(
       onTap: onTap,
@@ -192,9 +192,11 @@ class _EpisodeRow extends StatelessWidget {
                 children: [
                   if (still != null)
                     CachedNetworkImage(
-                      imageUrl:
-                          '${AppConfig.tmdbImageBaseUrl}/w342$still',
+                      imageUrl: still,
                       fit: BoxFit.cover,
+                      memCacheWidth: 342,
+                      maxWidthDiskCache: 342,
+                      fadeInDuration: const Duration(milliseconds: 150),
                       placeholder: (_, _) => const ColoredBox(
                         color: DesignTokens.surface2,
                       ),

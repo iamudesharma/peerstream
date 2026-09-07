@@ -3,7 +3,7 @@ import 'package:flutter/material.dart' hide Badge;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/config.dart';
+import '../../core/image_url.dart';
 import '../../core/design_tokens.dart';
 import '../../core/widgets/app_empty.dart';
 import '../../core/widgets/badges.dart';
@@ -291,20 +291,26 @@ class _Backdrop extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final backdrop = entry.backdropPath;
+    final backdrop = resolveImageUrl(entry.backdropPath, tmdbSize: 'w780');
     if (backdrop != null) {
       return CachedNetworkImage(
-        imageUrl: '${AppConfig.tmdbImageBaseUrl}/w780$backdrop',
+        imageUrl: backdrop,
         fit: BoxFit.cover,
+        memCacheWidth: 780,
+        maxWidthDiskCache: 780,
+        fadeInDuration: const Duration(milliseconds: 150),
         placeholder: (_, _) => const ColoredBox(color: DesignTokens.surface2),
         errorWidget: (_, _, _) => _BackdropFallback(entry: entry),
       );
     }
-    final poster = entry.posterPath;
+    final poster = resolveImageUrl(entry.posterPath, tmdbSize: 'w342');
     if (poster != null) {
       return CachedNetworkImage(
-        imageUrl: '${AppConfig.tmdbImageBaseUrl}/w342$poster',
+        imageUrl: poster,
         fit: BoxFit.cover,
+        memCacheWidth: 342,
+        maxWidthDiskCache: 342,
+        fadeInDuration: const Duration(milliseconds: 150),
         placeholder: (_, _) => const ColoredBox(color: DesignTokens.surface2),
         errorWidget: (_, _, _) => _BackdropFallback(entry: entry),
       );

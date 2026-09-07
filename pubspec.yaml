@@ -41,11 +41,18 @@ dependencies:
   media_kit: ^1.2.6
   media_kit_video: ^2.0.1
   media_kit_libs_video: ^1.0.7
+  media_forge_player:
+    path: "/Volumes/AppleExpanded/Code/Gym app/rust_image/packages/media_forge_player"
+  # Direct dep only for memoized RustLib.init(); overridden to the local
+  # monorepo package in pubspec_overrides.yaml during development.
+  media_forge:
+    path: "/Volumes/AppleExpanded/Code/Gym app/rust_image/packages/media_forge"
   libtorrent_flutter:
     path: packages/libtorrent_flutter
   path_provider: ^2.1.6
   crypto: ^3.0.7
   file_picker: ^10.3.10
+  shared_preferences: ^2.5.5
 
 dev_dependencies:
   flutter_test:

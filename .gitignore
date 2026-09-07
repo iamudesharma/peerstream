@@ -65,3 +65,9 @@ app.*.map.json
 
 # Local temp dirs
 .tmp/
+
+.commandcode/
+
+.commandcode/taste/
+
+

@@ -6,6 +6,7 @@ import '../../core/config.dart';
 import '../../core/design_tokens.dart';
 import '../../core/widgets/app_scaffold.dart';
 import '../../core/widgets/media_row.dart';
+import '../../core/widgets/section_header.dart';
 import '../../providers/app_providers.dart';
 import '../../services/tmdb/tmdb_service.dart';
 import 'continue_watching_row.dart';
@@ -15,6 +16,11 @@ class HomeScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final hasHistory =
+        ref.watch(watchHistoryProvider).value?.isNotEmpty ?? false;
+    final hasMyList =
+        ref.watch(myListProvider).value?.isNotEmpty ?? false;
+    final hasToken = AppConfig.hasTmdbToken;
     return AppScaffold(
       selectedIndex: 0,
       body: RefreshIndicator(
@@ -22,6 +28,8 @@ class HomeScreen extends ConsumerWidget {
           ref.invalidate(trendingMoviesProvider);
           ref.invalidate(trendingSeriesProvider);
           ref.invalidate(popularMoviesProvider);
+          ref.invalidate(streamingCatalogsProvider);
+          ref.invalidate(streamingCatalogProvider);
           ref.invalidate(searchResultsProvider);
           ref.invalidate(categoryProvider);
           ref.invalidate(watchHistoryProvider);
@@ -29,60 +37,84 @@ class HomeScreen extends ConsumerWidget {
         },
         child: CustomScrollView(
           slivers: [
-            SliverToBoxAdapter(
-              child: _CommandHeader(onSearch: () => context.go('/search')),
-            ),
-            if (!AppConfig.hasTmdbToken)
+            _HomeSearchBar(onSearch: () => context.go('/search')),
+            if (!hasToken)
               const SliverToBoxAdapter(child: _ConfigurationNotice()),
-            const SliverToBoxAdapter(child: SizedBox(height: 24)),
-            const SliverToBoxAdapter(child: ContinueWatchingRow()),
-            const _MyListSliver(),
-            const SliverToBoxAdapter(child: SizedBox(height: 24)),
-            const SliverToBoxAdapter(child: _Categories()),
-            const SliverToBoxAdapter(child: SizedBox(height: 24)),
             const SliverToBoxAdapter(
-              child: MediaRow(
-                title: 'Open movies',
-                items: AsyncData(demoItems),
-                demoBadge: true,
-              ),
+              child: SizedBox(height: DesignTokens.space6),
             ),
-            const SliverToBoxAdapter(child: SizedBox(height: 24)),
+            const SliverToBoxAdapter(child: ContinueWatchingRow()),
+            if (hasHistory)
+              const SliverToBoxAdapter(
+                child: SizedBox(height: DesignTokens.space6),
+              ),
+            const _MyListSliver(),
+            if (hasMyList)
+              const SliverToBoxAdapter(
+                child: SizedBox(height: DesignTokens.space6),
+              ),
             SliverToBoxAdapter(
               child: MediaRow(
                 title: 'Trending movies',
                 items: ref.watch(trendingMoviesProvider),
-                onSeeAll: AppConfig.hasTmdbToken
+                onSeeAll: hasToken
                     ? () => context.push(
                           '/category/movie/0?title=${Uri.encodeComponent('Trending movies')}',
                         )
                     : null,
               ),
             ),
-            const SliverToBoxAdapter(child: SizedBox(height: 24)),
+            const SliverToBoxAdapter(
+              child: SizedBox(height: DesignTokens.space6),
+            ),
             SliverToBoxAdapter(
               child: MediaRow(
                 title: 'Trending series',
                 items: ref.watch(trendingSeriesProvider),
-                onSeeAll: AppConfig.hasTmdbToken
+                onSeeAll: hasToken
                     ? () => context.push(
                           '/category/tv/0?title=${Uri.encodeComponent('Trending series')}',
                         )
                     : null,
               ),
             ),
-            const SliverToBoxAdapter(child: SizedBox(height: 24)),
+            const SliverToBoxAdapter(
+              child: SizedBox(height: DesignTokens.space6),
+            ),
             SliverToBoxAdapter(
               child: MediaRow(
                 title: 'Popular movies',
                 items: ref.watch(popularMoviesProvider),
-                onSeeAll: AppConfig.hasTmdbToken
+                onSeeAll: hasToken
                     ? () => context.push(
                           '/category/movie/0?title=${Uri.encodeComponent('Popular movies')}',
                         )
                     : null,
               ),
             ),
+            const SliverToBoxAdapter(
+              child: SizedBox(height: DesignTokens.space6),
+            ),
+            const SliverToBoxAdapter(child: _StreamingCatalogs()),
+            const SliverToBoxAdapter(
+              child: SizedBox(height: DesignTokens.space6),
+            ),
+            const SliverToBoxAdapter(child: _Categories()),
+            const SliverToBoxAdapter(
+              child: SizedBox(height: DesignTokens.space6),
+            ),
+            if (!hasToken)
+              const SliverToBoxAdapter(
+                child: MediaRow(
+                  title: 'Open movies',
+                  items: AsyncData(demoItems),
+                  demoBadge: true,
+                ),
+              ),
+            if (!hasToken)
+              const SliverToBoxAdapter(
+                child: SizedBox(height: DesignTokens.space6),
+              ),
             const SliverToBoxAdapter(child: _TmdbCredit()),
           ],
         ),
@@ -91,90 +123,75 @@ class HomeScreen extends ConsumerWidget {
   }
 }
 
-class _CommandHeader extends StatelessWidget {
-  const _CommandHeader({required this.onSearch});
+class _HomeSearchBar extends StatelessWidget {
+  const _HomeSearchBar({required this.onSearch});
   final VoidCallback onSearch;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      decoration: const BoxDecoration(
-        color: DesignTokens.surface,
-        border: Border(bottom: BorderSide(color: DesignTokens.line)),
-      ),
-      padding: const EdgeInsets.fromLTRB(
-        DesignTokens.pageGutter,
-        28,
-        DesignTokens.pageGutter,
-        24,
-      ),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(
-            maxWidth: DesignTokens.contentMaxWidth,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  StatusPill(),
-                  SizedBox(width: 8),
-                  Text(
-                    'Legal peer-to-peer streaming',
-                    style: TextStyle(
-                      color: DesignTokens.textSecondary,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
+    return SliverAppBar(
+      pinned: true,
+      floating: true,
+      snap: false,
+      automaticallyImplyLeading: false,
+      backgroundColor: DesignTokens.surface,
+      surfaceTintColor: Colors.transparent,
+      toolbarHeight: 68,
+      flexibleSpace: SafeArea(
+        bottom: false,
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: DesignTokens.contentMaxWidth,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: DesignTokens.pageGutter,
+                vertical: DesignTokens.space2,
               ),
-              const SizedBox(height: 12),
-              Text(
-                'Find something to watch',
-                style: theme.textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  height: 1.05,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Browse the catalogue, pick an episode or film, then compare sources before you play.',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: DesignTokens.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 16),
-              LayoutBuilder(
+              child: LayoutBuilder(
                 builder: (context, constraints) {
                   final narrow = constraints.maxWidth < 560;
-                  final field = TextField(
-                    readOnly: true,
-                    onTap: onSearch,
-                    decoration: const InputDecoration(
-                      hintText: 'Search movies and series',
-                      prefixIcon: Icon(Icons.search),
+                  final field = Expanded(
+                    child: GestureDetector(
+                      onTap: onSearch,
+                      child: AbsorbPointer(
+                        child: TextField(
+                          readOnly: true,
+                          decoration: const InputDecoration(
+                            hintText: 'Search movies and series',
+                            prefixIcon: Icon(Icons.search),
+                            isDense: true,
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: DesignTokens.space3,
+                              vertical: DesignTokens.space2,
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   );
                   if (narrow) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                    return Row(
                       children: [
+                        const StatusPill(),
+                        const SizedBox(width: DesignTokens.space2),
                         field,
-                        const SizedBox(height: 12),
-                        FilledButton.icon(
+                        const SizedBox(width: DesignTokens.space2),
+                        IconButton.filled(
+                          tooltip: 'Search',
                           onPressed: onSearch,
                           icon: const Icon(Icons.search),
-                          label: const Text('Search'),
                         ),
                       ],
                     );
                   }
                   return Row(
                     children: [
-                      Expanded(child: field),
-                      const SizedBox(width: 12),
+                      const StatusPill(),
+                      const SizedBox(width: DesignTokens.space3),
+                      field,
+                      const SizedBox(width: DesignTokens.space3),
                       FilledButton.icon(
                         onPressed: onSearch,
                         icon: const Icon(Icons.search),
@@ -184,7 +201,7 @@ class _CommandHeader extends StatelessWidget {
                   );
                 },
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -241,15 +258,11 @@ class _MyListSliver extends ConsumerWidget {
           list.map((entry) => entry.toMediaItem()).toList(),
         );
         return SliverToBoxAdapter(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 24),
-              MediaRow(
-                title: 'My List',
-                items: items,
-                seeAllLabel: 'Clear',
-                onSeeAll: () async {
+          child: MediaRow(
+            title: 'My List',
+            items: items,
+            seeAllLabel: 'Clear',
+            onSeeAll: () async {
                   final confirmed = await showDialog<bool>(
                     context: context,
                     builder: (context) => AlertDialog(
@@ -273,8 +286,6 @@ class _MyListSliver extends ConsumerWidget {
                     await ref.read(myListProvider.notifier).clear();
                   }
                 },
-              ),
-            ],
           ),
         );
       },
@@ -321,12 +332,63 @@ class _ConfigurationNotice extends StatelessWidget {
   }
 }
 
+class _StreamingCatalogs extends ConsumerWidget {
+  const _StreamingCatalogs();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!AppConfig.hasStreamingCatalogs) {
+      return const SizedBox.shrink();
+    }
+    final catalogs = ref.watch(streamingCatalogsProvider);
+    return catalogs.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
+      data: (rows) {
+        if (rows.isEmpty) return const SizedBox.shrink();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SectionHeader(title: 'Streaming catalogs'),
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: DesignTokens.pageGutter,
+              ),
+              child: Text(
+                'USA · No API key',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: DesignTokens.textTertiary,
+                ),
+              ),
+            ),
+            const SizedBox(height: DesignTokens.space3),
+            for (var i = 0; i < rows.length; i++) ...[
+              MediaRow(
+                title: rows[i].title,
+                items: ref.watch(
+                  streamingCatalogProvider((
+                    type: rows[i].type,
+                    catalogId: rows[i].id,
+                  )),
+                ),
+              ),
+              if (i != rows.length - 1)
+                const SizedBox(height: DesignTokens.space6),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _TmdbCredit extends StatelessWidget {
   const _TmdbCredit();
   @override
   Widget build(BuildContext context) {
     return const Padding(
-      padding: EdgeInsets.all(24),
+      padding: EdgeInsets.all(DesignTokens.space6),
       child: Text(
         'This product uses the TMDB API but is not endorsed or certified by TMDB.',
         textAlign: TextAlign.center,
@@ -350,20 +412,15 @@ class _Categories extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final enabled = AppConfig.hasTmdbToken;
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: DesignTokens.pageGutter,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Browse by genre',
-            style:
-                theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SectionHeader(title: 'Browse by genre'),
+        Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: DesignTokens.pageGutter,
           ),
-          const SizedBox(height: 4),
-          Text(
+          child: Text(
             enabled
                 ? 'Five lanes from the TMDB catalogue.'
                 : 'Genre browsing needs a TMDB token.',
@@ -371,10 +428,15 @@ class _Categories extends StatelessWidget {
               color: DesignTokens.textTertiary,
             ),
           ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+        ),
+        const SizedBox(height: DesignTokens.space3),
+        Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: DesignTokens.pageGutter,
+          ),
+          child: Wrap(
+            spacing: DesignTokens.space2,
+            runSpacing: DesignTokens.space2,
             children: genres
                 .map(
                   (genre) => Tooltip(
@@ -394,8 +456,8 @@ class _Categories extends StatelessWidget {
                 )
                 .toList(),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

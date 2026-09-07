@@ -65,6 +65,11 @@ class PlaybackCacheStore {
     if (entry == null || !entry.complete || entry.filePath.isEmpty) {
       return false;
     }
+    // Sparse-file guard: preallocated files report full length while missing
+    // verified pieces. Require recorded bytes to agree with the file size.
+    if (entry.file.size <= 0 || entry.byteSize < entry.file.size) {
+      return false;
+    }
     try {
       final file = File(entry.filePath);
       return await file.exists() && await file.length() >= entry.file.size;
@@ -121,9 +126,20 @@ class PlaybackCacheStore {
       (await _read()).preferences;
 
   Future<void> savePreferences(PlaybackPreferences value) => _locked(() async {
+    // Preference-only write: no cache pruning or directory-size scan here.
+    // Audio/subtitle changes during playback must not trigger storage I/O.
+    // Eviction runs explicitly via pruneIfNeeded() (storage settings) and
+    // record() (new bytes arriving), never on a prefs save.
     final state = await _read();
     state.preferences = value;
-    await _prune(state);
+    await _write(state);
+  });
+
+  /// Explicit eviction entry point for the storage settings screen.
+  /// Never called from audio/subtitle preference saves or per-tick playback.
+  Future<void> pruneIfNeeded({String? protectedKey}) => _locked(() async {
+    final state = await _read();
+    await _prune(state, protectedKey: protectedKey);
     await _write(state);
   });
 

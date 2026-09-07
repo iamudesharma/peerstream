@@ -262,6 +262,45 @@ class LibtorrentFlutter {
   /// libtorrent version string.
   String get libraryVersion => _b.version().toDartString();
 
+  /// Exact native bridge revision (e.g. `bridge-1.5.0+lt2.0.11`).
+  /// All platforms must report the same revision before comparing
+  /// performance. Falls back to libtorrent version when the symbol is
+  /// missing (older prebuilt binary).
+  String get bridgeVersion {
+    try {
+      return _b.bridgeVersion().toDartString();
+    } catch (_) {
+      return libraryVersion;
+    }
+  }
+
+  /// Selected-file verification: true only when every piece of [fileIndex]
+  /// is downloaded and hash-verified. Rejects sparse preallocated files.
+  bool isFileComplete(int torrentId, int fileIndex) {
+    try {
+      return _b.isFileComplete(_session, torrentId, fileIndex) != 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Cache byte-budget telemetry for diagnostics.
+  /// Returns (capacity, filled) including pending disk-read results.
+  (int, int)? getCacheState(int streamId) {
+    final capPtr = calloc<Int64>();
+    final fillPtr = calloc<Int64>();
+    try {
+      final ok = _b.getCacheState(_session, streamId, capPtr, fillPtr);
+      if (ok == 0) return null;
+      return (capPtr.value, fillPtr.value);
+    } catch (_) {
+      return null;
+    } finally {
+      calloc.free(capPtr);
+      calloc.free(fillPtr);
+    }
+  }
+
   // ─── Torrent Management ─────────────────────────────────────────────────────
 
   /// Add a torrent from a magnet URI.
@@ -509,7 +548,15 @@ class LibtorrentFlutter {
   // ─── Polling ──────────────────────────────────────────────────────────────
 
   void _startPolling(Duration interval) {
+    _pollTimer?.cancel();
     _pollTimer = Timer.periodic(interval, (_) => _poll());
+  }
+
+  /// Adjusts the status poll cadence at runtime. Use a fast cadence while
+  /// buffering/seeking and a relaxed one while playing to save battery.
+  void setPollInterval(Duration interval) {
+    if (!isInitialized) return;
+    instance._startPolling(interval);
   }
 
   void _poll() {

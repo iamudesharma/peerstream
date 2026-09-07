@@ -96,6 +96,17 @@
 namespace lt  = libtorrent;
 namespace chr = std::chrono;
 
+// ── native bridge revision ────────────────────────────────────────────────────
+// Bump together with `nativeBridgeVersion` in
+// lib/services/torrent/native_torrent_engine.dart. Runtime diagnostics expose
+// this so platform comparisons only run on identical implementations.
+static constexpr const char* kBridgeVersion = "bridge-1.5.0+lt2.0.11";
+
+// Coordinated timeout budget: the player's mpv network-timeout (60s) and the
+// native piece wait must agree so both layers abandon the same request
+// together. Previously 300s here vs 60s in the player left the UI stuck.
+static constexpr int kPieceWaitSecs = 60;
+
 // ── debug logging ───────────────────────────────────────────────────────────────
 static FILE* g_logfile = nullptr;
 static std::mutex g_log_mu;
@@ -687,6 +698,51 @@ struct TorrCache {
         out_pieces_count = piece_count;
         out_readers = reader_count();
     }
+
+    // ── byte-budget enforcement ──
+    // Counts cached piece bytes + callers must also account pending
+    // disk-read results (see StreamEngine::pending_read_bytes). Eviction
+    // never touches actively served pieces — callers pass a protected set.
+    int64_t budget_usage_excluding(const std::unordered_set<int>& protect) const {
+        int64_t fill = 0;
+        for (auto& kv : pieces) {
+            if (protect.count(kv.first)) continue;
+            if (kv.second->size > 0) fill += kv.second->size;
+        }
+        return fill;
+    }
+};
+
+// ============================================================================
+// StreamScheduler — one coordinator for startup, continuous playback, seeks,
+// and container metadata reads.
+//
+// Windows are expressed in bytes AND estimated playback time (bytes /
+// bitrate), accounting for piece size. Deadlines advance as playback
+// advances, including when the current piece is already downloaded
+// (deadline refresh keeps the picker time-critical).
+//
+// Retains libtorrent deadline-based scheduling: simple sequential download
+// is suboptimal for streaming because the picker would spread bandwidth
+// across the whole file instead of the imminent window. See
+// https://libtorrent.org/streaming.html
+// ============================================================================
+struct StreamScheduler {
+    // Startup window: first N bytes needed for first frame + container
+    // header. Prioritized at top_priority with deadline 0.
+    static int startup_pieces(int64_t bytes_needed, int piece_len) {
+        if (piece_len <= 0) return 2;
+        return (int)((bytes_needed + piece_len - 1) / piece_len);
+    }
+    // Continuous window: bytes covering ~30s of playback at the estimated
+    // bitrate. Keeps the 16-piece pipeline full without over-buffering.
+    static int64_t continuous_bytes(float bitrate_bps) {
+        if (bitrate_bps <= 0) bitrate_bps = 625000.0f;
+        return (int64_t)(bitrate_bps * 30);
+    }
+    // Metadata window: head+tail 8MB each for container probing. Never
+    // evicted (see TorrCache::is_in_file_begin_end).
+    static constexpr int64_t kMetaProtectBytes = 8 * 1024 * 1024;
 };
 
 // ── CachePiece method implementations (need TorrCache to be defined) ──────────
@@ -1382,11 +1438,11 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
                 }
             }
 
-            // Wait for piece — like lt2http's sleep_for(300ms) polling loop
-            // but using condition variable for zero-latency wakeup
+            // Wait for piece — coordinated with the player's 60s
+            // network-timeout so both layers abandon together.
             TB_LOG("serve_range: WAITING for piece=%d", p);
             std::unique_lock<std::mutex> lk(s->piece_mu);
-            bool ok = s->piece_cv.wait_for(lk, chr::seconds(300), [&] {
+            bool ok = s->piece_cv.wait_for(lk, chr::seconds(kPieceWaitSecs), [&] {
                 return !s->active.load()
                     || s->seek_generation.load() != my_gen
                     || s->pieces_have.count(p) > 0;
@@ -1406,10 +1462,30 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
         // ── piece is downloaded — read data directly via read_piece ──
         // Like lt2http: storage()->readv(b, p, offset, ...)
         // We use read_piece_data which does read_piece → waits for data
-        ReadResult rd = read_piece_data(s, p, 10000, my_gen);
+        // A piece can be hash-verified while its asynchronous disk read is
+        // still pending, especially when a just-closed media_kit session has
+        // handed the torrent to MediaForge. Ten seconds used to make that
+        // handoff look like EOF: the HTTP response advertised the whole file
+        // then closed after the last warm piece. Keep this read inside the
+        // same 60-second budget as a missing piece so FFmpeg never has to
+        // restart a valid localhost Range request at byte zero.
+        ReadResult rd = read_piece_data(s, p, kPieceWaitSecs * 1000, my_gen);
         if (!rd.ok || rd.data.empty()) {
-            TB_LOG("serve_range: read_piece_data FAILED piece=%d", p);
-            return false;
+            TB_LOG("serve_range: disk read pending/failed piece=%d; refreshing deadline without closing HTTP response", p);
+            try {
+                s->handle.piece_priority(lt::piece_index_t(p), lt::top_priority);
+                s->handle.set_piece_deadline(lt::piece_index_t(p), 0);
+                s->handle.resume();
+            } catch (...) {}
+            // The requested piece remains verified; retry one bounded disk
+            // read instead of treating a delayed read_piece_alert as a
+            // network EOF. A genuine failure still exits after the shared
+            // timeout and is visible in the range telemetry.
+            rd = read_piece_data(s, p, kPieceWaitSecs * 1000, my_gen);
+            if (!rd.ok || rd.data.empty()) {
+                TB_LOG("serve_range: disk read exhausted piece=%d", p);
+                return false;
+            }
         }
 
         // Extract the slice we need from the piece
@@ -1584,12 +1660,53 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
             int64_t rend   = (rr.valid && rr.end >= 0)   ? rr.end   : fsz - 1;
 
             if (rr.valid && rr.is_suffix) {
-                rstart = fsz - rr.end; // rr.end holds the suffix length
+                int64_t suffix_len = rr.end; // rr.end holds suffix length
+                if (suffix_len <= 0) {
+                    const char* r416 =
+                        "HTTP/1.1 416 Range Not Satisfiable\r\n"
+                        "Content-Range: bytes */";
+                    std::string resp = std::string(r416) + std::to_string(fsz) +
+                        "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                    send_all(cli, resp.c_str(), (int)resp.size());
+                    goto cleanup;
+                }
+                rstart = fsz - suffix_len;
+                if (rstart < 0) rstart = 0;
                 rend = fsz - 1;
             }
 
-            rstart = std::clamp(rstart, (int64_t)0, fsz - 1);
-            rend   = std::clamp(rend,   rstart,     fsz - 1);
+            // RFC 9110 §14.2: unsatisfiable ranges get 416, not a clamp.
+            // Previously out-of-bounds ranges were clamped into the file,
+            // hiding expired-URL and demuxer bugs behind 206 responses.
+            if (rr.valid && !rr.is_suffix) {
+                bool start_beyond = (rr.start >= 0 && rr.start >= fsz);
+                bool end_before_start =
+                    (rr.start >= 0 && rr.end >= 0 && rr.end < rr.start);
+                if (start_beyond || end_before_start) {
+                    std::string resp =
+                        "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" +
+                        std::to_string(fsz) +
+                        "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                    send_all(cli, resp.c_str(), (int)resp.size());
+                    goto cleanup;
+                }
+                // Open-ended "bytes=N-" runs to EOF; "bytes=N-M" with M past
+                // EOF clamps M (satisfiable prefix), per RFC 9110.
+                if (rr.start >= 0 && rr.end < 0) rend = fsz - 1;
+                if (rend >= fsz) rend = fsz - 1;
+                if (rstart < 0) rstart = 0;
+                if (rend < rstart) {
+                    std::string resp =
+                        "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" +
+                        std::to_string(fsz) +
+                        "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                    send_all(cli, resp.c_str(), (int)resp.size());
+                    goto cleanup;
+                }
+            } else if (!rr.valid) {
+                rstart = 0;
+                rend = fsz - 1;
+            }
             int64_t clen = rend - rstart + 1;
             bool is_partial = (rr.valid && (rr.start >= 0 || rr.is_suffix));
 
@@ -1607,7 +1724,14 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
             bool is_tail_req = (rstart > fsz - s->piece_length * 10);
             TB_LOG("handle_conn: rstart=%lld rend=%lld old_head=%lld is_tail=%d",
                    (long long)rstart, (long long)rend, (long long)old_head, is_tail_req?1:0);
-            if (!is_tail_req && old_head > 0 && std::abs(rstart - old_head) > 65536) {
+            // HEAD and container-metadata tail probes must not trigger
+            // playback-seek behavior: they don't move the viewing position.
+            bool is_probe = is_head || is_tail_req;
+            TB_LOG("RANGE request method=%s start=%lld end=%lld partial=%d probe=%d reconnect_candidate=%d",\
+                   is_head ? "HEAD" : "GET", (long long)rstart, (long long)rend,\
+                   is_partial ? 1 : 0, is_probe ? 1 : 0,\
+                   (!is_probe && old_head > 0 && std::abs(rstart - old_head) > 65536) ? 1 : 0);
+            if (!is_probe && old_head > 0 && std::abs(rstart - old_head) > 65536) {
                 const int seek_piece = std::clamp(s->byte_to_piece(rstart),
                                                   s->start_piece, s->end_piece);
                 bool cached_target = false;
@@ -1615,6 +1739,8 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
                     std::lock_guard<std::mutex> lk(s->piece_mu);
                     cached_target = s->pieces_have.count(seek_piece) > 0;
                 }
+                TB_LOG("RANGE seek target_piece=%d cached=%d; cached targets retain existing peer work",\
+                       seek_piece, cached_target ? 1 : 0);
                 int new_gen = s->seek_generation.fetch_add(1) + 1;
                 TB_LOG("SEEK DETECTED: old_head=%lld new_pos=%lld seek_piece=%d gen=%d",
                        (long long)old_head, (long long)rstart,
@@ -2976,6 +3102,81 @@ TORRENT_API void lt_get_default_config(lt_bt_config* out) {
 TORRENT_API int lt_get_active_streams(lt_session_t session) {
     (void)session;
     return StreamEngine::active_streams.load();
+}
+
+TORRENT_API const char* lt_bridge_version(void) { return kBridgeVersion; }
+
+TORRENT_API int lt_is_file_complete(lt_session_t session,
+                                    lt_torrent_id torrent_id,
+                                    int file_index) {
+    if (!session) return 0;
+    auto* sw = to_sw(session);
+    try {
+        lt::torrent_handle handle;
+        {
+            std::lock_guard<std::mutex> lk(sw->mu);
+            auto it = sw->handles.find(torrent_id);
+            if (it == sw->handles.end() || !it->second.is_valid()) return 0;
+            handle = it->second;
+        }
+        auto ti = handle.torrent_file();
+        if (!ti) return 0;
+        const lt::file_storage& fs = ti->layout();
+        if (file_index < 0 || file_index >= fs.num_files()) return 0;
+        int64_t foff = fs.file_offset(lt::file_index_t{file_index});
+        int64_t flen = fs.file_size(lt::file_index_t{file_index});
+        if (flen <= 0) return 0;
+        int piece_len = ti->piece_length();
+        if (piece_len <= 0) return 0;
+        int start_p = (int)(foff / piece_len);
+        int end_p = (int)((foff + flen - 1) / piece_len);
+        // Require every piece of the selected file to be verified present.
+        // Sparse preallocation without verified pieces returns 0.
+        std::lock_guard<std::mutex> slk(sw->streams_mu);
+        for (auto& kv : sw->streams) {
+            auto* s = kv.second.get();
+            if (!s || !s->active.load()) continue;
+            if (s->torrent_id != torrent_id) continue;
+            std::lock_guard<std::mutex> plk(s->piece_mu);
+            for (int p = start_p; p <= end_p; ++p) {
+                if (s->pieces_have.count(p) == 0) return 0;
+            }
+            return 1;
+        }
+        // No active stream: fall back to torrent-level finished + progress.
+        try {
+            auto st = handle.status();
+            if (st.is_finished && st.progress >= 0.999f) return 1;
+        } catch (...) {}
+        return 0;
+    } catch (...) { return 0; }
+}
+
+TORRENT_API int lt_get_cache_state(lt_session_t session,
+                                   lt_stream_id stream_id,
+                                   int64_t* out_capacity,
+                                   int64_t* out_filled) {
+    if (!session) return 0;
+    auto* sw = to_sw(session);
+    try {
+        std::lock_guard<std::mutex> lk(sw->streams_mu);
+        auto it = sw->streams.find(stream_id);
+        if (it == sw->streams.end() || !it->second->cache) return 0;
+        auto* s = it->second.get();
+        int64_t cap = 0, fill = 0;
+        int pc = 0, rc = 0;
+        s->cache->get_state(cap, fill, pc, rc);
+        // Include pending disk-read results in the budget view: they hold
+        // full piece buffers outside the hot cache.
+        {
+            std::lock_guard<std::mutex> rlk(s->read_mu);
+            for (auto& kv : s->read_results)
+                fill += (int64_t)kv.second.data.size();
+        }
+        if (out_capacity) *out_capacity = cap;
+        if (out_filled) *out_filled = fill;
+        return 1;
+    } catch (...) { return 0; }
 }
 
 } // extern "C"

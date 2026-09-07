@@ -1,0 +1,8 @@
+# Development-only overrides so PeerStream resolves the exact local
+# mediaforge monorepo packages instead of pub.dev versions.
+# The published media_forge_player package will remove the need for these.
+dependency_overrides:
+  media_forge:
+    path: "/Volumes/AppleExpanded/Code/Gym app/rust_image/packages/media_forge"
+  pixel_surface:
+    path: "/Volumes/AppleExpanded/Code/Gym app/rust_image/packages/pixel_surface"

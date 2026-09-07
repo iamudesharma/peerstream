@@ -11,11 +11,22 @@ import '../playback/torrent_cache_identity.dart';
 import 'torrent_engine.dart';
 import 'source_policy_loader.dart';
 
-class NativeTorrentEngine implements TorrentEngine {
+/// Native bridge revision. Must match `kBridgeVersion` in
+/// `packages/libtorrent_flutter/src/torrent_bridge.cpp`. Bump both together
+/// so runtime diagnostics can confirm all platforms ship the same native
+/// implementation before comparing performance.
+const nativeBridgeVersion = 'bridge-1.5.0+lt2.0.11';
+
+class NativeTorrentEngine
+    implements
+        TorrentEngine,
+        FileCompletenessChecker,
+        EngineDiagnosticsProvider,
+        TorrentAvailabilityProvider {
   final _dio = Dio(
     BaseOptions(
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(minutes: 5),
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 30),
     ),
   );
   final Map<int, int> _streamIds = {};
@@ -38,7 +49,9 @@ class NativeTorrentEngine implements TorrentEngine {
     ).create(recursive: true);
     await lt.LibtorrentFlutter.init(
       defaultSavePath: _sessionDirectory!.path,
-      pollInterval: const Duration(milliseconds: 500),
+      // 250ms polls halve buffering UI latency vs 500ms; the native poll
+      // only emits on change so idle cost stays low.
+      pollInterval: const Duration(milliseconds: 250),
       // Addon magnets already carry their own tracker set. The package's
       // optional remote list injects hundreds more and emits each tracker
       // alert through Dart, which can starve the player during startup.
@@ -61,6 +74,84 @@ class NativeTorrentEngine implements TorrentEngine {
       _engine ?? (throw StateError('Torrent engine is not initialized.'));
 
   @override
+  String get bridgeVersion => nativeBridgeVersion;
+
+  @override
+  Future<EngineDiagnostics> engineDiagnostics() async {
+    final engine = _engine;
+    if (engine == null) {
+      return EngineDiagnostics(bridgeVersion: bridgeVersion);
+    }
+    // Cache capacity is the coordinated byte budget enforced by the native
+    // scheduler (see torrent_bridge.cpp StreamScheduler). Pending disk-read
+    // results count against the same budget; actively served pieces are
+    // never evicted.
+    final capacity = Platform.isAndroid ? 64 * 1024 * 1024 : 128 * 1024 * 1024;
+    int? filled;
+    try {
+      final firstStream = _streamIds.values.firstOrNull;
+      if (firstStream != null) {
+        filled = engine.getCacheState(firstStream)?.$2;
+      }
+    } catch (_) {}
+    // Report the exact native revision when the binary provides it; fall
+    // back to the Dart constant for older prebuilts.
+    String reported = bridgeVersion;
+    try {
+      final native = engine.bridgeVersion;
+      if (native.isNotEmpty) reported = native;
+    } catch (_) {}
+    return EngineDiagnostics(
+      bridgeVersion: reported,
+      cacheCapacityBytes: capacity,
+      cacheFilledBytes: filled,
+      activeStreams: engine.activeStreamCount,
+    );
+  }
+
+  @override
+  Future<bool> isFileComplete(
+    TorrentHandle handle,
+    TorrentFileEntry file,
+  ) async {
+    try {
+      final id = _id(handle);
+      // Native piece-level verification first: every piece of the selected
+      // file must be downloaded and hash-verified. Rejects sparse files.
+      try {
+        if (_native.isFileComplete(id, file.index)) return true;
+      } catch (_) {}
+      final info = _native.torrents[id];
+      // Fallback for older binaries without the symbol: require verified
+      // torrent completion, not just a preallocated file length.
+      if (info == null) return false;
+      if (!info.isFinished) return false;
+      if (info.progress < 0.999) return false;
+      if (file.size <= 0) return false;
+      if (info.totalWanted > 0 && info.totalDone < (info.totalWanted * 0.999)) {
+        return false;
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Fast polling during startup/seeking, relaxed during steady playback.
+  /// The native poll only emits on change so idle cost stays low.
+  void useStartupPolling() {
+    try {
+      _engine?.setPollInterval(const Duration(milliseconds: 250));
+    } catch (_) {}
+  }
+
+  void useSteadyPolling() {
+    try {
+      _engine?.setPollInterval(const Duration(seconds: 1));
+    } catch (_) {}
+  }
+
+  @override
   Future<TorrentHandle> add(TorrentSource source) async {
     await initialize();
     final violation = (await loadSourcePolicy()).check(source);
@@ -72,9 +163,9 @@ class NativeTorrentEngine implements TorrentEngine {
       return TorrentHandle('$retainedId');
     }
     final torrentDirectory = Directory(await _cache.directoryPathFor(source));
-    late final int id;
+    int? torrentId;
     if (source.inputType == TorrentInputType.magnet) {
-      id = _native.addMagnet(
+      torrentId = _native.addMagnet(
         source.uri.toString(),
         torrentDirectory.path,
         true,
@@ -83,13 +174,41 @@ class NativeTorrentEngine implements TorrentEngine {
       final file = File(
         '${torrentDirectory.path}${Platform.pathSeparator}source.torrent',
       );
-      await _dio.downloadUri(
-        source.uri,
-        file.path,
-        options: Options(headers: source.headers),
-      );
-      id = _native.addTorrentFile(file.path, torrentDirectory.path, true);
+      // Reuse a fresh .torrent file to skip re-download on replay/prefetch.
+      // The directory is per-source (cacheKey includes the URI), so reuse is safe.
+      try {
+        if (await file.exists()) {
+          final stat = await file.stat();
+          final age = DateTime.now().difference(stat.modified);
+          if (stat.size > 0 && age < const Duration(hours: 24)) {
+            try {
+              torrentId = _native.addTorrentFile(
+                file.path,
+                torrentDirectory.path,
+                true,
+              );
+            } catch (_) {
+              torrentId = null;
+            }
+          }
+        }
+      } catch (_) {
+        torrentId = null;
+      }
+      if (torrentId == null) {
+        await _dio.downloadUri(
+          source.uri,
+          file.path,
+          options: Options(headers: source.headers),
+        );
+        torrentId = _native.addTorrentFile(
+          file.path,
+          torrentDirectory.path,
+          true,
+        );
+      }
     }
+    final id = torrentId;
     _retainedTorrents[cacheKey] = id;
     return TorrentHandle('$id');
   }
@@ -109,15 +228,23 @@ class NativeTorrentEngine implements TorrentEngine {
     }).toList();
     final current = _native.torrents[id];
     if (current?.hasMetadata == true) return readFiles();
-    await _native.torrentUpdates
-        .firstWhere((all) {
-          final torrent = all[id];
-          if (torrent != null && torrent.errorMsg.isNotEmpty) {
-            throw StateError(torrent.errorMsg);
-          }
-          return torrent?.hasMetadata == true;
-        })
-        .timeout(const Duration(minutes: 5));
+    try {
+      await _native.torrentUpdates
+          .firstWhere((all) {
+            final torrent = all[id];
+            if (torrent != null && torrent.errorMsg.isNotEmpty) {
+              throw StateError(torrent.errorMsg);
+            }
+            return torrent?.hasMetadata == true;
+          })
+          .timeout(const Duration(seconds: 90));
+    } on TimeoutException {
+      throw StateError(
+        'This torrent did not share its file list within 90 seconds '
+        '(no metadata from peers/trackers). Try a Direct source or one '
+        'with more seeds.',
+      );
+    }
     return readFiles();
   }
 
@@ -198,5 +325,36 @@ class NativeTorrentEngine implements TorrentEngine {
     await _native.dispose();
     _engine = null;
     _retainedTorrents.clear();
+  }
+
+  /// Verified availability snapshot for the selected file: whole-file
+  /// verification plus the native stream scheduler's contiguous window
+  /// ahead of its read head. Raw byte/piece signals only — callers map to
+  /// media time with `torrentAvailabilityToBufferedRanges`. Returns `null`
+  /// when the engine has no data for [torrentId] (not loaded, torn down).
+  @override
+  TorrentFileAvailability? fileAvailability(int torrentId, int fileIndex) {
+    final engine = _engine;
+    if (engine == null) return null;
+    try {
+      lt.StreamInfo? stream;
+      for (final s in engine.streams.values) {
+        if (s.torrentId == torrentId) {
+          stream = s;
+          break;
+        }
+      }
+      return TorrentFileAvailability(
+        // Sync native verified check (raw ids); never the async
+        // handle-based `FileCompletenessChecker` override.
+        isComplete: engine.isFileComplete(torrentId, fileIndex),
+        fileSizeBytes: stream?.fileSize ?? 0,
+        readHeadBytes: stream?.readHead ?? 0,
+        bufferedSecondsAhead: stream?.bufferSeconds ?? 0,
+        bufferedPiecesAhead: stream?.bufferPieces ?? 0,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 }

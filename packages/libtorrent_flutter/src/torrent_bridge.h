@@ -189,7 +189,23 @@ TORRENT_API void lt_set_upload_limit(lt_session_t session, int bytes_per_sec);
 /* utility */
 TORRENT_API const char* lt_last_error(void);
 TORRENT_API const char* lt_version(void);
+/* Exact native bridge revision. All platforms must ship the same revision;
+   Dart reports it at runtime before comparing platform performance. */
+TORRENT_API const char* lt_bridge_version(void);
 TORRENT_API int         lt_get_active_streams(lt_session_t session);
+
+/* selected-file verification: 1 when every piece of [file_index] is
+   downloaded and hash-verified, 0 otherwise. Rejects sparse preallocated
+   files that report full length but miss pieces. */
+TORRENT_API int lt_is_file_complete(lt_session_t session,
+                                    lt_torrent_id torrent_id,
+                                    int file_index);
+
+/* cache telemetry: byte budget enforcement state for diagnostics. */
+TORRENT_API int lt_get_cache_state(lt_session_t session,
+                                   lt_stream_id stream_id,
+                                   int64_t* out_capacity,
+                                   int64_t* out_filled);
 
 #ifdef __cplusplus
 }

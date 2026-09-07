@@ -14,6 +14,9 @@ void main() {
   unawaited(container.read(myListProvider.future));
   unawaited(container.read(watchHistoryProvider.future));
   unawaited(container.read(addonUrlsProvider.future));
+  // Warm the torrent session (DHT bootstrap, native init) at app launch so
+  // the first Play tap does not pay cold-start cost in the player.
+  unawaited(container.read(streamingServiceProvider).warmUp());
   runApp(
     UncontrolledProviderScope(
       container: container,

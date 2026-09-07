@@ -89,7 +89,20 @@ flutter test
 flutter run -d macos --dart-define=TMDB_READ_TOKEN=YOUR_TMDB_V4_READ_TOKEN
 ```
 
-Without a TMDB token, local demonstration metadata remains available. TMDB browsing, search, details, seasons, episodes, and addon lookup require a valid TMDB v4 read token. Pass it through `--dart-define`; never commit it.
+Without a TMDB token, keyless Stremio metadata remains available alongside the local demonstration titles. TMDB browsing and genre discovery require a valid TMDB v4 read token, but streaming catalog rows, keyless search/details/episodes (via Cinemeta), and addon source lookup work without one. Pass tokens through `--dart-define`; never commit them.
+
+## Streaming catalogs (no API key)
+
+Home shows platform rows from the public Streaming Catalogs addon (USA default, BeamUp instance) with no API key: Netflix, Disney+, HBO Max, Prime Video, and Apple TV+ movies and series. Catalog entries carry both `moviedb_id` and `imdb_id`, so they reuse the existing TMDB-based routing and resolve stream sources without a TMDB `external_ids` call.
+
+Configure or disable it at launch:
+
+```sh
+flutter run -d macos --dart-define=STREAMING_CATALOGS_MANIFEST_URL=https://your-configured-host/manifest.json
+flutter run -d macos --dart-define=STREAMING_CATALOGS_ENABLED=false
+```
+
+Details/episodes/search fall back to Cinemeta (`https://v3-cinemeta.strem.io`, override with `CINEMETA_BASE_URL`) when TMDB is unconfigured. The public BeamUp host is community-run with caching and rate limits; self-host `rleroi/Stremio-Streaming-Catalogs-Addon` for production reliability.
 
 ## Source addons
 

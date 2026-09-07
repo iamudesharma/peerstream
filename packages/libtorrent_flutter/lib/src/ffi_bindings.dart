@@ -299,6 +299,29 @@ typedef LtLastError = Pointer<Utf8> Function();
 typedef _VersionN = Pointer<Utf8> Function();
 typedef LtVersion = Pointer<Utf8> Function();
 
+typedef _BridgeVersionN = Pointer<Utf8> Function();
+typedef LtBridgeVersion = Pointer<Utf8> Function();
+
+typedef _IsFileCompleteN =
+    Int32 Function(Pointer<LtSessionOpaque>, Int64, Int32);
+typedef LtIsFileComplete =
+    int Function(Pointer<LtSessionOpaque>, int, int);
+
+typedef _GetCacheStateN =
+    Int32 Function(
+      Pointer<LtSessionOpaque>,
+      Int64,
+      Pointer<Int64>,
+      Pointer<Int64>,
+    );
+typedef LtGetCacheState =
+    int Function(
+      Pointer<LtSessionOpaque>,
+      int,
+      Pointer<Int64>,
+      Pointer<Int64>,
+    );
+
 // ─── Helper: read fixed char array ──────────────────────────────────────────
 String readCharArray(Array<Char> arr, int maxLen) {
   final bytes = <int>[];
@@ -368,6 +391,9 @@ class TorrentBridgeBindings {
   late final LtGetActiveStreams getActiveStreams;
   late final LtLastError lastError;
   late final LtVersion version;
+  late final LtBridgeVersion bridgeVersion;
+  late final LtIsFileComplete isFileComplete;
+  late final LtGetCacheState getCacheState;
   late final LtSetSslCertPath setSslCertPath;
 
   TorrentBridgeBindings(this._lib) {
@@ -460,6 +486,15 @@ class TorrentBridgeBindings {
     version = _lib
         .lookup<NativeFunction<_VersionN>>('lt_version')
         .asFunction<LtVersion>();
+    bridgeVersion = _lib
+        .lookup<NativeFunction<_BridgeVersionN>>('lt_bridge_version')
+        .asFunction<LtBridgeVersion>();
+    isFileComplete = _lib
+        .lookup<NativeFunction<_IsFileCompleteN>>('lt_is_file_complete')
+        .asFunction<LtIsFileComplete>();
+    getCacheState = _lib
+        .lookup<NativeFunction<_GetCacheStateN>>('lt_get_cache_state')
+        .asFunction<LtGetCacheState>();
     setSslCertPath = _lib
         .lookup<NativeFunction<_SetSslCertPathN>>('lt_set_ssl_cert_path')
         .asFunction<LtSetSslCertPath>();

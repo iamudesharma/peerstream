@@ -1,7 +1,11 @@
 import '../../models/torrent_models.dart';
 import 'torrent_engine.dart';
 
-class WebTorrentEngine implements TorrentEngine {
+class WebTorrentEngine
+    implements
+        TorrentEngine,
+        FileCompletenessChecker,
+        EngineDiagnosticsProvider {
   static const _reason =
       'Torrent playback is not available in the Web MVP. Browse TMDB here, then use a native PeerStream app to play legal torrents.';
 
@@ -28,4 +32,17 @@ class WebTorrentEngine implements TorrentEngine {
   Future<void> stop(TorrentHandle handle, {bool deleteFiles = false}) async {}
   @override
   Future<void> dispose() async {}
+
+  @override
+  String get bridgeVersion => 'web-unsupported';
+
+  @override
+  Future<EngineDiagnostics> engineDiagnostics() async =>
+      const EngineDiagnostics(bridgeVersion: 'web-unsupported');
+
+  @override
+  Future<bool> isFileComplete(
+    TorrentHandle handle,
+    TorrentFileEntry file,
+  ) async => false;
 }

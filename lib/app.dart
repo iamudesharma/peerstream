@@ -9,9 +9,14 @@ import 'features/home/category_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/player/player_screen.dart';
 import 'features/search/search_screen.dart';
+import 'features/settings/about_screen.dart';
+import 'features/settings/addons_screen.dart';
+import 'features/settings/playback_screen.dart';
+import 'features/settings/settings_screen.dart';
+import 'features/settings/subtitles_screen.dart';
 import 'features/sources/source_selection_screen.dart';
-import 'features/settings/storage_playback_screen.dart';
 import 'models/media_item.dart';
+import 'models/torrent_models.dart';
 
 const _genreNames = <int, String>{
   28: 'Action',
@@ -41,8 +46,30 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/', builder: (_, _) => const HomeScreen()),
       GoRoute(path: '/search', builder: (_, _) => const SearchScreen()),
       GoRoute(
+        path: '/settings',
+        builder: (_, _) => const SettingsScreen(),
+        routes: [
+          GoRoute(
+            path: 'addons',
+            builder: (_, _) => const AddonsScreen(),
+          ),
+          GoRoute(
+            path: 'playback',
+            builder: (_, _) => const PlaybackScreen(),
+          ),
+          GoRoute(
+            path: 'subtitles',
+            builder: (_, _) => const SubtitlesScreen(),
+          ),
+          GoRoute(
+            path: 'about',
+            builder: (_, _) => const AboutScreen(),
+          ),
+        ],
+      ),
+      GoRoute(
         path: '/storage',
-        builder: (_, _) => const StoragePlaybackScreen(),
+        redirect: (_, _) => '/settings/playback',
       ),
       GoRoute(
         path: '/category/:type/:genre',
@@ -78,16 +105,20 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/player/:type/:id',
-        builder: (_, state) => PlayerScreen(
-          season: int.tryParse(state.uri.queryParameters['season'] ?? ''),
-          episode: int.tryParse(state.uri.queryParameters['episode'] ?? ''),
-          mediaRef: MediaRef(
-            id: _idOrThrow(state.pathParameters['id']),
-            type: _mediaTypeOrThrow(state.pathParameters['type']),
-          ),
-          sourceId: state.uri.queryParameters['source'] ?? '',
-          resumeMs: int.tryParse(state.uri.queryParameters['resume'] ?? ''),
-        ),
+        builder: (_, state) {
+          final extra = state.extra;
+          return PlayerScreen(
+            season: int.tryParse(state.uri.queryParameters['season'] ?? ''),
+            episode: int.tryParse(state.uri.queryParameters['episode'] ?? ''),
+            mediaRef: MediaRef(
+              id: _idOrThrow(state.pathParameters['id']),
+              type: _mediaTypeOrThrow(state.pathParameters['type']),
+            ),
+            sourceId: state.uri.queryParameters['source'] ?? '',
+            resumeMs: int.tryParse(state.uri.queryParameters['resume'] ?? ''),
+            initialSource: extra is TorrentSource ? extra : null,
+          );
+        },
       ),
     ],
   );

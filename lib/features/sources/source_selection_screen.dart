@@ -12,9 +12,41 @@ import '../../core/widgets/skeletons.dart';
 import '../../models/media_item.dart';
 import '../../models/torrent_models.dart';
 import '../../providers/app_providers.dart';
+import '../../services/streaming/source_ranking.dart';
 import '../../services/torrent/addon_provider.dart';
+import '../../services/torrent/source_discovery.dart';
+import '../player/player_backend.dart';
 
 enum _SortMode { seeds, size }
+
+/// Picks the torrent most worth warming: exact file match first, then most
+/// seeds. Direct URLs need no prefetch.
+TorrentSource? _bestPrefetchCandidate(List<TorrentSource> sources) {
+  final torrents = sources
+      .where((s) => s.inputType != TorrentInputType.directUrl)
+      .toList();
+  if (torrents.isEmpty) return null;
+  torrents.sort((a, b) {
+    final aExact = (a.fileIndex != null || a.fileNameHint != null) ? 1 : 0;
+    final bExact = (b.fileIndex != null || b.fileNameHint != null) ? 1 : 0;
+    if (aExact != bExact) return bExact.compareTo(aExact);
+    return (b.seeds ?? -1).compareTo(a.seeds ?? -1);
+  });
+  return torrents.first;
+}
+
+/// Instant-start ranking: Direct streams first (no torrent handshake), then
+/// exact file matches, then seeds. Size is a tie-breaker (smaller starts
+/// faster on thin swarms). Delegates to the shared playability ranker so
+/// browsing and retry agree on "best".
+int _compareSources(TorrentSource a, TorrentSource b, _SortMode sort) {
+  if (sort == _SortMode.size) {
+    final sizeCmp = (b.sizeBytes ?? -1).compareTo(a.sizeBytes ?? -1);
+    if (sizeCmp != 0) return sizeCmp;
+    return (b.seeds ?? -1).compareTo(a.seeds ?? -1);
+  }
+  return compareRankedSources(a, b);
+}
 
 class SourceSelectionScreen extends ConsumerStatefulWidget {
   const SourceSelectionScreen({
@@ -36,6 +68,8 @@ class _SourceSelectionScreenState
     extends ConsumerState<SourceSelectionScreen> {
   _SortMode _sort = _SortMode.seeds;
   final _savedSourceIds = <String>{};
+  bool _directOnly = false;
+  String _quality = 'All';
 
   SourceRequest get _request => (
         media: widget.mediaRef,
@@ -55,6 +89,25 @@ class _SourceSelectionScreenState
   @override
   Widget build(BuildContext context) {
     final results = ref.watch(sourceResultsProvider(_request));
+    // Incremental discovery: fast providers appear immediately while slow
+    // ones still load. The banner below surfaces per-provider progress.
+    final discovery = ref.watch(sourceDiscoveryProvider(_request));
+    // Warm the torrent session while addons resolve, and prefetch the single
+    // best torrent candidate once results arrive so metadata is ready by tap
+    // time. Deduplication and unused-candidate release live in the service.
+    ref.listen(sourceResultsProvider(_request), (_, next) {
+      next.whenData((providers) {
+        final service = ref.read(streamingServiceProvider);
+        // ignore: discarded_futures
+        service.warmUp();
+        final candidates = providers.expand((p) => p.sources).toList();
+        final best = _bestPrefetchCandidate(candidates);
+        if (best != null) {
+          // ignore: discarded_futures
+          service.prefetchSource(best);
+        }
+      });
+    });
     final details = ref.watch(detailsProvider(widget.mediaRef));
     final title = details.when(
       data: (value) => value.item.title,
@@ -78,12 +131,16 @@ class _SourceSelectionScreenState
                 builder: (_) => const _ProviderSettings(),
               );
               ref.invalidate(sourceResultsProvider(_request));
+              ref.invalidate(sourceDiscoveryProvider(_request));
             },
           ),
           IconButton(
             tooltip: 'Search again',
             icon: const Icon(Icons.refresh),
-            onPressed: () => ref.invalidate(sourceResultsProvider(_request)),
+            onPressed: () {
+              ref.invalidate(sourceResultsProvider(_request));
+              ref.invalidate(sourceDiscoveryProvider(_request));
+            },
           ),
         ],
       ),
@@ -94,21 +151,62 @@ class _SourceSelectionScreenState
             sort: _sort,
             onSortChanged: (sort) => setState(() => _sort = sort),
           ),
+          _FilterBar(
+            directOnly: _directOnly,
+            quality: _quality,
+            onDirectOnlyChanged: (v) => setState(() => _directOnly = v),
+            onQualityChanged: (q) => setState(() => _quality = q),
+          ),
           Expanded(
             child: results.when(
-              loading: () => ListView(
-                padding: const EdgeInsets.all(DesignTokens.pageGutter),
-                children: const [
-                  _SearchingBanner(),
-                  SizedBox(height: DesignTokens.space4),
-                  SourceListSkeleton(),
-                ],
-              ),
+              loading: () {
+                // Show fast incremental results immediately instead of
+                // holding everything behind the slowest provider.
+                final incremental = discovery.value;
+                final fast = incremental?.allSources ?? const [];
+                if (fast.isNotEmpty) {
+                  final lane = [
+                    ProviderResult('Fast results', List.of(fast)),
+                  ];
+                  return Column(
+                    children: [
+                      _IncrementalBanner(discovery: incremental),
+                      Expanded(
+                        child: _Results(
+                          providers: lane,
+                          sort: _sort,
+                          savedIds: _savedSourceIds,
+                          directOnly: _directOnly,
+                          quality: _quality,
+                          onToggleSaved: (id) => setState(() {
+                            if (_savedSourceIds.contains(id)) {
+                              _savedSourceIds.remove(id);
+                            } else {
+                              _savedSourceIds.add(id);
+                            }
+                          }),
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                return ListView(
+                  padding: const EdgeInsets.all(DesignTokens.pageGutter),
+                  children: [
+                    const _SearchingBanner(),
+                    _IncrementalBanner(discovery: incremental),
+                    const SizedBox(height: DesignTokens.space4),
+                    const SourceListSkeleton(),
+                  ],
+                );
+              },
               error: (error, _) => AppError(
                 title: 'Could not load sources',
                 detail: friendlyError(error),
-                onRetry: () =>
-                    ref.invalidate(sourceResultsProvider(_request)),
+                onRetry: () {
+                  ref.invalidate(sourceResultsProvider(_request));
+                  ref.invalidate(sourceDiscoveryProvider(_request));
+                },
                 retryLabel: 'Retry search',
                 secondary: OutlinedButton.icon(
                   onPressed: () => showDialog<void>(
@@ -177,6 +275,8 @@ class _SourceSelectionScreenState
                               providers: providers,
                               sort: _sort,
                               savedIds: _savedSourceIds,
+                              directOnly: _directOnly,
+                              quality: _quality,
                               onToggleSaved: (id) => setState(() {
                                 if (_savedSourceIds.contains(id)) {
                                   _savedSourceIds.remove(id);
@@ -190,6 +290,8 @@ class _SourceSelectionScreenState
                                 providers: [p],
                                 sort: _sort,
                                 savedIds: _savedSourceIds,
+                                directOnly: _directOnly,
+                                quality: _quality,
                                 onToggleSaved: (id) => setState(() {
                                   if (_savedSourceIds.contains(id)) {
                                     _savedSourceIds.remove(id);
@@ -273,6 +375,61 @@ class _ContextBar extends StatelessWidget {
   }
 }
 
+class _FilterBar extends StatelessWidget {
+  const _FilterBar({
+    required this.directOnly,
+    required this.quality,
+    required this.onDirectOnlyChanged,
+    required this.onQualityChanged,
+  });
+
+  final bool directOnly;
+  final String quality;
+  final ValueChanged<bool> onDirectOnlyChanged;
+  final ValueChanged<String> onQualityChanged;
+
+  static const qualities = ['All', '4K', '1080p', '720p', '480p', 'CAM'];
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: DesignTokens.surface,
+        border: Border(bottom: BorderSide(color: DesignTokens.line)),
+      ),
+      padding: const EdgeInsets.symmetric(
+        horizontal: DesignTokens.pageGutter,
+        vertical: 8,
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            FilterChip(
+              label: const Text('Direct only'),
+              avatar: const Icon(Icons.bolt, size: 16),
+              selected: directOnly,
+              visualDensity: VisualDensity.compact,
+              onSelected: onDirectOnlyChanged,
+            ),
+            const SizedBox(width: 8),
+            for (final q in qualities)
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: ChoiceChip(
+                  label: Text(q),
+                  selected: quality == q,
+                  visualDensity: VisualDensity.compact,
+                  onSelected: (_) => onQualityChanged(q),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SearchingBanner extends StatelessWidget {
   const _SearchingBanner();
 
@@ -309,33 +466,98 @@ class _SearchingBanner extends StatelessWidget {
   }
 }
 
+class _IncrementalBanner extends StatelessWidget {
+  const _IncrementalBanner({required this.discovery});
+  final IncrementalDiscoveryState? discovery;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = discovery;
+    if (current == null) return const SizedBox.shrink();
+    final providers = current.providers.values.toList();
+    final ready = providers
+        .where((p) => p.status == ProviderStatus.ready)
+        .length;
+    final total = providers.length;
+    final count = current.allSources.length;
+    final complete = current.isComplete;
+    if (total == 0) return const SizedBox.shrink();
+    final label = complete
+        ? 'All $total providers answered · $count sources'
+        : '$ready of $total providers answered · $count sources so far';
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: DesignTokens.surface,
+        borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
+        border: Border.all(color: DesignTokens.line),
+      ),
+      child: Row(
+        children: [
+          if (!complete)
+            const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            const Icon(Icons.check_circle_outline, size: 16),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: DesignTokens.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _Results extends StatelessWidget {
   const _Results({
     required this.providers,
     required this.sort,
     required this.savedIds,
     required this.onToggleSaved,
+    this.directOnly = false,
+    this.quality = 'All',
   });
 
   final List<ProviderResult> providers;
   final _SortMode sort;
   final Set<String> savedIds;
   final ValueChanged<String> onToggleSaved;
+  final bool directOnly;
+  final String quality;
 
   @override
   Widget build(BuildContext context) {
-    final sources = providers.expand((p) => p.sources).toList()
-      ..sort((a, b) {
-        if (sort == _SortMode.size) {
-          return (b.sizeBytes ?? -1).compareTo(a.sizeBytes ?? -1);
-        }
-        return (b.seeds ?? -1).compareTo(a.seeds ?? -1);
-      });
-    return ListView(
+    final errors = providers.where((p) => p.error != null).toList();
+    var sources = providers.expand((p) => p.sources).toList();
+    if (directOnly) {
+      sources = sources
+          .where((s) => s.inputType == TorrentInputType.directUrl)
+          .toList();
+    }
+    if (quality != 'All') {
+      sources = sources
+          .where((s) => formatQuality(s.name) == quality)
+          .toList();
+    }
+    sources.sort((a, b) => _compareSources(a, b, sort));
+    final itemCount = errors.length + (sources.isEmpty ? 1 : sources.length);
+    return ListView.builder(
       padding: const EdgeInsets.all(DesignTokens.pageGutter),
-      children: [
-        for (final provider in providers.where((p) => p.error != null))
-          Container(
+      itemCount: itemCount,
+      itemBuilder: (context, index) {
+        if (index < errors.length) {
+          final provider = errors[index];
+          return Container(
             margin: const EdgeInsets.only(bottom: DesignTokens.space3),
             decoration: BoxDecoration(
               color: DesignTokens.surface,
@@ -357,25 +579,31 @@ class _Results extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-          ),
-        if (sources.isEmpty)
-          const AppEmpty(
+          );
+        }
+        if (sources.isEmpty) {
+          return AppEmpty(
             icon: Icons.video_library_outlined,
-            title: 'No sources in this lane',
-            hint: 'Switch to the All tab or try another provider.',
-          ),
-        for (final source in sources)
-          _SourceCard(
-            source: source,
-            saved: savedIds.contains(source.id),
-            onToggleSaved: () => onToggleSaved(source.id),
-          ),
-      ],
+            title: directOnly || quality != 'All'
+                ? 'No sources match these filters'
+                : 'No sources in this lane',
+            hint: directOnly || quality != 'All'
+                ? 'Clear Direct-only or quality filters to see more.'
+                : 'Switch to the All tab or try another provider.',
+          );
+        }
+        final source = sources[index - errors.length];
+        return _SourceCard(
+          source: source,
+          saved: savedIds.contains(source.id),
+          onToggleSaved: () => onToggleSaved(source.id),
+        );
+      },
     );
   }
 }
 
-class _SourceCard extends StatelessWidget {
+class _SourceCard extends ConsumerWidget {
   const _SourceCard({
     required this.source,
     required this.saved,
@@ -386,8 +614,36 @@ class _SourceCard extends StatelessWidget {
   final bool saved;
   final VoidCallback onToggleSaved;
 
+  void _play(BuildContext context, WidgetRef ref) {
+    // Prefetch in case hover did not fire (touch devices), then navigate
+    // with the full source as `extra` so the player skips addon re-query.
+    // ignore: discarded_futures
+    ref.read(streamingServiceProvider).prefetchSource(source);
+    // Carry a saved position when history has one for this exact source,
+    // mirroring Continue Watching. The player screens still apply
+    // trivial/finished filtering, so this never forces a bad resume.
+    final resumeMs = resumeMsForSource(
+      source: source,
+      history: ref.read(watchHistoryProvider).value,
+    );
+    context.push(
+      Uri(
+        path: '/player/${source.content.routeKey}',
+        queryParameters: {
+          'source': source.id,
+          if (source.seasonNumber != null)
+            'season': '${source.seasonNumber}',
+          if (source.episodeNumber != null)
+            'episode': '${source.episodeNumber}',
+          if (resumeMs != null) 'resume': '$resumeMs',
+        },
+      ).toString(),
+      extra: source,
+    );
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final quality = formatQuality(source.name);
     return Container(
@@ -489,21 +745,17 @@ class _SourceCard extends StatelessWidget {
           const SizedBox(height: DesignTokens.space3),
           Row(
             children: [
-              FilledButton.icon(
-                onPressed: () => context.push(
-                  Uri(
-                    path: '/player/${source.content.routeKey}',
-                    queryParameters: {
-                      'source': source.id,
-                      if (source.seasonNumber != null)
-                        'season': '${source.seasonNumber}',
-                      if (source.episodeNumber != null)
-                        'episode': '${source.episodeNumber}',
-                    },
-                  ).toString(),
+              MouseRegion(
+                onEnter: (_) {
+                  // Desktop hover: start metadata exchange before tap.
+                  // ignore: discarded_futures
+                  ref.read(streamingServiceProvider).prefetchSource(source);
+                },
+                child: FilledButton.icon(
+                  onPressed: () => _play(context, ref),
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Play source'),
                 ),
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Play source'),
               ),
               const SizedBox(width: 8),
               IconButton(

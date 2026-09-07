@@ -18,6 +18,52 @@ abstract interface class TorrentEngine {
   Future<void> dispose();
 }
 
+/// Optional capability: selected-file piece verification.
+///
+/// Engines that track verified pieces (libtorrent `pieces_have`) implement
+/// this to prove a cached file is fully verified — not merely a preallocated
+/// sparse file with the right length.
+abstract interface class FileCompletenessChecker {
+  Future<bool> isFileComplete(TorrentHandle handle, TorrentFileEntry file);
+}
+
+/// Optional capability: verified per-file availability snapshot.
+///
+/// Engines backed by piece-verifying stores (libtorrent) implement this so
+/// the app can show true cached/downloaded timeline ranges without moving
+/// torrent logic into the player package. The snapshot carries raw
+/// byte/piece signals; time mapping stays in PeerStream
+/// (`torrentAvailabilityToBufferedRanges`).
+abstract interface class TorrentAvailabilityProvider {
+  /// Verified availability for [fileIndex] of torrent [torrentId], or `null`
+  /// when the engine currently has no data for it.
+  TorrentFileAvailability? fileAvailability(int torrentId, int fileIndex);
+}
+
+/// Optional capability: runtime native build identity and cache telemetry.
+abstract interface class EngineDiagnosticsProvider {
+  /// Version string identifying the exact native bridge revision
+  /// (e.g. `bridge-1.4.2+lt2.0.11`). Used to confirm all platforms ship
+  /// the same implementation before comparing performance.
+  String get bridgeVersion;
+
+  Future<EngineDiagnostics> engineDiagnostics();
+}
+
+class EngineDiagnostics {
+  const EngineDiagnostics({
+    required this.bridgeVersion,
+    this.cacheCapacityBytes,
+    this.cacheFilledBytes,
+    this.activeStreams = 0,
+  });
+
+  final String bridgeVersion;
+  final int? cacheCapacityBytes;
+  final int? cacheFilledBytes;
+  final int activeStreams;
+}
+
 TorrentFileEntry selectVideoFile(List<TorrentFileEntry> files, {String? hint}) {
   final videos = files.where((file) {
     final lower = file.name.toLowerCase();

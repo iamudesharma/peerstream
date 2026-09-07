@@ -1,3 +1,6 @@
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../../models/torrent_models.dart';
 import '../../models/media_item.dart';
 import '../../models/watch_progress.dart';
@@ -9,6 +12,7 @@ class PlaybackCacheStore {
   PlaybackPreferences _preferences = const PlaybackPreferences(
     maxCacheBytes: 1024 * 1024 * 1024,
   );
+  bool _prefsLoaded = false;
 
   Future<PlaybackCacheEntry?> lookup(TorrentSource source) async =>
       _entries[torrentCacheKey(source)];
@@ -40,14 +44,54 @@ class PlaybackCacheStore {
     required bool complete,
     required int byteSize,
   }) async {}
+  Future<void> pruneIfNeeded({String? protectedKey}) async {}
   Future<PlaybackCacheSummary> summary() async => PlaybackCacheSummary(
     byteSize: 0,
-    maxBytes: _preferences.maxCacheBytes,
+    maxBytes: (await preferences()).maxCacheBytes,
     entries: 0,
   );
-  Future<PlaybackPreferences> preferences() async => _preferences;
-  Future<void> savePreferences(PlaybackPreferences value) async =>
-      _preferences = value;
+  Future<PlaybackPreferences> preferences() async {
+    if (kIsWeb && !_prefsLoaded) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final audio = prefs.getString('peerstream-pref-audio');
+        final subtitle = prefs.getString('peerstream-pref-subtitle');
+        final maxBytes = prefs.getInt('peerstream-pref-max-bytes');
+        _preferences = PlaybackPreferences(
+          maxCacheBytes: maxBytes ?? _preferences.maxCacheBytes,
+          preferredAudioLanguage: audio,
+          preferredSubtitleLanguage: subtitle,
+        );
+      } catch (_) {}
+      _prefsLoaded = true;
+    }
+    return _preferences;
+  }
+
+  Future<void> savePreferences(PlaybackPreferences value) async {
+    // Preference-only write: no eviction scan. Web persists via
+    // SharedPreferences so audio/subtitle choices survive reload.
+    _preferences = value;
+    if (kIsWeb) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        if (value.preferredAudioLanguage != null) {
+          await prefs.setString(
+            'peerstream-pref-audio',
+            value.preferredAudioLanguage!,
+          );
+        }
+        if (value.preferredSubtitleLanguage != null) {
+          await prefs.setString(
+            'peerstream-pref-subtitle',
+            value.preferredSubtitleLanguage!,
+          );
+        }
+        await prefs.setInt('peerstream-pref-max-bytes', value.maxCacheBytes);
+      } catch (_) {}
+    }
+  }
+
   Future<void> remove(String cacheKey) async => _entries.remove(cacheKey);
   Future<void> clear() async => _entries.clear();
 }
