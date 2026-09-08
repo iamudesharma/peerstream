@@ -38,5 +38,14 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_macos_build_settings(target)
+    # Homebrew libtorrent/boost/openssl on this machine are arm64-only,
+    # so the Release/Profile slice must not include x86_64.
+    target.build_configurations.each do |config|
+      if config.name == 'Release' || config.name == 'Profile'
+        config.build_settings['ARCHS'] = 'arm64'
+        config.build_settings['ONLY_ACTIVE_ARCH'] = 'YES'
+        config.build_settings['EXCLUDED_ARCHS[sdk=macosx*]'] = 'x86_64'
+      end
+    end
   end
 end
