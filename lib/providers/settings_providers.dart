@@ -42,12 +42,36 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     final updated = current.copyWith(useMediaForgePlayer: value);
     await _save(updated);
   }
+
+  Future<void> setPlayerVolume(double volume) async {
+    final current = state.value ?? await readAppSettings();
+    final updated = current.copyWith(playerVolume: volume);
+    await _save(updated);
+  }
+
+  Future<void> setPlayerRate(double rate) async {
+    final current = state.value ?? await readAppSettings();
+    final updated = current.copyWith(playerRate: rate);
+    await _save(updated);
+  }
+
+  Future<void> setSubtitleTextScale(double scale) async {
+    final current = state.value ?? await readAppSettings();
+    final updated = current.copyWith(subtitleTextScale: scale);
+    await _save(updated);
+  }
+
+  Future<void> setSubtitleBackground(SubtitleBackgroundStyle style) async {
+    final current = state.value ?? await readAppSettings();
+    final updated = current.copyWith(subtitleBackground: style);
+    await _save(updated);
+  }
 }
 
 final appSettingsProvider =
     AsyncNotifierProvider<AppSettingsNotifier, AppSettings>(
-  AppSettingsNotifier.new,
-);
+      AppSettingsNotifier.new,
+    );
 
 class AppInfo {
   const AppInfo({

@@ -45,6 +45,12 @@
 #include <libtorrent/download_priority.hpp>
 #include <libtorrent/mmap_disk_io.hpp>
 #include <libtorrent/posix_disk_io.hpp>
+#include <libtorrent/read_resume_data.hpp>
+#include <libtorrent/write_resume_data.hpp>
+
+#include <cstdio>
+#include <fstream>
+#include <iterator>
 
 // ── cross-platform sockets ──────────────────────────────────────────────────────
 #ifdef _WIN32
@@ -100,7 +106,7 @@ namespace chr = std::chrono;
 // Bump together with `nativeBridgeVersion` in
 // lib/services/torrent/native_torrent_engine.dart. Runtime diagnostics expose
 // this so platform comparisons only run on identical implementations.
-static constexpr const char* kBridgeVersion = "bridge-1.5.0+lt2.0.11";
+static constexpr const char* kBridgeVersion = "bridge-1.8.1+lt2.0.11";
 
 // Coordinated timeout budget: the player's mpv network-timeout (60s) and the
 // native piece wait must agree so both layers abandon the same request
@@ -121,7 +127,12 @@ static void tb_log_init() {
 #elif defined(__ANDROID__)
         g_logfile = nullptr; // Android uses __android_log_print instead
 #else
-        g_logfile = fopen("/tmp/torrent_bridge.log", "w");
+        // Prefer $TMPDIR: sandboxed macOS apps cannot write to /tmp. This
+        // resolves to the container tmp dir for sandboxed builds.
+        const char* tmp = getenv("TMPDIR");
+        std::string path = (tmp && *tmp) ? std::string(tmp) + "torrent_bridge.log"
+                                         : std::string("/tmp/torrent_bridge.log");
+        g_logfile = fopen(path.c_str(), "w");
 #endif
         if (g_logfile) {
             setvbuf(g_logfile, nullptr, _IONBF, 0);
@@ -964,6 +975,22 @@ struct StreamEngine {
     float estimated_bitrate_bps = 625000.0f;
     int   critical_startup_pieces = 2;  // computed at init
 
+    // Observed media duration (ms), set by Dart once the player knows it.
+    // Refines bitrate, buffer-seconds and adaptive window sizing.
+    std::atomic<int64_t> duration_ms{0};
+
+    // Diagnostics: bytes written to HTTP clients (local-read throughput) and
+    // the last hint parameters. debug_last_* feed the snapshot rate window.
+    std::atomic<int64_t> served_bytes{0};
+    std::atomic<int32_t> hint_window_pieces{0};
+    std::atomic<int32_t> hint_urgency{0};
+    // Actual piece window the scheduler last prioritized (serve_range or a
+    // hint). Drives the diagnostics snapshot coverage numbers.
+    std::atomic<int32_t> active_window_start{0};
+    std::atomic<int32_t> active_window_end{0};
+    int64_t debug_last_bytes = 0;
+    int64_t debug_last_ms = 0;
+
     std::atomic<bool> active{true};
 
     int byte_to_piece(int64_t off) const {
@@ -1215,6 +1242,19 @@ struct SessionWrapper {
                             }
                         }
 
+                        // portmap alerts (UPnP / NAT-PMP) — diagnostics only
+                        else if (auto* pma = lt::alert_cast<lt::portmap_alert>(a)) {
+                            TB_LOG("portmap ok: transport=%s protocol=%s external_port=%d",
+                                   pma->map_transport == lt::portmap_transport::upnp ? "upnp" : "natpmp",
+                                   pma->map_protocol == lt::portmap_protocol::tcp ? "tcp" : "udp",
+                                   pma->external_port);
+                        }
+                        else if (auto* pme = lt::alert_cast<lt::portmap_error_alert>(a)) {
+                            TB_LOG("portmap error: transport=%s error=%s",
+                                   pme->map_transport == lt::portmap_transport::upnp ? "upnp" : "natpmp",
+                                   pme->error.message().c_str());
+                        }
+
                         // queue alert for dart
                         lt_torrent_id tid = -1;
                         if (auto* ta = dynamic_cast<lt::torrent_alert*>(a))
@@ -1421,6 +1461,8 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
             //  request pipeline depth → peers sat idle after each piece.)
             constexpr int PIPELINE_AHEAD = 16;
             TB_LOG("serve_range: piece=%d not ready, prioritizing p..p+%d", p, PIPELINE_AHEAD);
+            s->active_window_start.store(p);
+            s->active_window_end.store(std::min(p + PIPELINE_AHEAD, s->end_piece));
             try {
                 s->handle.piece_priority(lt::piece_index_t(p), lt::top_priority);
                 s->handle.set_piece_deadline(lt::piece_index_t(p), 0);
@@ -1530,6 +1572,7 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
 
         if (send_all(cli, rd.data.data() + off, (int)nb) < 0)
             return false;
+        s->served_bytes.fetch_add(nb);
 
         cursor = sbeg + nb;
 
@@ -2084,6 +2127,7 @@ TORRENT_API lt_session_t lt_create_session(const char* iface, int dl, int ul) {
             | lt::alert_category::piece_progress
             | lt::alert_category::tracker
             | lt::alert_category::peer
+            | lt::alert_category::port_mapping
             | lt::alert_category::dht);
 
         sp.set_str(lt::settings_pack::listen_interfaces,
@@ -2321,6 +2365,26 @@ TORRENT_API void lt_poll_alerts(lt_session_t session,
 
 // ── torrent management ──────────────────────────────────────────────────────────
 
+// Trackerless torrents (info-hash only, no &tr=...)? Seed them with a curated
+// set of public open trackers so peer discovery doesn't have to wait for DHT
+// bootstrap (which can take 30-60s on a cold start). These are the same
+// trackers shipped by qBittorrent's default "automatically add" list and
+// TorrServer.
+static void add_default_trackers_if_empty(lt::add_torrent_params& atp) {
+    if (!atp.trackers.empty()) return;
+    static const char* kDefaultTrackers[] = {
+        "udp://tracker.opentrackr.org:1337/announce",
+        "udp://open.demonii.com:1337/announce",
+        "udp://open.stealth.si:80/announce",
+        "udp://tracker.torrent.eu.org:451/announce",
+        "udp://exodus.desync.com:6969/announce",
+        "udp://tracker.openbittorrent.com:6969/announce",
+        "udp://tracker.dler.org:6969/announce",
+        "udp://explodie.org:6969/announce",
+    };
+    for (auto* t : kDefaultTrackers) atp.trackers.emplace_back(t);
+}
+
 TORRENT_API lt_torrent_id lt_add_magnet(lt_session_t session,
                                         const char* uri, const char* path,
                                         int stream_only) {
@@ -2334,24 +2398,7 @@ TORRENT_API lt_torrent_id lt_add_magnet(lt_session_t session,
         atp.flags &= ~lt::torrent_flags::paused;
         atp.flags &= ~lt::torrent_flags::auto_managed;
 
-        // Trackerless magnet (only an info-hash, no &tr=...)? Seed it with a
-        // curated set of public open trackers so peer discovery doesn't have
-        // to wait for DHT bootstrap (which can take 30-60s on a cold start).
-        // These are the same trackers shipped by qBittorrent's default
-        // "automatically add" list and TorrServer.
-        if (atp.trackers.empty()) {
-            static const char* kDefaultTrackers[] = {
-                "udp://tracker.opentrackr.org:1337/announce",
-                "udp://open.demonii.com:1337/announce",
-                "udp://open.stealth.si:80/announce",
-                "udp://tracker.torrent.eu.org:451/announce",
-                "udp://exodus.desync.com:6969/announce",
-                "udp://tracker.openbittorrent.com:6969/announce",
-                "udp://tracker.dler.org:6969/announce",
-                "udp://explodie.org:6969/announce",
-            };
-            for (auto* t : kDefaultTrackers) atp.trackers.emplace_back(t);
-        }
+        add_default_trackers_if_empty(atp);
 
         if (stream_only) {
             atp.storage_mode = lt::storage_mode_sparse;
@@ -2385,6 +2432,97 @@ TORRENT_API lt_torrent_id lt_add_torrent_file(lt_session_t session,
         atp.flags &= ~lt::torrent_flags::paused;
         atp.flags &= ~lt::torrent_flags::auto_managed;
 
+        if (stream_only) {
+            atp.storage_mode = lt::storage_mode_sparse;
+            atp.flags |= lt::torrent_flags::stop_when_ready;
+        }
+
+        lt::torrent_handle h = sw->session.add_torrent(std::move(atp), ec);
+        if (ec) { set_err(ec.message()); return -1; }
+        h.resume();
+
+        int64_t id = sw->next_id.fetch_add(1);
+        {
+            std::lock_guard<std::mutex> lk(sw->mu);
+            sw->handles[id] = h;
+            if (stream_only) sw->ephemeral_torrents.insert(id);
+        }
+        set_err(""); return id;
+    } catch (const std::exception& e) { set_err(e.what()); return -1; }
+}
+
+// ── metadata + fast-resume persistence ─────────────────────────────────────────
+
+TORRENT_API int lt_save_torrent_state(lt_session_t session,
+                                      lt_torrent_id id,
+                                      const char* state_path) {
+    if (!session || !state_path) { set_err("null arg"); return 0; }
+    auto* sw = to_sw(session);
+    lt::torrent_handle h;
+    {
+        std::lock_guard<std::mutex> lk(sw->mu);
+        auto it = sw->handles.find(id);
+        if (it == sw->handles.end() || !it->second.is_valid()) {
+            set_err("torrent not found");
+            return 0;
+        }
+        h = it->second;
+    }
+    try {
+        lt::torrent_status st = h.status();
+        if (!st.has_metadata) { set_err("no metadata"); return 0; }
+        // Synchronous resume data. save_info_dict embeds the metadata so a
+        // magnet can be re-added without a peer metadata exchange;
+        // flush_disk_cache keeps file timestamps consistent.
+        auto atp = h.get_resume_data(lt::torrent_handle::save_info_dict
+                                     | lt::torrent_handle::flush_disk_cache);
+        auto buf = lt::write_resume_data_buf(atp);
+        if (buf.empty()) { set_err("empty resume data"); return 0; }
+
+        std::string tmp = std::string(state_path) + ".tmp";
+        {
+            std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+            if (!out) { set_err("cannot open state file"); return 0; }
+            out.write(buf.data(), static_cast<std::streamsize>(buf.size()));
+            if (!out.good()) { set_err("state write failed"); return 0; }
+        }
+        std::remove(state_path);
+        if (std::rename(tmp.c_str(), state_path) != 0) {
+            set_err("state rename failed");
+            return 0;
+        }
+        set_err("");
+        return 1;
+    } catch (const std::exception& e) { set_err(e.what()); return 0; }
+}
+
+TORRENT_API lt_torrent_id lt_add_torrent_with_state(lt_session_t session,
+                                                    const char* state_path,
+                                                    const char* save_path,
+                                                    int stream_only) {
+    if (!session || !state_path || !save_path) { set_err("null arg"); return -1; }
+    auto* sw = to_sw(session);
+    try {
+        std::ifstream in(state_path, std::ios::binary);
+        if (!in) { set_err("cannot read state file"); return -1; }
+        std::vector<char> buf((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+        if (buf.empty()) { set_err("empty state file"); return -1; }
+
+        lt::error_code ec;
+        auto atp = lt::read_resume_data(
+            lt::span<char const>(
+                buf.data(), static_cast<std::ptrdiff_t>(buf.size())),
+            ec);
+        if (ec) { set_err(ec.message()); return -1; }
+        if (!atp.ti) { set_err("resume data has no metadata"); return -1; }
+
+        // Override the saved path with the current session's directory and
+        // make sure the torrent is not restored paused.
+        atp.save_path = save_path;
+        atp.flags &= ~lt::torrent_flags::paused;
+        atp.flags &= ~lt::torrent_flags::auto_managed;
+        add_default_trackers_if_empty(atp);
         if (stream_only) {
             atp.storage_mode = lt::storage_mode_sparse;
             atp.flags |= lt::torrent_flags::stop_when_ready;
@@ -2514,6 +2652,7 @@ TORRENT_API int lt_get_files(lt_session_t session, lt_torrent_id id,
         for (int i = 0; i < fs.num_files() && n < max; ++i, ++n) {
             lt::file_index_t fi{i};
             out[n].index = i;
+            out[n].size = fs.file_size(fi);
             std::string nm = std::string(fs.file_name(fi));
             out[n].is_streamable = is_streamable(nm) ? 1 : 0;
             std::string pt = fs.file_path(fi);
@@ -2762,6 +2901,196 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
     }
 
     set_err(""); return sid;
+}
+
+// Deadline spacing derived from the estimated piece duration: pieces should
+// arrive before their playback time, with the first pieces urgent and later
+// pieces progressively later. Clamped so a slow swarm still gets an
+// aggressive early gradient and a fast one does not over-stagger.
+static int piece_deadline_step_ms(const StreamEngine* s) {
+    float bitrate = s->estimated_bitrate_bps > 1000.0f
+        ? s->estimated_bitrate_bps : 625000.0f;
+    float piece_seconds = (float)s->piece_length / bitrate;
+    int step = (int)(piece_seconds * 1000.0f * 0.35f);
+    return std::clamp(step, 40, 250);
+}
+
+// Prefetch window sizing. Callers may pass an explicit byte budget (Dart
+// computes it from learned bitrate + download speed + buffered-ahead + swarm
+// stability); otherwise fall back to a native heuristic: ~25s of video,
+// widened when the swarm is slower than the media bitrate and narrowed when
+// it is much faster. Clamped to [4, 64] pieces.
+static int adaptive_window_pieces(const StreamEngine* s, int64_t window_bytes) {
+    if (window_bytes > 0 && s->piece_length > 0) {
+        return std::clamp((int)(window_bytes / s->piece_length), 4, 64);
+    }
+    float bitrate = s->estimated_bitrate_bps > 1000.0f
+        ? s->estimated_bitrate_bps : 625000.0f;
+    float seconds = 25.0f;
+    try {
+        lt::torrent_status ts = s->handle.status();
+        float rate = (float)ts.download_rate;
+        if (rate > 0.0f) {
+            if (rate > bitrate * 2.0f) seconds = 15.0f;
+            else if (rate < bitrate * 1.2f) seconds = 45.0f;
+        }
+        if (ts.num_peers < 4) seconds *= 1.3f;
+    } catch (...) {}
+    int pieces = (int)((bitrate * seconds) / std::max(1, s->piece_length));
+    return std::clamp(pieces, 4, 48);
+}
+
+// Pre-seek / resume hint. window_bytes == 0 selects the native heuristic;
+// urgency > 0 is the rebuffer/boost path (earliest deadlines, top priority on
+// the first pieces). Deadlines are staggered by piece playback duration so
+// the picker builds a rolling pipeline instead of a flat priority wall.
+TORRENT_API int lt_set_stream_position(lt_session_t session, lt_stream_id sid,
+                                       int64_t byte_offset,
+                                       int64_t window_bytes,
+                                       int32_t urgency) {
+    if (!session) return 0;
+    auto* sw = to_sw(session);
+    std::lock_guard<std::mutex> lk(sw->streams_mu);
+    auto it = sw->streams.find(sid);
+    if (it == sw->streams.end()) return 0;
+    auto* s = it->second.get();
+    if (!s || !s->active.load()) return 0;
+
+    if (byte_offset < 0) byte_offset = 0;
+    if (byte_offset > s->file_size) byte_offset = s->file_size;
+
+    s->read_head.store(byte_offset);
+    int p = std::clamp(s->byte_to_piece(byte_offset), s->start_piece, s->end_piece);
+
+    const bool urgent = urgency > 0;
+    const int pieces = adaptive_window_pieces(s, window_bytes);
+    // Bias the window forward: a little tolerance behind the estimate for
+    // keyframe/VBR drift, most of the budget ahead of the target.
+    const int before = std::max(2, pieces / 5);
+    const int start = std::max(p - before, s->start_piece);
+    const int end = std::min(p + (pieces - before) - 1, s->end_piece);
+    const int step = piece_deadline_step_ms(s);
+    const int base = urgent ? 0 : 1500;
+
+    for (int i = start; i <= end; ++i) {
+        try {
+            const int offset = i - start;
+            auto pri = urgent
+                ? (offset < 4 ? lt::top_priority : lt::download_priority_t(6))
+                : lt::download_priority_t(4);
+            s->handle.piece_priority(lt::piece_index_t(i), pri);
+            s->handle.set_piece_deadline(lt::piece_index_t(i),
+                                         base + offset * step);
+        } catch (...) {}
+    }
+    s->hint_window_pieces.store(end - start + 1);
+    s->hint_urgency.store(urgent ? 1 : 0);
+    s->active_window_start.store(start);
+    s->active_window_end.store(end);
+    TB_LOG("lt_set_stream_position: stream=%lld byte=%lld pieces=%d..%d "
+           "window=%dp urgency=%d step=%dms",
+           (long long)sid, (long long)byte_offset, start, end,
+           end - start + 1, urgent ? 1 : 0, step);
+    return 1;
+}
+
+// Observed media duration from the player. Refines the bitrate estimate used
+// for buffer-seconds reporting and adaptive window sizing.
+TORRENT_API int lt_set_stream_duration(lt_session_t session, lt_stream_id sid,
+                                       int64_t duration_ms) {
+    if (!session || duration_ms <= 0) return 0;
+    auto* sw = to_sw(session);
+    std::lock_guard<std::mutex> lk(sw->streams_mu);
+    auto it = sw->streams.find(sid);
+    if (it == sw->streams.end()) return 0;
+    auto* s = it->second.get();
+    if (!s || !s->active.load()) return 0;
+    s->duration_ms.store(duration_ms);
+    if (s->file_size > 0) {
+        s->estimated_bitrate_bps =
+            (float)s->file_size / ((float)duration_ms / 1000.0f);
+    }
+    TB_LOG("lt_set_stream_duration: stream=%lld duration=%lldms bitrate=%.0fKB/s",
+           (long long)sid, (long long)duration_ms,
+           s->estimated_bitrate_bps / 1024.0f);
+    return 1;
+}
+
+// One-line scheduler snapshot for tuning: playback position, buffered ahead,
+// target piece, priority window coverage, peer/local throughput, generation
+// and stream state.
+TORRENT_API int lt_get_stream_debug(lt_session_t session, lt_stream_id sid,
+                                    char* out, int32_t cap) {
+    if (!session || !out || cap <= 0) return 0;
+    auto* sw = to_sw(session);
+    std::lock_guard<std::mutex> lk(sw->streams_mu);
+    auto it = sw->streams.find(sid);
+    if (it == sw->streams.end()) return 0;
+    auto* s = it->second.get();
+    if (!s) return 0;
+
+    const int64_t head = s->read_head.load();
+    const int target_piece =
+        std::clamp(s->byte_to_piece(head), s->start_piece, s->end_piece);
+    // Prefer the window the scheduler actually prioritized (serve_range or a
+    // hint) over the last hint alone, so coverage numbers match reality.
+    int win_start = s->active_window_start.load();
+    int win_end = s->active_window_end.load();
+    if (win_end < win_start) {
+      win_start = target_piece;
+      win_end = std::min(
+          target_piece + std::max(1, s->hint_window_pieces.load()) - 1,
+          s->end_piece);
+    }
+    win_start = std::clamp(win_start, s->start_piece, s->end_piece);
+    win_end = std::clamp(win_end, win_start, s->end_piece);
+    int verified = 0;
+    int contiguous = 0;
+    {
+        std::lock_guard<std::mutex> plk(s->piece_mu);
+        for (int i = win_start; i <= win_end; ++i)
+            if (s->pieces_have.count(i)) ++verified;
+        int i = target_piece;
+        while (i <= s->end_piece && s->pieces_have.count(i)) { ++contiguous; ++i; }
+    }
+    const int total = win_end - win_start + 1;
+
+    const int64_t served = s->served_bytes.load();
+    const int64_t now_ms = chr::duration_cast<chr::milliseconds>(
+        chr::steady_clock::now().time_since_epoch()).count();
+    double local_rate = 0.0;
+    if (s->debug_last_ms > 0 && now_ms > s->debug_last_ms) {
+        local_rate = (double)(served - s->debug_last_bytes) * 1000.0 /
+                     (double)(now_ms - s->debug_last_ms);
+    }
+    s->debug_last_bytes = served;
+    s->debug_last_ms = now_ms;
+
+    int peer_rate = 0;
+    int peers = 0;
+    try {
+        lt::torrent_status ts = s->handle.status();
+        peer_rate = ts.download_rate;
+        peers = ts.num_peers;
+    } catch (...) {}
+
+    float bitrate = s->estimated_bitrate_bps > 1000.0f
+        ? s->estimated_bitrate_bps : 625000.0f;
+    float pos_seconds = (float)head / bitrate;
+    float buffered_seconds = (float)contiguous * s->piece_length / bitrate;
+
+    snprintf(out, (size_t)cap,
+             "pos=%.1fs byte=%lld target=%d window=%d..%d(%dp) verified=%d/%d "
+             "missing=%d buffer=%.1fs peers=%d peer_rate=%.0fKB/s "
+             "local_rate=%.0fKB/s bitrate=%.0fKB/s gen=%d state=%d urgency=%d "
+             "duration=%lldms",
+             pos_seconds, (long long)head, target_piece,
+             win_start, win_end, total, verified, total, total - verified,
+             buffered_seconds, peers, peer_rate / 1024.0, local_rate / 1024.0,
+             bitrate / 1024.0f, s->seek_generation.load(),
+             s->stream_state.load(), s->hint_urgency.load(),
+             (long long)s->duration_ms.load());
+    return 1;
 }
 
 TORRENT_API void lt_stop_stream(lt_session_t session, lt_stream_id sid) {

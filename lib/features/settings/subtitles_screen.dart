@@ -20,17 +20,14 @@ class SubtitlesScreen extends ConsumerWidget {
         children: [
           Text(
             'Subtitles',
-            style: Theme.of(context)
-                .textTheme
-                .headlineSmall
+            style: Theme.of(context).textTheme.headlineSmall
                 ?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 4),
           Text(
             'Configure how subtitles are loaded and displayed.',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: DesignTokens.textSecondary,
-                ),
+            style: Theme.of(context).textTheme.bodyMedium
+                ?.copyWith(color: DesignTokens.textSecondary),
           ),
           const SizedBox(height: 16),
           settings.when(
@@ -72,6 +69,47 @@ class SubtitlesScreen extends ConsumerWidget {
                             .setSubtitleLanguage(
                               value == 'None' ? null : value,
                             );
+                      },
+                    ),
+                  ],
+                ),
+                SettingsSection(
+                  title: 'Display',
+                  subtitle: 'How subtitles appear in the player',
+                  children: [
+                    SettingsSelect<double>(
+                      title: 'Text size',
+                      icon: Icons.format_size,
+                      value: s.subtitleTextScale,
+                      options: [
+                        for (final scale in AppSettings.subtitleTextScales)
+                          SelectOption(
+                            value: scale,
+                            label: AppSettings.subtitleTextScaleLabel(scale),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        ref
+                            .read(appSettingsProvider.notifier)
+                            .setSubtitleTextScale(value);
+                      },
+                    ),
+                    const Divider(height: 1),
+                    SettingsSelect<SubtitleBackgroundStyle>(
+                      title: 'Background',
+                      icon: Icons.format_color_fill,
+                      value: s.subtitleBackground,
+                      options: [
+                        for (final style in SubtitleBackgroundStyle.values)
+                          SelectOption(
+                            value: style,
+                            label: AppSettings.subtitleBackgroundLabel(style),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        ref
+                            .read(appSettingsProvider.notifier)
+                            .setSubtitleBackground(value);
                       },
                     ),
                   ],

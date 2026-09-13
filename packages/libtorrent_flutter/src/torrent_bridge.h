@@ -145,6 +145,20 @@ TORRENT_API void lt_pause_torrent(lt_session_t session, lt_torrent_id id);
 TORRENT_API void lt_resume_torrent(lt_session_t session, lt_torrent_id id);
 TORRENT_API void lt_recheck_torrent(lt_session_t session, lt_torrent_id id);
 
+/* metadata + fast-resume persistence.
+   lt_save_torrent_state writes libtorrent resume data (including the
+   info-dict and verified piece bitfield) to state_path atomically; returns
+   1 on success, 0 when unavailable (e.g. no metadata yet).
+   lt_add_torrent_with_state re-adds a torrent from that file without a peer
+   metadata exchange or a full recheck; returns the new id or -1. */
+TORRENT_API int lt_save_torrent_state(lt_session_t session,
+                                      lt_torrent_id id,
+                                      const char* state_path);
+TORRENT_API lt_torrent_id lt_add_torrent_with_state(lt_session_t session,
+                                                    const char* state_path,
+                                                    const char* save_path,
+                                                    int stream_only);
+
 /* status queries */
 TORRENT_API int lt_get_torrent_count(lt_session_t session);
 TORRENT_API int lt_get_all_statuses(lt_session_t session,
@@ -164,6 +178,24 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
                                          lt_torrent_id torrent_id,
                                          int file_index,
                                          int64_t max_cache_bytes);
+/* pre-seek hint: prioritize pieces around [byte_offset] before the player
+   requests them, so a resume position downloads alongside the head/tail
+   metadata. window_bytes 0 selects the native heuristic; urgency > 0 is the
+   rebuffer boost path (earliest deadlines, top priority on the first
+   pieces). Returns 1 on success. */
+TORRENT_API int lt_set_stream_position(lt_session_t session,
+                                       lt_stream_id id,
+                                       int64_t byte_offset,
+                                       int64_t window_bytes,
+                                       int32_t urgency);
+/* observed media duration (ms) for bitrate/buffer/window sizing. */
+TORRENT_API int lt_set_stream_duration(lt_session_t session,
+                                       lt_stream_id id,
+                                       int64_t duration_ms);
+/* one-line scheduler snapshot for diagnostics/tuning. */
+TORRENT_API int lt_get_stream_debug(lt_session_t session,
+                                    lt_stream_id id,
+                                    char* out, int32_t cap);
 TORRENT_API void         lt_stop_stream(lt_session_t session, lt_stream_id id);
 TORRENT_API int          lt_get_stream_status(lt_session_t session,
                                               lt_stream_id id,

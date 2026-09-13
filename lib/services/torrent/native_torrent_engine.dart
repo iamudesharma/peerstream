@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:libtorrent_flutter/libtorrent_flutter.dart' as lt;
 import 'package:path_provider/path_provider.dart';
 
@@ -15,14 +16,15 @@ import 'source_policy_loader.dart';
 /// `packages/libtorrent_flutter/src/torrent_bridge.cpp`. Bump both together
 /// so runtime diagnostics can confirm all platforms ship the same native
 /// implementation before comparing performance.
-const nativeBridgeVersion = 'bridge-1.5.0+lt2.0.11';
+const nativeBridgeVersion = 'bridge-1.8.1+lt2.0.11';
 
 class NativeTorrentEngine
     implements
         TorrentEngine,
         FileCompletenessChecker,
         EngineDiagnosticsProvider,
-        TorrentAvailabilityProvider {
+        TorrentAvailabilityProvider,
+        StreamPositionController {
   final _dio = Dio(
     BaseOptions(
       connectTimeout: const Duration(seconds: 10),
@@ -31,9 +33,15 @@ class NativeTorrentEngine
   );
   final Map<int, int> _streamIds = {};
   final Map<String, int> _retainedTorrents = {};
+  final Map<int, String> _stateDirectories = {};
   final PlaybackCacheStore _cache = PlaybackCacheStore();
   Directory? _sessionDirectory;
+  Timer? _stateSaveTimer;
   lt.LibtorrentFlutter? _engine;
+
+  /// Sidecar file inside each torrent directory holding libtorrent resume
+  /// data: the torrent metadata (info-dict) plus the verified piece bitfield.
+  static const _stateFileName = 'resume.dat';
 
   @override
   bool get isSupported => true;
@@ -137,6 +145,62 @@ class NativeTorrentEngine
     }
   }
 
+  @override
+  void setStreamPosition(
+    TorrentHandle handle,
+    int byteOffset, {
+    int windowBytes = 0,
+    bool urgent = false,
+  }) {
+    final streamId = _streamIds[_id(handle)];
+    if (streamId == null || byteOffset <= 0) return;
+    try {
+      final accepted = _native.setStreamPosition(
+        streamId,
+        byteOffset,
+        windowBytes: windowBytes,
+        urgent: urgent,
+      );
+      if (accepted) {
+        debugPrint(
+          '[Torrent] stream position hint id=$streamId byte=$byteOffset '
+          'window=$windowBytes urgent=${urgent ? 1 : 0}',
+        );
+      }
+    } catch (_) {}
+  }
+
+  @override
+  void setStreamDuration(TorrentHandle handle, int durationMs) {
+    final streamId = _streamIds[_id(handle)];
+    if (streamId == null || durationMs <= 0) return;
+    try {
+      _native.setStreamDuration(streamId, durationMs);
+    } catch (_) {}
+  }
+
+  @override
+  int? streamReadHead(TorrentHandle handle) {
+    final streamId = _streamIds[_id(handle)];
+    if (streamId == null) return null;
+    try {
+      return _native.streamStatusNow(streamId)?.readHead;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  String? streamDebugSnapshot(TorrentHandle handle) {
+    final streamId = _streamIds[_id(handle)];
+    if (streamId == null) return null;
+    try {
+      return _native.streamDebugSnapshot(streamId);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Fast polling during startup/seeking, relaxed during steady playback.
   /// The native poll only emits on change so idle cost stays low.
   void useStartupPolling() {
@@ -163,6 +227,27 @@ class NativeTorrentEngine
       return TorrentHandle('$retainedId');
     }
     final torrentDirectory = Directory(await _cache.directoryPathFor(source));
+    // Fast path: re-add from saved resume data (metadata + verified pieces).
+    // Skips the peer metadata exchange and the file recheck, so cached bytes
+    // are usable immediately after a restart.
+    final stateFile = File(
+      '${torrentDirectory.path}${Platform.pathSeparator}$_stateFileName',
+    );
+    if (await stateFile.exists() &&
+        await _hasTorrentPayload(torrentDirectory)) {
+      final stateId = _native.addTorrentWithState(
+        stateFile.path,
+        torrentDirectory.path,
+        true,
+      );
+      if (stateId != null) {
+        _retainedTorrents[cacheKey] = stateId;
+        _stateDirectories[stateId] = torrentDirectory.path;
+        debugPrint('[Torrent] resumed from state key=$cacheKey id=$stateId');
+        return TorrentHandle('$stateId');
+      }
+      debugPrint('[Torrent] state re-add failed for $cacheKey; falling back');
+    }
     int? torrentId;
     if (source.inputType == TorrentInputType.magnet) {
       torrentId = _native.addMagnet(
@@ -210,7 +295,57 @@ class NativeTorrentEngine
     }
     final id = torrentId;
     _retainedTorrents[cacheKey] = id;
+    _stateDirectories[id] = torrentDirectory.path;
+    debugPrint(
+      '[Torrent] add ${source.inputType.name} key=$cacheKey '
+      'dir=${torrentDirectory.path} id=$id',
+    );
     return TorrentHandle('$id');
+  }
+
+  /// True when the torrent directory holds downloaded payload (not just the
+  /// resume/metadata sidecars), so re-adding from resume data cannot point
+  /// libtorrent at pieces that are no longer on disk.
+  Future<bool> _hasTorrentPayload(Directory directory) async {
+    try {
+      await for (final entity in directory.list(
+        recursive: true,
+        followLinks: false,
+      )) {
+        if (entity is! File) continue;
+        final name = entity.uri.pathSegments.last;
+        if (name == _stateFileName ||
+            name == 'source.torrent' ||
+            name.endsWith('.tmp')) {
+          continue;
+        }
+        if (await entity.length() > 0) return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  /// Writes resume data for [id] when its directory is known. Best effort:
+  /// failures (no metadata yet, removed torrent) are ignored.
+  void _saveTorrentState(int id) {
+    final directory = _stateDirectories[id];
+    if (directory == null) return;
+    try {
+      final saved = _native.saveTorrentState(
+        id,
+        '$directory${Platform.pathSeparator}$_stateFileName',
+      );
+      if (saved) debugPrint('[Torrent] state saved id=$id');
+    } catch (_) {}
+  }
+
+  /// Periodic safety net so a killed process still leaves usable state.
+  void _startStateSaveTimer() {
+    _stateSaveTimer ??= Timer.periodic(const Duration(seconds: 60), (_) {
+      for (final id in _stateDirectories.keys.toList()) {
+        _saveTorrentState(id);
+      }
+    });
   }
 
   int _id(TorrentHandle handle) => int.parse(handle.id);
@@ -228,6 +363,8 @@ class NativeTorrentEngine
     }).toList();
     final current = _native.torrents[id];
     if (current?.hasMetadata == true) return readFiles();
+    final startedAt = DateTime.now();
+    debugPrint('[Torrent] waiting for metadata (id=$id)');
     try {
       await _native.torrentUpdates
           .firstWhere((all) {
@@ -245,6 +382,13 @@ class NativeTorrentEngine
         'with more seeds.',
       );
     }
+    debugPrint(
+      '[Torrent] metadata ready (id=$id) after '
+      '${DateTime.now().difference(startedAt).inSeconds}s',
+    );
+    // Persist metadata + pieces as soon as the info-dict is known, so even a
+    // failed playback leaves a resumable state file behind.
+    _saveTorrentState(id);
     return readFiles();
   }
 
@@ -297,6 +441,7 @@ class NativeTorrentEngine
       preloadBytes: Platform.isAndroid ? 4 * 1024 * 1024 : 8 * 1024 * 1024,
     );
     _streamIds[torrentId] = stream.id;
+    _startStateSaveTimer();
     return TorrentPlaybackStream(
       id: '${stream.id}',
       uri: Uri.parse(stream.url),
@@ -307,10 +452,14 @@ class NativeTorrentEngine
   @override
   Future<void> stop(TorrentHandle handle, {bool deleteFiles = false}) async {
     final id = _id(handle);
+    // Save before pausing/removing: resume data must be captured while the
+    // handle and its piece map are still valid.
+    _saveTorrentState(id);
     _native.stopAllStreamsForTorrent(id);
     if (deleteFiles) {
       _native.removeTorrent(id, deleteFiles: true);
       _retainedTorrents.removeWhere((_, torrentId) => torrentId == id);
+      _stateDirectories.remove(id);
     } else {
       // Keeping the handle avoids a second metadata exchange and preserves the
       // verified piece map for replay during this app session.
@@ -322,9 +471,15 @@ class NativeTorrentEngine
   @override
   Future<void> dispose() async {
     if (_engine == null) return;
+    _stateSaveTimer?.cancel();
+    _stateSaveTimer = null;
+    for (final id in _stateDirectories.keys.toList()) {
+      _saveTorrentState(id);
+    }
     await _native.dispose();
     _engine = null;
     _retainedTorrents.clear();
+    _stateDirectories.clear();
   }
 
   /// Verified availability snapshot for the selected file: whole-file

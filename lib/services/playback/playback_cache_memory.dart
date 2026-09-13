@@ -36,6 +36,25 @@ class PlaybackCacheStore {
       .firstOrNull;
   Future<bool> hasCompleteFile(TorrentSource source) async => false;
   Future<PlaybackCacheEntry?> completeFile(TorrentSource source) async => null;
+  Future<void> recordTimeByteObservation(
+    TorrentSource source,
+    int positionMs,
+    int byteOffset, {
+    required int fileSize,
+  }) async {
+    if (positionMs <= 0 || byteOffset <= 0 || fileSize <= 0) return;
+    final key = torrentCacheKey(source);
+    final entry = _entries[key];
+    if (entry == null) return;
+    _entries[key] = entry.copyWith(
+      timeBytePoints: mergeTimeBytePoint(
+        entry.timeBytePoints,
+        TimeBytePoint(positionMs: positionMs, byteOffset: byteOffset),
+        fileSize: fileSize,
+      ),
+    );
+  }
+
   Future<String> directoryPathFor(TorrentSource source) async => '';
   Future<List<PlaybackCacheEntry>> entries() async => _entries.values.toList();
   Future<void> record(
@@ -43,6 +62,7 @@ class PlaybackCacheStore {
     TorrentFileEntry file, {
     required bool complete,
     required int byteSize,
+    bool preserveComplete = false,
   }) async {}
   Future<void> pruneIfNeeded({String? protectedKey}) async {}
   Future<PlaybackCacheSummary> summary() async => PlaybackCacheSummary(
