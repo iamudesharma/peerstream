@@ -93,80 +93,82 @@ final class LtStreamStatus extends Struct {
 }
 
 // ─── Alert callback ───────────────────────────────────────────────────────────
-typedef LtAlertCallbackNative =
-    Void Function(
-      Int32 alertType,
-      Int64 id,
-      Pointer<Utf8> message,
-      Pointer<Void> userData,
-    );
-typedef LtAlertCallbackDart =
-    void Function(
-      int alertType,
-      int id,
-      Pointer<Utf8> message,
-      Pointer<Void> userData,
-    );
+typedef LtAlertCallbackNative = Void Function(
+  Int32 alertType,
+  Int64 id,
+  Pointer<Utf8> message,
+  Pointer<Void> userData,
+);
+typedef LtAlertCallbackDart = void Function(
+  int alertType,
+  int id,
+  Pointer<Utf8> message,
+  Pointer<Void> userData,
+);
 
 // ─── SSL cert path (Android WebTorrent) ──────────────────────────────────────
 typedef _SetSslCertPathN = Void Function(Pointer<Utf8>);
 typedef LtSetSslCertPath = void Function(Pointer<Utf8>);
 
 // ─── Session ──────────────────────────────────────────────────────────────────
-typedef _CreateSessionN =
-    Pointer<LtSessionOpaque> Function(Pointer<Utf8>, Int32, Int32);
-typedef LtCreateSession =
-    Pointer<LtSessionOpaque> Function(Pointer<Utf8>, int, int);
+typedef _CreateSessionN = Pointer<LtSessionOpaque> Function(
+    Pointer<Utf8>, Int32, Int32);
+typedef LtCreateSession = Pointer<LtSessionOpaque> Function(
+    Pointer<Utf8>, int, int);
 
 typedef _DestroySessionN = Void Function(Pointer<LtSessionOpaque>);
 typedef LtDestroySession = void Function(Pointer<LtSessionOpaque>);
 
-typedef _PollAlertsN =
-    Void Function(
-      Pointer<LtSessionOpaque>,
-      Pointer<NativeFunction<LtAlertCallbackNative>>,
-      Pointer<Void>,
-    );
-typedef LtPollAlerts =
-    void Function(
-      Pointer<LtSessionOpaque>,
-      Pointer<NativeFunction<LtAlertCallbackNative>>,
-      Pointer<Void>,
-    );
+typedef _PollAlertsN = Void Function(
+  Pointer<LtSessionOpaque>,
+  Pointer<NativeFunction<LtAlertCallbackNative>>,
+  Pointer<Void>,
+);
+typedef LtPollAlerts = void Function(
+  Pointer<LtSessionOpaque>,
+  Pointer<NativeFunction<LtAlertCallbackNative>>,
+  Pointer<Void>,
+);
 
-typedef _SetAlertCallbackN =
-    Void Function(
-      Pointer<LtSessionOpaque>,
-      Pointer<NativeFunction<LtAlertCallbackNative>>,
-      Pointer<Void>,
-    );
-typedef LtSetAlertCallback =
-    void Function(
-      Pointer<LtSessionOpaque>,
-      Pointer<NativeFunction<LtAlertCallbackNative>>,
-      Pointer<Void>,
-    );
+typedef _SetAlertCallbackN = Void Function(
+  Pointer<LtSessionOpaque>,
+  Pointer<NativeFunction<LtAlertCallbackNative>>,
+  Pointer<Void>,
+);
+typedef LtSetAlertCallback = void Function(
+  Pointer<LtSessionOpaque>,
+  Pointer<NativeFunction<LtAlertCallbackNative>>,
+  Pointer<Void>,
+);
 
 // ─── Torrent management ──────────────────────────────────────────────────────
-typedef _AddMagnetN =
-    Int64 Function(
-      Pointer<LtSessionOpaque>,
-      Pointer<Utf8>,
-      Pointer<Utf8>,
-      Int32,
-    );
-typedef LtAddMagnet =
-    int Function(Pointer<LtSessionOpaque>, Pointer<Utf8>, Pointer<Utf8>, int);
+typedef _AddMagnetN = Int64 Function(
+  Pointer<LtSessionOpaque>,
+  Pointer<Utf8>,
+  Pointer<Utf8>,
+  Int32,
+);
+typedef LtAddMagnet = int Function(
+    Pointer<LtSessionOpaque>, Pointer<Utf8>, Pointer<Utf8>, int);
 
-typedef _AddTorrentFileN =
-    Int64 Function(
-      Pointer<LtSessionOpaque>,
-      Pointer<Utf8>,
-      Pointer<Utf8>,
-      Int32,
-    );
-typedef LtAddTorrentFile =
-    int Function(Pointer<LtSessionOpaque>, Pointer<Utf8>, Pointer<Utf8>, int);
+typedef _AddTorrentFileN = Int64 Function(
+  Pointer<LtSessionOpaque>,
+  Pointer<Utf8>,
+  Pointer<Utf8>,
+  Int32,
+);
+typedef LtAddTorrentFile = int Function(
+    Pointer<LtSessionOpaque>, Pointer<Utf8>, Pointer<Utf8>, int);
+
+typedef _SaveTorrentStateN = Int32 Function(
+    Pointer<LtSessionOpaque>, Int64, Pointer<Utf8>);
+typedef LtSaveTorrentState = int Function(
+    Pointer<LtSessionOpaque>, int, Pointer<Utf8>);
+
+typedef _AddTorrentWithStateN = Int64 Function(
+    Pointer<LtSessionOpaque>, Pointer<Utf8>, Pointer<Utf8>, Int32);
+typedef LtAddTorrentWithState = int Function(
+    Pointer<LtSessionOpaque>, Pointer<Utf8>, Pointer<Utf8>, int);
 
 typedef _RemoveTorrentN = Void Function(Pointer<LtSessionOpaque>, Int64, Int32);
 typedef LtRemoveTorrent = void Function(Pointer<LtSessionOpaque>, int, int);
@@ -184,58 +186,72 @@ typedef LtRecheckTorrent = void Function(Pointer<LtSessionOpaque>, int);
 typedef _GetTorrentCountN = Int32 Function(Pointer<LtSessionOpaque>);
 typedef LtGetTorrentCount = int Function(Pointer<LtSessionOpaque>);
 
-typedef _GetAllStatusesN =
-    Int32 Function(Pointer<LtSessionOpaque>, Pointer<LtTorrentStatus>, Int32);
-typedef LtGetAllStatuses =
-    int Function(Pointer<LtSessionOpaque>, Pointer<LtTorrentStatus>, int);
+typedef _GetAllStatusesN = Int32 Function(
+    Pointer<LtSessionOpaque>, Pointer<LtTorrentStatus>, Int32);
+typedef LtGetAllStatuses = int Function(
+    Pointer<LtSessionOpaque>, Pointer<LtTorrentStatus>, int);
 
-typedef _GetStatusN =
-    Int32 Function(Pointer<LtSessionOpaque>, Int64, Pointer<LtTorrentStatus>);
-typedef LtGetStatus =
-    int Function(Pointer<LtSessionOpaque>, int, Pointer<LtTorrentStatus>);
+typedef _GetStatusN = Int32 Function(
+    Pointer<LtSessionOpaque>, Int64, Pointer<LtTorrentStatus>);
+typedef LtGetStatus = int Function(
+    Pointer<LtSessionOpaque>, int, Pointer<LtTorrentStatus>);
 
 // ─── File enumeration ────────────────────────────────────────────────────────
 typedef _GetFileCountN = Int32 Function(Pointer<LtSessionOpaque>, Int64);
 typedef LtGetFileCount = int Function(Pointer<LtSessionOpaque>, int);
 
-typedef _GetFilesN =
-    Int32 Function(Pointer<LtSessionOpaque>, Int64, Pointer<LtFileInfo>, Int32);
-typedef LtGetFiles =
-    int Function(Pointer<LtSessionOpaque>, int, Pointer<LtFileInfo>, int);
+typedef _GetFilesN = Int32 Function(
+    Pointer<LtSessionOpaque>, Int64, Pointer<LtFileInfo>, Int32);
+typedef LtGetFiles = int Function(
+    Pointer<LtSessionOpaque>, int, Pointer<LtFileInfo>, int);
 
-typedef _SetFilePrioritiesN =
-    Void Function(Pointer<LtSessionOpaque>, Int64, Pointer<Int32>, Int32);
-typedef LtSetFilePriorities =
-    void Function(Pointer<LtSessionOpaque>, int, Pointer<Int32>, int);
+typedef _SetFilePrioritiesN = Void Function(
+    Pointer<LtSessionOpaque>, Int64, Pointer<Int32>, Int32);
+typedef LtSetFilePriorities = void Function(
+    Pointer<LtSessionOpaque>, int, Pointer<Int32>, int);
 
 // ─── Stream management ──────────────────────────────────────────────────────
-typedef _StartStreamN =
-    Int64 Function(Pointer<LtSessionOpaque>, Int64, Int32, Int64);
+typedef _StartStreamN = Int64 Function(
+    Pointer<LtSessionOpaque>, Int64, Int32, Int64);
 typedef LtStartStream = int Function(Pointer<LtSessionOpaque>, int, int, int);
+
+typedef _SetStreamPositionN = Int32 Function(
+    Pointer<LtSessionOpaque>, Int64, Int64, Int64, Int32);
+typedef LtSetStreamPosition = int Function(
+    Pointer<LtSessionOpaque>, int, int, int, int);
+
+typedef _SetStreamDurationN = Int32 Function(
+    Pointer<LtSessionOpaque>, Int64, Int64);
+typedef LtSetStreamDuration = int Function(Pointer<LtSessionOpaque>, int, int);
+
+typedef _GetStreamDebugN = Int32 Function(
+    Pointer<LtSessionOpaque>, Int64, Pointer<Utf8>, Int32);
+typedef LtGetStreamDebug = int Function(
+    Pointer<LtSessionOpaque>, int, Pointer<Utf8>, int);
 
 typedef _StopStreamN = Void Function(Pointer<LtSessionOpaque>, Int64);
 typedef LtStopStream = void Function(Pointer<LtSessionOpaque>, int);
 
-typedef _GetStreamStatusN =
-    Int32 Function(Pointer<LtSessionOpaque>, Int64, Pointer<LtStreamStatus>);
-typedef LtGetStreamStatus =
-    int Function(Pointer<LtSessionOpaque>, int, Pointer<LtStreamStatus>);
+typedef _GetStreamStatusN = Int32 Function(
+    Pointer<LtSessionOpaque>, Int64, Pointer<LtStreamStatus>);
+typedef LtGetStreamStatus = int Function(
+    Pointer<LtSessionOpaque>, int, Pointer<LtStreamStatus>);
 
-typedef _GetAllStreamStatusesN =
-    Int32 Function(Pointer<LtSessionOpaque>, Pointer<LtStreamStatus>, Int32);
-typedef LtGetAllStreamStatuses =
-    int Function(Pointer<LtSessionOpaque>, Pointer<LtStreamStatus>, int);
+typedef _GetAllStreamStatusesN = Int32 Function(
+    Pointer<LtSessionOpaque>, Pointer<LtStreamStatus>, Int32);
+typedef LtGetAllStreamStatuses = int Function(
+    Pointer<LtSessionOpaque>, Pointer<LtStreamStatus>, int);
 
 // ─── Preload — port of torr/preload.go ────────────────────────────────────────
-typedef _PreloadStreamN =
-    Int32 Function(Pointer<LtSessionOpaque>, Int64, Int64);
+typedef _PreloadStreamN = Int32 Function(
+    Pointer<LtSessionOpaque>, Int64, Int64);
 typedef LtPreloadStream = int Function(Pointer<LtSessionOpaque>, int, int);
 
 // ─── Cache settings — port of settings/btsets.go ─────────────────────────────
-typedef _SetCacheSettingsN =
-    Void Function(Pointer<LtSessionOpaque>, Int64, Int64, Int32, Int32);
-typedef LtSetCacheSettings =
-    void Function(Pointer<LtSessionOpaque>, int, int, int, int);
+typedef _SetCacheSettingsN = Void Function(
+    Pointer<LtSessionOpaque>, Int64, Int64, Int32, Int32);
+typedef LtSetCacheSettings = void Function(
+    Pointer<LtSessionOpaque>, int, int, int, int);
 
 // ─── lt_bt_config — port of settings/btsets.go BTSets ────────────────────────
 final class LtBtConfig extends Struct {
@@ -274,10 +290,10 @@ final class LtBtConfig extends Struct {
 }
 
 // ─── Engine config — port of btserver.go configure() ─────────────────────────
-typedef _ConfigureSessionN =
-    Void Function(Pointer<LtSessionOpaque>, Pointer<LtBtConfig>);
-typedef LtConfigureSession =
-    void Function(Pointer<LtSessionOpaque>, Pointer<LtBtConfig>);
+typedef _ConfigureSessionN = Void Function(
+    Pointer<LtSessionOpaque>, Pointer<LtBtConfig>);
+typedef LtConfigureSession = void Function(
+    Pointer<LtSessionOpaque>, Pointer<LtBtConfig>);
 
 typedef _GetDefaultConfigN = Void Function(Pointer<LtBtConfig>);
 typedef LtGetDefaultConfig = void Function(Pointer<LtBtConfig>);
@@ -302,25 +318,22 @@ typedef LtVersion = Pointer<Utf8> Function();
 typedef _BridgeVersionN = Pointer<Utf8> Function();
 typedef LtBridgeVersion = Pointer<Utf8> Function();
 
-typedef _IsFileCompleteN =
-    Int32 Function(Pointer<LtSessionOpaque>, Int64, Int32);
-typedef LtIsFileComplete =
-    int Function(Pointer<LtSessionOpaque>, int, int);
+typedef _IsFileCompleteN = Int32 Function(
+    Pointer<LtSessionOpaque>, Int64, Int32);
+typedef LtIsFileComplete = int Function(Pointer<LtSessionOpaque>, int, int);
 
-typedef _GetCacheStateN =
-    Int32 Function(
-      Pointer<LtSessionOpaque>,
-      Int64,
-      Pointer<Int64>,
-      Pointer<Int64>,
-    );
-typedef LtGetCacheState =
-    int Function(
-      Pointer<LtSessionOpaque>,
-      int,
-      Pointer<Int64>,
-      Pointer<Int64>,
-    );
+typedef _GetCacheStateN = Int32 Function(
+  Pointer<LtSessionOpaque>,
+  Int64,
+  Pointer<Int64>,
+  Pointer<Int64>,
+);
+typedef LtGetCacheState = int Function(
+  Pointer<LtSessionOpaque>,
+  int,
+  Pointer<Int64>,
+  Pointer<Int64>,
+);
 
 // ─── Helper: read fixed char array ──────────────────────────────────────────
 String readCharArray(Array<Char> arr, int maxLen) {
@@ -368,6 +381,8 @@ class TorrentBridgeBindings {
   late final LtSetAlertCallback setAlertCallback;
   late final LtAddMagnet addMagnet;
   late final LtAddTorrentFile addTorrentFile;
+  late final LtSaveTorrentState saveTorrentState;
+  late final LtAddTorrentWithState addTorrentWithState;
   late final LtRemoveTorrent removeTorrent;
   late final LtPauseTorrent pauseTorrent;
   late final LtResumeTorrent resumeTorrent;
@@ -379,6 +394,9 @@ class TorrentBridgeBindings {
   late final LtGetFiles getFiles;
   late final LtSetFilePriorities setFilePriorities;
   late final LtStartStream startStream;
+  late final LtSetStreamPosition setStreamPosition;
+  late final LtSetStreamDuration setStreamDuration;
+  late final LtGetStreamDebug getStreamDebug;
   late final LtStopStream stopStream;
   late final LtGetStreamStatus getStreamStatus;
   late final LtGetAllStreamStatuses getAllStreamStatuses;
@@ -415,6 +433,14 @@ class TorrentBridgeBindings {
     addTorrentFile = _lib
         .lookup<NativeFunction<_AddTorrentFileN>>('lt_add_torrent_file')
         .asFunction<LtAddTorrentFile>();
+    saveTorrentState = _lib
+        .lookup<NativeFunction<_SaveTorrentStateN>>('lt_save_torrent_state')
+        .asFunction<LtSaveTorrentState>();
+    addTorrentWithState = _lib
+        .lookup<NativeFunction<_AddTorrentWithStateN>>(
+          'lt_add_torrent_with_state',
+        )
+        .asFunction<LtAddTorrentWithState>();
     removeTorrent = _lib
         .lookup<NativeFunction<_RemoveTorrentN>>('lt_remove_torrent')
         .asFunction<LtRemoveTorrent>();
@@ -448,6 +474,15 @@ class TorrentBridgeBindings {
     startStream = _lib
         .lookup<NativeFunction<_StartStreamN>>('lt_start_stream')
         .asFunction<LtStartStream>();
+    setStreamPosition = _lib
+        .lookup<NativeFunction<_SetStreamPositionN>>('lt_set_stream_position')
+        .asFunction<LtSetStreamPosition>();
+    setStreamDuration = _lib
+        .lookup<NativeFunction<_SetStreamDurationN>>('lt_set_stream_duration')
+        .asFunction<LtSetStreamDuration>();
+    getStreamDebug = _lib
+        .lookup<NativeFunction<_GetStreamDebugN>>('lt_get_stream_debug')
+        .asFunction<LtGetStreamDebug>();
     stopStream = _lib
         .lookup<NativeFunction<_StopStreamN>>('lt_stop_stream')
         .asFunction<LtStopStream>();

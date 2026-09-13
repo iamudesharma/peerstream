@@ -339,6 +339,42 @@ class LibtorrentFlutter {
     }
   }
 
+  /// Save libtorrent fast-resume data for [id] to [statePath].
+  ///
+  /// The data includes the torrent metadata (info-dict) and the verified
+  /// piece bitfield, so [addTorrentWithState] can re-add the torrent offline
+  /// without a peer metadata exchange or a full file recheck. Returns false
+  /// when the torrent has no metadata yet or the write failed.
+  bool saveTorrentState(int id, String statePath) {
+    final p = statePath.toNativeUtf8();
+    try {
+      return _b.saveTorrentState(_session, id, p) != 0;
+    } finally {
+      malloc.free(p);
+    }
+  }
+
+  /// Re-add a torrent from a file written by [saveTorrentState].
+  ///
+  /// Returns the new torrent id, or null when the state file is missing,
+  /// corrupt, or lacks metadata; callers should fall back to adding the
+  /// magnet or .torrent file in that case.
+  int? addTorrentWithState(
+    String statePath, [
+    String? savePath,
+    bool streamOnly = false,
+  ]) {
+    final p = statePath.toNativeUtf8();
+    final s = (savePath ?? _defaultSavePath).toNativeUtf8();
+    try {
+      final id = _b.addTorrentWithState(_session, p, s, streamOnly ? 1 : 0);
+      return id < 0 ? null : id;
+    } finally {
+      malloc.free(p);
+      malloc.free(s);
+    }
+  }
+
   /// Remove a torrent. Optionally delete downloaded files.
   void removeTorrent(int id, {bool deleteFiles = false}) {
     _b.removeTorrent(_session, id, deleteFiles ? 1 : 0);
@@ -418,6 +454,44 @@ class LibtorrentFlutter {
     }
   }
 
+  /// Hint the native scheduler to prioritize [byteOffset] before the player
+  /// requests it (resume positions, seek previews, rebuffer boosts).
+  ///
+  /// [windowBytes] 0 selects the native heuristic; [urgent] gives the first
+  /// pieces the earliest deadlines (rebuffer recovery).
+  bool setStreamPosition(
+    int streamId,
+    int byteOffset, {
+    int windowBytes = 0,
+    bool urgent = false,
+  }) =>
+      _b.setStreamPosition(
+        _session,
+        streamId,
+        byteOffset,
+        windowBytes,
+        urgent ? 1 : 0,
+      ) !=
+      0;
+
+  /// Report the observed media duration so the native scheduler can refine
+  /// bitrate, buffer-seconds and adaptive window sizing.
+  bool setStreamDuration(int streamId, int durationMs) =>
+      _b.setStreamDuration(_session, streamId, durationMs) != 0;
+
+  /// One-line scheduler snapshot for diagnostics/tuning, or null.
+  String? streamDebugSnapshot(int streamId) {
+    const cap = 512;
+    final buf = calloc<Uint8>(cap);
+    try {
+      final ok = _b.getStreamDebug(_session, streamId, buf.cast<Utf8>(), cap);
+      if (ok == 0) return null;
+      return buf.cast<Utf8>().toDartString();
+    } finally {
+      calloc.free(buf);
+    }
+  }
+
   /// Stop a stream.
   void stopStream(int streamId) {
     _b.stopStream(_session, streamId);
@@ -438,6 +512,19 @@ class LibtorrentFlutter {
 
   /// Get the current info for a specific stream, or null if not found.
   StreamInfo? getStreamInfo(int streamId) => _streams[streamId];
+
+  /// Fresh native status for [streamId] without waiting for the poll timer.
+  /// Used for time→byte observations right after a seek settles.
+  StreamInfo? streamStatusNow(int streamId) {
+    final buf = calloc<LtStreamStatus>();
+    try {
+      final ok = _b.getStreamStatus(_session, streamId, buf);
+      if (ok == 0) return null;
+      return _toStreamInfo(buf.ref);
+    } finally {
+      calloc.free(buf);
+    }
+  }
 
   /// Whether a torrent is currently being streamed.
   bool isStreaming(int torrentId) =>

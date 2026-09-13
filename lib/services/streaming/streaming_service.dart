@@ -1,7 +1,10 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import '../../models/torrent_models.dart';
 import '../playback/playback_cache.dart';
+import '../playback/playback_cache_models.dart';
 import '../playback/torrent_cache_identity.dart';
 import '../torrent/provider_cache.dart';
 import '../torrent/torrent_engine.dart';
@@ -247,9 +250,68 @@ class StreamingService {
     if (!_controller.isClosed) _controller.add(next);
   }
 
+  /// Pre-prioritizes the resume region so those pieces download alongside the
+  /// head/tail metadata. Uses the learned time→byte map when available and
+  /// falls back to the average-bitrate estimate; the window is sized in
+  /// seconds of video from observed bitrate + swarm speed + buffered-ahead.
+  /// Best effort: engines without the capability skip it.
+  void _hintResumePosition(
+    TorrentHandle handle,
+    TorrentFileEntry file,
+    int? startPositionMs,
+    int? durationMs,
+    List<TimeBytePoint> timeBytePoints,
+  ) {
+    final engine = _engine;
+    if (engine is! StreamPositionController) return;
+    if (startPositionMs == null || durationMs == null) return;
+    final controller = engine as StreamPositionController;
+    try {
+      controller.setStreamDuration(handle, durationMs);
+      final learned = observedByteForTime(
+        timeBytePoints,
+        positionMs: startPositionMs,
+        fileSize: file.size,
+      );
+      final offset =
+          learned ??
+          resumeByteOffset(
+            positionMs: startPositionMs,
+            durationMs: durationMs,
+            fileSize: file.size,
+          );
+      if (offset <= 0) return;
+      final bitrate = observedBitrateBps(
+        timeBytePoints,
+        positionMs: startPositionMs,
+        durationMs: durationMs,
+        fileSize: file.size,
+      );
+      final bufferedMs = _state.bufferedPositionMs ?? 0;
+      final bufferedAheadMs = bufferedMs > startPositionMs
+          ? bufferedMs - startPositionMs
+          : 0;
+      final window = adaptiveWindowBytes(
+        bitrateBps: bitrate,
+        bufferedAheadMs: bufferedAheadMs,
+        downloadRateBps: _state.stats.downloadRate,
+        peers: _state.stats.peers ?? 0,
+      );
+      controller.setStreamPosition(handle, offset, windowBytes: window);
+      debugPrint(
+        '[Streaming] resume hint byte=$offset '
+        'learned=${learned != null} window=${window ~/ 1024}KB '
+        'bitrate=${bitrate ~/ 1024}KB/s anchors=${timeBytePoints.length}',
+      );
+    } catch (_) {}
+  }
+
   Future<int> start(
     TorrentSource source, {
     PlaybackSessionToken? claimed,
+    int? startPositionMs,
+    int? durationMs,
+    List<TimeBytePoint>? timeBytePoints,
   }) async {
     final int generation;
     if (claimed != null && claimed.id == _generation) {
@@ -262,7 +324,13 @@ class StreamingService {
     }
     if (generation != _generation) return generation;
 
-    bool stale() => generation != _generation || (claimed?.isCancelled ?? false);
+    bool stale() =>
+        generation != _generation || (claimed?.isCancelled ?? false);
+
+    debugPrint(
+      '[Streaming] start key=${torrentCacheKey(source)} '
+      'input=${source.inputType.name} id=${source.id}',
+    );
 
     if (source.inputType == TorrentInputType.directUrl) {
       _diagnostics?.engineAddAt = DateTime.now();
@@ -386,6 +454,7 @@ class StreamingService {
                   diagnostics: _diagnostics?.toMap(),
                 ),
               );
+              _maybeLogSchedulerSnapshot(handle, stats);
             },
             onError: (Object error) {
               if (generation == _generation) {
@@ -426,6 +495,13 @@ class StreamingService {
       );
       final playback = await _engine.startStream(handle, selected);
       if (stale()) return generation;
+      _hintResumePosition(
+        handle,
+        selected,
+        startPositionMs,
+        durationMs,
+        timeBytePoints ?? const [],
+      );
       _diagnostics?.streamCreatedAt = DateTime.now();
       _diagnostics?.nativeBuild = nativeBuildIdentity;
       try {
@@ -446,7 +522,15 @@ class StreamingService {
           diagnostics: _diagnostics?.toMap(),
         ),
       );
-      unawaited(_cache.record(source, selected, complete: false, byteSize: 0));
+      unawaited(
+        _cache.record(
+          source,
+          selected,
+          complete: false,
+          byteSize: 0,
+          preserveComplete: true,
+        ),
+      );
       _startStallCheck(generation, _state.stats.downloadedBytes);
     } catch (error) {
       if (stale()) return generation;
@@ -495,10 +579,50 @@ class StreamingService {
   /// - native piece verification when the engine can provide it.
   Future<dynamic> _verifiedCompleteFile(TorrentSource source) async {
     final entry = await _cache.completeFile(source);
-    if (entry == null) return null;
+    if (entry == null) {
+      debugPrint(
+        '[Streaming] cache miss for ${torrentCacheKey(source)} — '
+        'streaming from the network',
+      );
+      return null;
+    }
+    debugPrint(
+      '[Streaming] cache hit ${entry.cacheKey} '
+      '(${entry.file.name}, ${entry.byteSize} bytes)',
+    );
     if (!entry.complete) return null;
     if (entry.filePath.isEmpty) return null;
     if (entry.file.size <= 0) return null;
+    // Entries are keyed per torrent, but completion is per file: a season
+    // pack can have one episode complete while another is requested. Never
+    // serve a file the source did not ask for.
+    final requestedIndex = source.fileIndex;
+    if (requestedIndex != null && entry.file.index != requestedIndex) {
+      debugPrint(
+        '[Streaming] cache entry is for file ${entry.file.index}, '
+        'requested $requestedIndex — ignoring',
+      );
+      return null;
+    }
+    if (requestedIndex == null) {
+      final hint = source.fileNameHint;
+      final normalizedHint = hint == null
+          ? ''
+          : hint.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+      final normalizedName = entry.file.name.toLowerCase().replaceAll(
+        RegExp(r'[^a-z0-9]'),
+        '',
+      );
+      if (normalizedHint.isNotEmpty &&
+          !normalizedName.contains(normalizedHint)) {
+        return null;
+      }
+      // Episode request without an index or hint: the stored file cannot be
+      // proven to be the requested episode, so don't risk playing the wrong one.
+      if (normalizedHint.isEmpty && source.episodeNumber != null) {
+        return null;
+      }
+    }
     // Sparse-file guard: a preallocated file has the right length but the
     // cache never recorded the bytes.
     if (entry.byteSize < entry.file.size) return null;
@@ -516,6 +640,111 @@ class StreamingService {
       }
     }
     return entry;
+  }
+
+  /// Latest native read head (byte offset) for the active stream, or null.
+  int? get streamReadHead {
+    final handle = _handle;
+    final engine = _engine;
+    if (handle == null || engine is! StreamPositionController) return null;
+    try {
+      return (engine as StreamPositionController).streamReadHead(handle);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  int? _activeDurationMs;
+  DateTime? _lastBoostAt;
+  DateTime? _lastSchedLogAt;
+
+  /// Records the player's observed duration for scheduler sizing.
+  void reportDurationMs(int durationMs) {
+    if (durationMs <= 0) return;
+    _activeDurationMs = durationMs;
+    final handle = _handle;
+    final engine = _engine;
+    if (handle == null || engine is! StreamPositionController) return;
+    try {
+      (engine as StreamPositionController).setStreamDuration(
+        handle,
+        durationMs,
+      );
+    } catch (_) {}
+  }
+
+  /// Sizes a forward prefetch window in seconds of video and applies it
+  /// around [targetByte] (defaults to the native read head). Used on pause
+  /// (keep downloading ahead) and for seek-bar previews.
+  void prefetchAhead({required int seconds, int? targetByte}) {
+    final handle = _handle;
+    final playback = _state.playback;
+    final engine = _engine;
+    if (handle == null ||
+        playback == null ||
+        playback.fromCache ||
+        engine is! StreamPositionController) {
+      return;
+    }
+    final duration = _activeDurationMs ?? 0;
+    if (duration <= 0 || playback.file.size <= 0) return;
+    final bitrate = (playback.file.size * 1000 / duration).round();
+    if (bitrate <= 0) return;
+    final controller = engine as StreamPositionController;
+    try {
+      final offset = targetByte ?? controller.streamReadHead(handle) ?? 0;
+      if (offset <= 0) return;
+      controller.setStreamPosition(
+        handle,
+        offset,
+        windowBytes: (bitrate * seconds).round(),
+      );
+    } catch (_) {}
+  }
+
+  /// Rebuffer recovery: prioritize the pieces the player is blocked on.
+  void _boostActiveStream() {
+    final handle = _handle;
+    final playback = _state.playback;
+    final engine = _engine;
+    if (handle == null ||
+        playback == null ||
+        playback.fromCache ||
+        engine is! StreamPositionController) {
+      return;
+    }
+    final now = DateTime.now();
+    final last = _lastBoostAt;
+    if (last != null && now.difference(last) < const Duration(seconds: 3)) {
+      return;
+    }
+    _lastBoostAt = now;
+    try {
+      final controller = engine as StreamPositionController;
+      final head = controller.streamReadHead(handle) ?? 0;
+      if (head <= 0) return;
+      controller.setStreamPosition(handle, head, urgent: true);
+      debugPrint('[Streaming] rebuffer boost at byte=$head');
+    } catch (_) {}
+  }
+
+  /// Periodic one-line scheduler snapshot while a torrent stream is active.
+  /// Throttled so high-frequency stats ticks don't flood the console.
+  void _maybeLogSchedulerSnapshot(TorrentHandle handle, TorrentStats stats) {
+    final now = DateTime.now();
+    final last = _lastSchedLogAt;
+    if (last != null && now.difference(last) < const Duration(seconds: 5)) {
+      return;
+    }
+    _lastSchedLogAt = now;
+    final engine = _engine;
+    if (engine is! StreamPositionController) return;
+    try {
+      final snapshot = (engine as StreamPositionController).streamDebugSnapshot(
+        handle,
+      );
+      if (snapshot != null) debugPrint('[Sched] ${stats.phase} $snapshot');
+    } catch (_) {}
   }
 
   /// Idempotent transition to playing. Repeated position updates must not
@@ -548,6 +777,12 @@ class StreamingService {
         bufferedPositionMs == _state.bufferedPositionMs) {
       return;
     }
+    // Starvation recovery: on a buffering edge, boost the immediate pieces
+    // around the native read head (earliest deadlines, top priority) so the
+    // player's blocked range request is satisfied before prefetch work.
+    if (buffering && !_state.isBuffering) {
+      _boostActiveStream();
+    }
     _diagnostics?.lastBufferingAt = buffering
         ? DateTime.now()
         : _diagnostics?.lastBufferingAt;
@@ -559,16 +794,14 @@ class StreamingService {
               ? StreamingPhase.resolving
               : StreamingPhase.buffering)
         : (_state.playback != null &&
-                _state.phase != StreamingPhase.error &&
-                _state.phase != StreamingPhase.seeking
-            ? StreamingPhase.playing
-            : _state.phase);
+                  _state.phase != StreamingPhase.error &&
+                  _state.phase != StreamingPhase.seeking
+              ? StreamingPhase.playing
+              : _state.phase);
     _emit(
       _state.copyWith(
         phase: phase,
-        detail: buffering
-            ? StreamingDetail.buffering
-            : StreamingDetail.none,
+        detail: buffering ? StreamingDetail.buffering : StreamingDetail.none,
         isBuffering: buffering,
         bufferedPositionMs: bufferedPositionMs ?? _state.bufferedPositionMs,
         diagnostics: _diagnostics?.toMap(),
@@ -670,21 +903,32 @@ class StreamingService {
         !playback.fromCache &&
         source.inputType != TorrentInputType.directUrl) {
       try {
-        // Conservative completion: progress alone is not proof. Require
-        // byte counts to agree before flagging an entry complete; the
-        // verified path re-checks on the next start.
+        // Per-file native verification is the trustworthy completion signal
+        // for stream-only torrents: torrent-wide progress can reach 1.0 when
+        // only the streamed pieces are wanted. Fall back to the conservative
+        // byte-count heuristic when verification is unavailable.
         final progress = _state.stats.progress;
         final downloaded = _state.stats.downloadedBytes;
         final total = _state.stats.totalBytes;
-        final complete =
+        var complete =
             progress >= 0.999 &&
             downloaded > 0 &&
             (total <= 0 || downloaded >= (total * 0.999).round());
+        final engine = _engine;
+        if (engine is FileCompletenessChecker && handle != null) {
+          try {
+            complete = await (engine as FileCompletenessChecker)
+                .isFileComplete(handle, playback.file)
+                .timeout(const Duration(seconds: 3));
+          } catch (_) {}
+        }
+        // A verified-complete file records its exact size so the sparse-file
+        // guard compares like with like; partial entries keep torrent bytes.
         await _cache.record(
           source,
           playback.file,
           complete: complete,
-          byteSize: downloaded,
+          byteSize: complete ? playback.file.size : downloaded,
         );
       } catch (_) {}
     }
@@ -717,8 +961,9 @@ class StreamingService {
       if (bytesReceived >= 256 * 1024) return;
       if (_state.stats.downloadRate >= 50 * 1024) return;
       final peers = _state.stats.peers;
-      final peerDetail =
-          peers == null ? 'no peers yet' : '$peers connected peer(s)';
+      final peerDetail = peers == null
+          ? 'no peers yet'
+          : '$peers connected peer(s)';
       _emit(
         _state.copyWith(
           stats: _state.stats,

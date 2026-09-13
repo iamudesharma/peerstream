@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart' hide Badge;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -15,6 +17,11 @@ import '../../models/media_item.dart';
 import '../../models/torrent_models.dart';
 import '../../models/watch_progress.dart';
 import '../../providers/app_providers.dart';
+import '../../providers/player_providers.dart';
+import '../../providers/settings_providers.dart';
+import '../../services/settings/settings_store.dart';
+import '../../services/playback/playback_cache.dart';
+import '../../services/playback/playback_cache_models.dart';
 import '../../services/streaming/playback_config.dart';
 import '../../services/streaming/playback_session.dart';
 import '../../services/streaming/source_ranking.dart';
@@ -24,6 +31,7 @@ import '../../services/subtitles/subtitle_store.dart';
 import '../../services/torrent/native_torrent_engine.dart';
 import '../statistics/torrent_statistics.dart';
 import 'live_player_tracks.dart';
+import 'player_shortcuts.dart';
 
 class DefaultPlayerScreen extends ConsumerStatefulWidget {
   const DefaultPlayerScreen({
@@ -70,6 +78,7 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
   Duration _buffered = Duration.zero;
   bool _isBuffering = false;
   Timer? _saveTimer;
+  Timer? _byteObservationTimer;
   Duration? _pendingSeek;
   int _seekAttempts = 0;
   bool _seekInFlight = false;
@@ -80,17 +89,42 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
   bool _askedAboutResume = false;
   PlaybackSessionToken? _sessionToken;
 
+  /// Captured so progress can persist from [dispose], where `ref` is unsafe.
+  late final WatchHistory _history;
+  late final PlaybackCacheStore _cacheStore;
+  String? _detailsTitle;
+  String? _detailsPosterPath;
+  String? _detailsBackdropPath;
+  double _lastVolume = 100;
+  SubtitleTrack? _lastSubtitleTrack;
+  bool _completed = false;
+  bool _showStats = false;
+  bool _storedPrefsApplied = false;
+  bool _resumeGated = false;
+  String? _hudLabel;
+  IconData? _hudIcon;
+  Timer? _hudTimer;
+  Timer? _volumeSaveTimer;
+  Timer? _rateSaveTimer;
+  Timer? _resumeGateTimer;
+  int? _nextEpisodeSeason;
+  int? _nextEpisodeNumber;
+  bool _resolvingNextEpisode = false;
+  StreamSubscription<bool>? _completedSubscription;
+
   @override
   void initState() {
     super.initState();
     _service = ref.read(streamingServiceProvider);
-    _player = Player();
+    _history = ref.read(watchHistoryProvider.notifier);
+    _cacheStore = ref.read(playbackCacheProvider);
+    _player = ref.read(mediaKitPlayerProvider);
     _errorSubscription = _player.stream.error.listen((error) {
       if (mounted) {
         _service.reportError('Playback failed. Try another source or retry.');
       }
     });
-    _videoController = VideoController(_player);
+    _videoController = ref.read(mediaKitVideoControllerProvider);
     _playingSubscription = _player.stream.playing.listen((playing) {
       if (!playing) {
         unawaited(_persistProgress());
@@ -121,9 +155,17 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     });
     _rateSubscription = _player.stream.rate.listen((rate) {
       if (mounted) setState(() => _rate = rate);
+      _scheduleRateSave(rate);
     });
     _volumeSubscription = _player.stream.volume.listen((volume) {
+      if (volume > 0) _lastVolume = volume;
       if (mounted) setState(() => _volume = volume);
+      _scheduleVolumeSave(volume);
+    });
+    _completedSubscription = _player.stream.completed.listen((completed) {
+      if (!mounted) return;
+      setState(() => _completed = completed);
+      if (completed) unawaited(_resolveNextEpisode());
     });
     _positionSubscription = _player.stream.position.listen((position) {
       _position = position;
@@ -140,6 +182,7 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     });
     _durationSubscription = _player.stream.duration.listen((duration) {
       _duration = duration;
+      _service.reportDurationMs(duration.inMilliseconds);
       _settlePendingSeek();
     });
     _saveTimer = Timer.periodic(const Duration(seconds: 5), (_) {
@@ -173,10 +216,19 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     // Cancel any previous attempt so rapidly switching sources never leaks.
     _cancelOwnedSession();
     try {
+      final settings = await ref.read(appSettingsProvider.future);
+      if (!mounted) return;
+      _applyStoredPlaybackPreferences(settings);
+      setState(() {
+        _completed = false;
+        _nextEpisodeSeason = null;
+        _nextEpisodeNumber = null;
+      });
       _openedUri = null;
       _pendingSeek = preservePosition ?? _positionOrExplicit();
       _seekAttempts = 0;
       _seekInFlight = false;
+      _resumeGated = false;
       _openedAt = null;
       _trackPreferencesApplied = false;
       _askedAboutResume = false;
@@ -185,6 +237,20 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
         return;
       }
       final tokenAtEntry = _sessionToken;
+      // Learned time→byte anchors from previous playthroughs. These replace
+      // the average-bitrate estimate for the resume hint, which VBR files can
+      // throw off by tens of MB.
+      final cacheEntry = await ref
+          .read(playbackCacheProvider)
+          .lookupRequest(
+            widget.mediaRef,
+            widget.season,
+            widget.episode,
+            widget.sourceId,
+          );
+      if (!mounted || _sessionToken != tokenAtEntry) return;
+      final learnedAnchors =
+          cacheEntry?.timeBytePoints ?? const <TimeBytePoint>[];
       // Fast path: source passed via router extra — skip addon re-query
       // (saves 1x IMDb + Nx addon RTTs on every Play tap).
       final fastSource = widget.initialSource;
@@ -196,21 +262,25 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
           final token = _service.beginSession(fastSource);
           _sessionToken = token;
           _updatePolling();
-          await _service.start(fastSource, claimed: token);
+          await _service.start(
+            fastSource,
+            claimed: token,
+            startPositionMs: _pendingSeek?.inMilliseconds,
+            durationMs: _resumeDurationMs(),
+            timeBytePoints: learnedAnchors,
+          );
           _updatePolling();
           return;
         }
       }
-      final cached = await ref
-          .read(playbackCacheProvider)
-          .lookupRequest(
-            widget.mediaRef,
-            widget.season,
-            widget.episode,
-            widget.sourceId,
-          );
+      final cached = cacheEntry;
       if (!mounted || _sessionToken != tokenAtEntry) return;
       final cachedSource = cached?.source;
+      debugPrint(
+        '[Playback] cache lookup sourceId=${widget.sourceId} '
+        'hit=${cachedSource != null} complete=${cached?.complete} '
+        'bytes=${cached?.byteSize}',
+      );
       if (cachedSource != null) {
         final policy = await ref.read(sourcePolicyProvider.future);
         if (!mounted || _sessionToken != tokenAtEntry) return;
@@ -219,7 +289,13 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
           final token = _service.beginSession(cachedSource);
           _sessionToken = token;
           _updatePolling();
-          await _service.start(cachedSource, claimed: token);
+          await _service.start(
+            cachedSource,
+            claimed: token,
+            startPositionMs: _pendingSeek?.inMilliseconds,
+            durationMs: _resumeDurationMs(),
+            timeBytePoints: learnedAnchors,
+          );
           _updatePolling();
           return;
         }
@@ -268,7 +344,13 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
       final token = _service.beginSession(source);
       _sessionToken = token;
       _updatePolling();
-      await _service.start(source, claimed: token);
+      await _service.start(
+        source,
+        claimed: token,
+        startPositionMs: _pendingSeek?.inMilliseconds,
+        durationMs: _resumeDurationMs(),
+        timeBytePoints: learnedAnchors,
+      );
       _updatePolling();
     } catch (_) {
       if (mounted) {
@@ -345,11 +427,19 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     }
     _openedUri = uri;
     _trackPreferencesApplied = false;
+    // Resolve the resume position *before* opening so playback never starts
+    // from zero and then jumps. The history prompt (only when the route has
+    // no explicit `resume`) is answered while the source is still loading.
+    final resumeStart = await _resolveResumeStart();
+    if (!mounted || _openedUri != uri) return;
+    if (_sessionToken != null && state.sessionId != _sessionToken!.id) {
+      return;
+    }
     _openedAt = DateTime.now();
-    // Open immediately with the explicit resume (if any) so TTFB is not
-    // blocked on the "Continue watching?" dialog. History resume is handled
-    // via seek after open.
-    final explicitStart = _explicitStart() ?? _pendingSeek;
+    debugPrint(
+      '[Playback] Opening ${state.origin.name} source'
+      '${resumeStart == null ? '' : ' at ${resumeStart.inMilliseconds}ms'}',
+    );
     try {
       final native = _player.platform;
       if (native is NativePlayer) {
@@ -382,18 +472,28 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
         } catch (_) {}
       }
       await _player.open(
-        Media(uri, httpHeaders: state.source?.headers, start: explicitStart),
-        play: true,
+        Media(uri, httpHeaders: state.source?.headers, start: resumeStart),
+        // Resuming opens paused: the settle loop confirms or applies the
+        // resume position and only then starts playback, so a resume can
+        // never visibly play from zero.
+        play: resumeStart == null,
       );
-      if (explicitStart != null) {
-        _pendingSeek = explicitStart;
+      if (resumeStart != null) {
+        _pendingSeek = resumeStart;
         _seekAttempts = 0;
         _seekInFlight = false;
+        _resumeGated = true;
+        // Watchdog: never leave the player paused forever if the stream
+        // reports no position/duration events at all.
+        _resumeGateTimer?.cancel();
+        _resumeGateTimer = Timer(const Duration(seconds: 45), () {
+          if (!mounted || !_resumeGated) return;
+          debugPrint('[Playback] Resume gate watchdog fired');
+          _pendingSeek = null;
+          _finishResume(resumeStart, landed: false);
+        });
         _settlePendingSeek();
       }
-      // History-based resume (no explicit `resume` param): ask after open so
-      // the dialog think-time never delays first frame.
-      unawaited(_maybeHistoryResume());
     } catch (_) {
       if (mounted) {
         _service.reportError(
@@ -410,11 +510,18 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     return Duration(milliseconds: explicit);
   }
 
-  Future<void> _maybeHistoryResume() async {
-    if (widget.resumeMs != null && widget.resumeMs! > 0) return;
-    if (_askedAboutResume || !mounted) return;
+  /// Resume position to apply at open time, or null for a fresh start.
+  ///
+  /// Explicit route values win; otherwise the saved history position is
+  /// offered once via the "Continue watching?" prompt.
+  Future<Duration?> _resolveResumeStart() async {
+    final explicit = _explicitStart();
+    if (explicit != null) return explicit;
+    final pending = _pendingSeek;
+    if (pending != null) return pending;
+    if (_askedAboutResume || !mounted) return null;
     final target = _resumeTarget();
-    if (target == null) return;
+    if (target == null) return null;
     _askedAboutResume = true;
     final resume = await showDialog<bool>(
       context: context,
@@ -433,11 +540,7 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
         ],
       ),
     );
-    if (resume == true && mounted) {
-      _pendingSeek = target;
-      _seekAttempts = 0;
-      _settlePendingSeek();
-    }
+    return resume == true ? target : null;
   }
 
   int? _resumeTargetMs() {
@@ -454,6 +557,22 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
         ?.positionMs;
     if (position == null || position <= 0) return null;
     return position;
+  }
+
+  /// Duration of the last playthrough of this episode, used to map the resume
+  /// position to a byte offset for the torrent scheduler. Null when unknown.
+  int? _resumeDurationMs() {
+    final key = watchKey(widget.mediaRef, widget.season, widget.episode);
+    final duration = ref
+        .read(watchHistoryProvider)
+        .value
+        ?.where((entry) {
+          return entry.key == key;
+        })
+        .firstOrNull
+        ?.durationMs;
+    if (duration == null || duration <= 0) return null;
+    return duration;
   }
 
   Duration? _resumeTarget() {
@@ -474,38 +593,48 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     if (target == null || !mounted) return;
     // Serialize resume operations: one seek in flight at a time.
     if (_seekInFlight) return;
-    if (_seekAttempts >= 20) {
+
+    // Success first: the open-time `start` may already have positioned the
+    // player, and that can be confirmed before duration is known.
+    if (resumeSeekLanded(_position, target)) {
       _pendingSeek = null;
       _seekInFlight = false;
-      return;
-    }
-    final openedAt = _openedAt;
-    if (openedAt != null &&
-        DateTime.now().difference(openedAt) > const Duration(seconds: 45)) {
-      _pendingSeek = null;
-      _seekInFlight = false;
-      return;
-    }
-    if (_duration <= Duration.zero) return;
-    if (_position + const Duration(seconds: 3) >= target &&
-        _position <= target + const Duration(seconds: 30)) {
-      _pendingSeek = null;
-      _seekInFlight = false;
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text('Resumed from ${formatWatchTimestamp(target)}'),
-              duration: const Duration(seconds: 2),
-            ),
-          );
-      }
       _service.reportSeekSettled();
+      debugPrint(
+        '[Playback] Resume settled at ${_position.inMilliseconds}ms '
+        '(target ${target.inMilliseconds}ms)',
+      );
+      // Learn the real byte offset for this position while the read head is
+      // still at the seek target.
+      _scheduleByteObservation(target);
+      _finishResume(target, landed: true);
       return;
     }
+
+    final timedOut =
+        _openedAt != null &&
+        DateTime.now().difference(_openedAt!) > const Duration(seconds: 45);
+    if (_seekAttempts >= 20 || timedOut) {
+      debugPrint(
+        '[Playback] Resume gave up at ${_position.inMilliseconds}ms '
+        '(target ${target.inMilliseconds}ms)',
+      );
+      _pendingSeek = null;
+      _seekInFlight = false;
+      _finishResume(target, landed: false);
+      return;
+    }
+
+    // Absolute seeks need the demuxer to know the file; wait for duration
+    // before issuing a fallback seek.
+    if (_duration <= Duration.zero) return;
+
     _seekAttempts += 1;
     _seekInFlight = true;
+    debugPrint(
+      '[Playback] Resume seek attempt $_seekAttempts '
+      'target=${target.inMilliseconds}ms position=${_position.inMilliseconds}ms',
+    );
     _service.reportSeekStarted();
     unawaited(
       _player
@@ -524,27 +653,43 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     );
   }
 
-  Future<void> _persistProgress() async {
+  /// Completes a gated resume. The player was opened paused, so playback
+  /// starts here — after the position settled (or after giving up).
+  void _finishResume(Duration target, {required bool landed}) {
+    _resumeGateTimer?.cancel();
+    final wasGated = _resumeGated;
+    _resumeGated = false;
+    if (wasGated && mounted) unawaited(_player.play());
+    if (!mounted) return;
+    if (!landed) {
+      _showMessage('Could not resume — playback continues from the start.');
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('Resumed from ${formatWatchTimestamp(target)}'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+  }
+
+  Future<void> _persistProgress({bool forceAnchor = false}) async {
     final positionMs = _position.inMilliseconds;
     if (positionMs <= 0) return;
-    final state = ref.read(streamingServiceProvider).state;
-    final source = state.source;
+    // Uses captured dependencies only: this also runs from dispose(), where
+    // touching `ref` throws "Using ref ... is unsafe".
+    final source = _service.state.source;
     if (source == null) return;
     final durationMs = _duration.inMilliseconds;
     final key = watchKey(widget.mediaRef, widget.season, widget.episode);
-    final notifier = ref.read(watchHistoryProvider.notifier);
-    final existing = ref.read(watchHistoryProvider).value?.where((entry) {
-      return entry.key == key;
-    }).firstOrNull;
-    String title = existing?.title ?? source.fileNameHint ?? source.name;
-    String? posterPath = existing?.posterPath;
-    String? backdropPath = existing?.backdropPath;
-    final details = ref.read(detailsProvider(widget.mediaRef)).value;
-    if (details != null) {
-      title = details.item.title;
-      posterPath = details.item.posterPath;
-      backdropPath = details.item.backdropPath;
-    }
+    final notifier = _history;
+    final existing = notifier.entryFor(key);
+    final title =
+        _detailsTitle ?? existing?.title ?? source.fileNameHint ?? source.name;
+    final posterPath = _detailsPosterPath ?? existing?.posterPath;
+    final backdropPath = _detailsBackdropPath ?? existing?.backdropPath;
     final entry = WatchEntry(
       key: key,
       media: widget.mediaRef,
@@ -567,11 +712,388 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     }
     if (entry.isTrivial) return;
     await notifier.save(entry);
+    await _recordPeriodicAnchor(positionMs, force: forceAnchor);
   }
 
   Future<void> _setRate(double rate) => _player.setRate(rate);
 
   Future<void> _setVolume(double volume) => _player.setVolume(volume);
+
+  // ── YouTube-style player controls ────────────────────────────────────────
+
+  void _applyStoredPlaybackPreferences(AppSettings settings) {
+    if (_storedPrefsApplied) return;
+    _storedPrefsApplied = true;
+    unawaited(_player.setVolume(settings.playerVolume));
+    unawaited(_player.setRate(settings.playerRate));
+  }
+
+  void _scheduleVolumeSave(double volume) {
+    _volumeSaveTimer?.cancel();
+    _volumeSaveTimer = Timer(const Duration(milliseconds: 600), () {
+      if (!mounted) return;
+      final settings = ref.read(appSettingsProvider).value;
+      if (settings == null) return;
+      if ((settings.playerVolume - volume).abs() < 0.01) return;
+      unawaited(ref.read(appSettingsProvider.notifier).setPlayerVolume(volume));
+    });
+  }
+
+  void _scheduleRateSave(double rate) {
+    _rateSaveTimer?.cancel();
+    _rateSaveTimer = Timer(const Duration(milliseconds: 600), () {
+      if (!mounted) return;
+      final settings = ref.read(appSettingsProvider).value;
+      if (settings == null) return;
+      if ((settings.playerRate - rate).abs() < 0.001) return;
+      unawaited(ref.read(appSettingsProvider.notifier).setPlayerRate(rate));
+    });
+  }
+
+  Future<void> _togglePlayPause() async {
+    final wasPlaying = _player.state.playing;
+    await _player.playOrPause();
+    if (wasPlaying) {
+      // Paused: keep fetching ahead to a deep but bounded cap so resuming
+      // does not stall, without downloading the whole file.
+      _service.prefetchAhead(seconds: 90);
+    }
+    _showHud(
+      wasPlaying ? 'Paused' : 'Playing',
+      icon: wasPlaying ? Icons.pause : Icons.play_arrow,
+    );
+  }
+
+  Future<void> _seekBy(Duration delta, {String? label, IconData? icon}) async {
+    final target = playerSeekTarget(_position, delta, _duration);
+    await _player.seek(target);
+    _scheduleByteObservation(target);
+    if (label != null) _showHud(label, icon: icon);
+  }
+
+  Future<void> _seekTo(Duration target, {String? label, IconData? icon}) async {
+    final clamped = playerSeekTarget(target, Duration.zero, _duration);
+    await _player.seek(clamped);
+    _scheduleByteObservation(clamped);
+    if (label != null) _showHud(label, icon: icon);
+  }
+
+  /// Records where the player's own range request landed for [target].
+  ///
+  /// The native read head shortly after a seek is the byte offset mpv
+  /// actually asked for — the exact time→byte anchor the learned map needs.
+  void _scheduleByteObservation(Duration target) {
+    if (target.inMilliseconds <= 0) return;
+    _byteObservationTimer?.cancel();
+    _byteObservationTimer = Timer(const Duration(milliseconds: 1200), () {
+      unawaited(_recordByteObservation(target));
+    });
+  }
+
+  Future<void> _recordByteObservation(Duration target) async {
+    if (target.inMilliseconds <= 0) return;
+    final playback = _service.state.playback;
+    final source = _service.state.source;
+    if (playback == null ||
+        source == null ||
+        playback.fromCache ||
+        playback.file.size <= 0) {
+      return;
+    }
+    final byte = _service.streamReadHead;
+    if (byte == null || byte <= 0) return;
+    await _cacheStore.recordTimeByteObservation(
+      source,
+      target.inMilliseconds,
+      byte,
+      fileSize: playback.file.size,
+    );
+  }
+
+  DateTime? _lastPeriodicAnchorAt;
+
+  /// Progressive map building: while playing, periodically record where the
+  /// native read head sits for the current position. The read head runs a
+  /// little ahead of the display position (demuxer cache), which is harmless
+  /// for a prefetch hint and far better than the average-bitrate estimate on
+  /// VBR files. Throttled so the cache index is not rewritten constantly.
+  Future<void> _recordPeriodicAnchor(
+    int positionMs, {
+    bool force = false,
+  }) async {
+    final now = DateTime.now();
+    final last = _lastPeriodicAnchorAt;
+    if (!force &&
+        last != null &&
+        now.difference(last) < const Duration(seconds: 30)) {
+      return;
+    }
+    _lastPeriodicAnchorAt = now;
+    final playback = _service.state.playback;
+    final source = _service.state.source;
+    if (playback == null ||
+        source == null ||
+        playback.fromCache ||
+        playback.file.size <= 0) {
+      return;
+    }
+    final byte = _service.streamReadHead;
+    if (byte == null || byte <= 0) return;
+    await _cacheStore.recordTimeByteObservation(
+      source,
+      positionMs,
+      byte,
+      fileSize: playback.file.size,
+    );
+  }
+
+  Future<void> _nudgeVolume(double delta) async {
+    final next = nudgedVolume(_volume, delta);
+    await _setVolume(next);
+    _showHud(
+      'Volume ${next.round()}%',
+      icon: next <= 0 ? Icons.volume_off : Icons.volume_up,
+    );
+  }
+
+  Future<void> _toggleMute() async {
+    final next = _volume > 0 ? 0.0 : (_lastVolume > 0 ? _lastVolume : 100.0);
+    await _setVolume(next);
+    _showHud(
+      next <= 0 ? 'Muted' : 'Unmuted',
+      icon: next <= 0 ? Icons.volume_off : Icons.volume_up,
+    );
+  }
+
+  Future<void> _toggleSubtitles() async {
+    final current = _player.state.track.subtitle;
+    if (current.id != 'no') {
+      _lastSubtitleTrack = current;
+      await _selectSubtitle(SubtitleTrack.no());
+      _showHud('Subtitles off', icon: Icons.subtitles_off_outlined);
+      return;
+    }
+    final available = _realSubtitleTracks(_player.state.tracks);
+    final target =
+        _lastSubtitleTrack ?? (available.isEmpty ? null : available.first);
+    if (target == null) {
+      _showHud('No subtitles available', icon: Icons.subtitles_off_outlined);
+      return;
+    }
+    await _selectSubtitle(target);
+    _showHud('Subtitles on', icon: Icons.subtitles_outlined);
+  }
+
+  Future<void> _stepSpeed(int direction) async {
+    final next = steppedPlaybackRate(_rate, direction);
+    if (next == _rate) return;
+    await _setRate(next);
+    _showHud(formatPlaybackRate(next), icon: Icons.speed);
+  }
+
+  Future<void> _stepFrame(int direction) async {
+    if (_player.state.playing) {
+      _showHud('Pause to step frames', icon: Icons.info_outline);
+      return;
+    }
+    final platform = _player.platform;
+    if (platform is! NativePlayer) return;
+    try {
+      await platform.command([
+        direction < 0 ? 'frame-back-step' : 'frame-step',
+      ]);
+      _showHud(
+        direction < 0 ? 'Frame back' : 'Frame forward',
+        icon: Icons.slow_motion_video,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _seekToPercent(int percent) async {
+    if (_duration <= Duration.zero) return;
+    final target = Duration(
+      milliseconds: (_duration.inMilliseconds * percent / 100).round(),
+    );
+    await _player.seek(target);
+    _scheduleByteObservation(target);
+    _showHud('$percent%', icon: Icons.percent);
+  }
+
+  void _handleShortcut(PlayerShortcut shortcut, BuildContext context) {
+    switch (shortcut.action) {
+      case PlayerShortcutAction.playPause:
+        unawaited(_togglePlayPause());
+      case PlayerShortcutAction.seekBackward5:
+        unawaited(
+          _seekBy(
+            const Duration(seconds: -5),
+            label: '5 seconds',
+            icon: Icons.replay_5,
+          ),
+        );
+      case PlayerShortcutAction.seekForward5:
+        unawaited(
+          _seekBy(
+            const Duration(seconds: 5),
+            label: '5 seconds',
+            icon: Icons.forward_5,
+          ),
+        );
+      case PlayerShortcutAction.seekBackward10:
+        unawaited(
+          _seekBy(
+            const Duration(seconds: -10),
+            label: '10 seconds',
+            icon: Icons.replay_10,
+          ),
+        );
+      case PlayerShortcutAction.seekForward10:
+        unawaited(
+          _seekBy(
+            const Duration(seconds: 10),
+            label: '10 seconds',
+            icon: Icons.forward_10,
+          ),
+        );
+      case PlayerShortcutAction.volumeUp:
+        unawaited(_nudgeVolume(5));
+      case PlayerShortcutAction.volumeDown:
+        unawaited(_nudgeVolume(-5));
+      case PlayerShortcutAction.toggleMute:
+        unawaited(_toggleMute());
+      case PlayerShortcutAction.toggleFullscreen:
+        unawaited(toggleFullscreen(context));
+      case PlayerShortcutAction.exitFullscreen:
+        if (isFullscreen(context)) unawaited(exitFullscreen(context));
+      case PlayerShortcutAction.toggleSubtitles:
+        unawaited(_toggleSubtitles());
+      case PlayerShortcutAction.speedDown:
+        unawaited(_stepSpeed(-1));
+      case PlayerShortcutAction.speedUp:
+        unawaited(_stepSpeed(1));
+      case PlayerShortcutAction.frameStepBack:
+        unawaited(_stepFrame(-1));
+      case PlayerShortcutAction.frameStepForward:
+        unawaited(_stepFrame(1));
+      case PlayerShortcutAction.seekToPercent:
+        unawaited(_seekToPercent((shortcut.value ?? 0) * 10));
+      case PlayerShortcutAction.jumpToStart:
+        unawaited(
+          _seekTo(Duration.zero, label: 'Start', icon: Icons.skip_previous),
+        );
+      case PlayerShortcutAction.jumpToEnd:
+        unawaited(_seekTo(_duration, label: 'End', icon: Icons.skip_next));
+      case PlayerShortcutAction.showHelp:
+        _showShortcutsHelp();
+    }
+  }
+
+  void _showHud(String label, {IconData? icon}) {
+    if (!mounted) return;
+    _hudTimer?.cancel();
+    setState(() {
+      _hudLabel = label;
+      _hudIcon = icon;
+    });
+    _hudTimer = Timer(const Duration(milliseconds: 900), () {
+      if (!mounted) return;
+      setState(() {
+        _hudLabel = null;
+        _hudIcon = null;
+      });
+    });
+  }
+
+  void _showShortcutsHelp() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => const _ShortcutsSheet(),
+    );
+  }
+
+  Future<void> _replay() async {
+    setState(() {
+      _completed = false;
+      _nextEpisodeSeason = null;
+      _nextEpisodeNumber = null;
+    });
+    await _player.seek(Duration.zero);
+    await _player.play();
+  }
+
+  Future<void> _resolveNextEpisode() async {
+    if (widget.mediaRef.type != MediaType.tv ||
+        widget.season == null ||
+        widget.episode == null ||
+        _resolvingNextEpisode) {
+      return;
+    }
+    _resolvingNextEpisode = true;
+    try {
+      final seriesId = widget.mediaRef.id;
+      final episodes = await ref.read(
+        episodeListProvider((seriesId: seriesId, seasonNumber: widget.season!))
+            .future,
+      );
+      if (!mounted) return;
+      final nextInSeason = nextEpisodeNumber(
+        episodes.map((episode) => episode.number),
+        widget.episode!,
+      );
+      if (nextInSeason != null) {
+        setState(() {
+          _nextEpisodeSeason = widget.season;
+          _nextEpisodeNumber = nextInSeason;
+        });
+        return;
+      }
+      final details = ref.read(detailsProvider(widget.mediaRef)).value;
+      final nextSeason = details == null
+          ? null
+          : nextSeasonNumber(
+              details.seasons.map((season) => season.number),
+              widget.season!,
+            );
+      if (nextSeason == null) return;
+      final nextEpisodes = await ref.read(
+        episodeListProvider((seriesId: seriesId, seasonNumber: nextSeason))
+            .future,
+      );
+      if (!mounted) return;
+      final numbers =
+          nextEpisodes
+              .map((episode) => episode.number)
+              .where((number) => number > 0)
+              .toList()
+            ..sort();
+      if (numbers.isEmpty) return;
+      setState(() {
+        _nextEpisodeSeason = nextSeason;
+        _nextEpisodeNumber = numbers.first;
+      });
+    } catch (_) {
+      // End-card navigation is best effort; replay stays available.
+    } finally {
+      _resolvingNextEpisode = false;
+    }
+  }
+
+  Future<void> _playNextEpisode() async {
+    final season = _nextEpisodeSeason;
+    final episode = _nextEpisodeNumber;
+    if (season == null || episode == null) return;
+    unawaited(_persistProgress());
+    _stopOwnedSession();
+    if (!mounted) return;
+    context.go(
+      Uri(
+        path: '/sources/${widget.mediaRef.routeKey}',
+        queryParameters: {'season': '$season', 'episode': '$episode'},
+      ).toString(),
+    );
+  }
 
   Future<void> _selectAudio(AudioTrack track) async {
     try {
@@ -589,6 +1111,9 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
   }
 
   Future<void> _selectSubtitle(SubtitleTrack track) async {
+    if (track.id != 'no' && track.id != 'auto') {
+      _lastSubtitleTrack = track;
+    }
     try {
       await _player.setSubtitleTrack(track);
       if (track.id != 'auto' && track.id != 'no' && track.language != null) {
@@ -722,19 +1247,54 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     final base = fullscreen
         ? kDefaultMaterialVideoControlsThemeDataFullscreen
         : kDefaultMaterialVideoControlsThemeData;
+    final touchPlatform =
+        defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
     return base.copyWith(
       volumeGesture: true,
       seekGesture: true,
       seekOnDoubleTap: true,
+      speedUpOnLongPress: touchPlatform,
+      speedUpFactor: 2.0,
+      primaryButtonBar: [
+        const Spacer(flex: 2),
+        _SeekButton(
+          forward: false,
+          onPressed: () => unawaited(
+            _seekBy(
+              const Duration(seconds: -10),
+              label: '10 seconds',
+              icon: Icons.replay_10,
+            ),
+          ),
+        ),
+        const Spacer(),
+        const MaterialPlayOrPauseButton(iconSize: 56.0),
+        const Spacer(),
+        _SeekButton(
+          forward: true,
+          onPressed: () => unawaited(
+            _seekBy(
+              const Duration(seconds: 10),
+              label: '10 seconds',
+              icon: Icons.forward_10,
+            ),
+          ),
+        ),
+        const Spacer(flex: 2),
+      ],
       topButtonBar: [
         const Spacer(),
         _InPlayerMenus(
           volume: _volume,
           fit: _fit,
           aspectRatio: _aspectRatio,
-          onVolumeChanged: _setVolume,
+          onToggleMute: () => unawaited(_toggleMute()),
           onFitSelected: _setFit,
           onAspectRatioSelected: _setAspectRatio,
+          onShowShortcuts: _showShortcutsHelp,
+          onToggleStats: () => setState(() => _showStats = !_showStats),
+          statsEnabled: _showStats,
         ),
       ],
       bottomButtonBar: [
@@ -771,6 +1331,7 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
   }
 
   Widget _inPlayerControls() {
+    final appSettings = ref.watch(appSettingsProvider).value;
     return MaterialVideoControlsTheme(
       normal: _videoControlsTheme(fullscreen: false),
       fullscreen: _videoControlsTheme(fullscreen: true),
@@ -778,7 +1339,68 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
         controller: _videoController,
         fit: _fit,
         aspectRatio: _aspectRatio,
-        controls: MaterialVideoControls,
+        subtitleViewConfiguration: _subtitleViewConfiguration(appSettings),
+        controls: _videoControls,
+      ),
+    );
+  }
+
+  SubtitleViewConfiguration _subtitleViewConfiguration(AppSettings? settings) {
+    final scale = settings?.subtitleTextScale ?? 1;
+    final background = switch (settings?.subtitleBackground ??
+        SubtitleBackgroundStyle.translucent) {
+      SubtitleBackgroundStyle.none => const Color(0x00000000),
+      SubtitleBackgroundStyle.solid => const Color(0xff000000),
+      SubtitleBackgroundStyle.translucent => const Color(0xaa000000),
+    };
+    return SubtitleViewConfiguration(
+      style: TextStyle(
+        height: 1.4,
+        fontSize: 32 * scale,
+        letterSpacing: 0,
+        wordSpacing: 0,
+        color: const Color(0xffffffff),
+        fontWeight: FontWeight.normal,
+        backgroundColor: background,
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+    );
+  }
+
+  /// Controls builder shared by the embedded and fullscreen [Video]s. The
+  /// fullscreen route reuses this builder, so shortcuts, the HUD, and the
+  /// end-of-playback card work in both modes.
+  Widget _videoControls(VideoState state) {
+    final episodeLabel =
+        widget.mediaRef.type == MediaType.tv &&
+            widget.season != null &&
+            widget.episode != null
+        ? 'S${widget.season} E${widget.episode}'
+        : null;
+    final nextEpisode = _nextEpisodeSeason == null || _nextEpisodeNumber == null
+        ? null
+        : 'S$_nextEpisodeSeason E$_nextEpisodeNumber';
+    return PlayerShortcuts(
+      onAction: _handleShortcut,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          MaterialVideoControls(state),
+          if (_completed)
+            _EndOfPlaybackOverlay(
+              episodeLabel: episodeLabel,
+              nextEpisodeLabel: nextEpisode,
+              onReplay: () => unawaited(_replay()),
+              onNextEpisode: nextEpisode == null
+                  ? null
+                  : () => unawaited(_playNextEpisode()),
+            ),
+          IgnorePointer(
+            child: _PlayerHud(label: _hudLabel, icon: _hudIcon),
+          ),
+          if (_showStats)
+            IgnorePointer(child: _PlayerStatsOverlay(player: _player)),
+        ],
       ),
     );
   }
@@ -794,10 +1416,21 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     _positionSubscription?.cancel();
     _durationSubscription?.cancel();
     _errorSubscription?.cancel();
+    _completedSubscription?.cancel();
     _saveTimer?.cancel();
-    unawaited(_persistProgress());
+    _byteObservationTimer?.cancel();
+    _hudTimer?.cancel();
+    _volumeSaveTimer?.cancel();
+    _rateSaveTimer?.cancel();
+    _resumeGateTimer?.cancel();
+    // Force a final anchor at the exit position: it is the most likely
+    // resume target and may be newer than the throttled periodic anchor.
+    unawaited(_persistProgress(forceAnchor: true));
     _stopOwnedSession();
-    unawaited(_player.dispose());
+    // The player is app-lifetime (see mediaKitPlayerProvider): disposing it
+    // here races media_kit's libmpv wakeup callback and crashes debug builds.
+    // Stopping playback is enough; the next screen reuses the instance.
+    unawaited(_player.stop());
     super.dispose();
   }
 
@@ -812,6 +1445,12 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     final streamState = ref.watch(streamingStateProvider);
     final state = streamState.value ?? ref.read(streamingServiceProvider).state;
     final details = ref.watch(detailsProvider(widget.mediaRef));
+    final detailsValue = details.value;
+    if (detailsValue != null) {
+      _detailsTitle = detailsValue.item.title;
+      _detailsPosterPath = detailsValue.item.posterPath;
+      _detailsBackdropPath = detailsValue.item.backdropPath;
+    }
     final mediaTitle = details.when(
       data: (value) => value.item.title,
       loading: () => 'Player',
@@ -843,11 +1482,16 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
             : ScrollConfiguration(
                 behavior: ScrollConfiguration.of(context)
                     .copyWith(scrollbars: false),
-                child: ListView(
-                  padding: EdgeInsets.zero,
-                  children: [
-                    _VideoStage(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    // Wide windows: put the details in a right sidebar and
+                    // let the video use the full height, instead of leaving
+                    // the letterbox side space empty.
+                    final wide = constraints.maxWidth >= 1100;
+                    final stage = _VideoStage(
                       aspectRatio: _aspectRatio ?? 16 / 9,
+                      maxHeight: wide ? constraints.maxHeight : null,
+                      alignTop: wide,
                       child: state.playback == null
                           ? _LoadingState(
                               state: state,
@@ -857,96 +1501,123 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
                               },
                             )
                           : _inPlayerControls(),
-                    ),
-                    Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(
-                          maxWidth: DesignTokens.contentMaxWidth,
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(
-                            DesignTokens.pageGutter,
+                    );
+                    final details = _buildDetails(
+                      state,
+                      episodeLabel,
+                      mediaTitle,
+                    );
+                    if (!wide) {
+                      return ListView(
+                        padding: EdgeInsets.zero,
+                        children: [
+                          stage,
+                          Center(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(
+                                maxWidth: DesignTokens.contentMaxWidth,
+                              ),
+                              child: details,
+                            ),
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (state.phase == StreamingPhase.error)
-                                _ErrorState(
-                                  message: state.message,
-                                  onRetry: _retry,
-                                  onBack: () => context.pop(),
-                                  onSwitchSource: () {
-                                    unawaited(_persistProgress());
-                                    _stopOwnedSession();
-                                    context.go(
-                                      Uri(
-                                        path:
-                                            '/sources/${widget.mediaRef.routeKey}',
-                                        queryParameters: {
-                                          if (widget.season != null)
-                                            'season': '${widget.season}',
-                                          if (widget.episode != null)
-                                            'episode': '${widget.episode}',
-                                        },
-                                      ).toString(),
-                                    );
-                                  },
-                                )
-                              else ...[
-                                if (episodeLabel != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(
-                                      bottom: DesignTokens.space2,
-                                    ),
-                                    child: Badge(
-                                      label: episodeLabel,
-                                      tone: BadgeTone.neutral,
-                                    ),
-                                  ),
-                                Text(
-                                  state.playback?.file.name ?? mediaTitle,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context).textTheme.titleLarge
-                                      ?.copyWith(fontWeight: FontWeight.w700),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  state.origin == PlaybackOrigin.cache
-                                      ? 'Playing from this device. This replay starts without a provider lookup.'
-                                      : 'Seeking works while downloading. Playback resumes from the local stream once enough data arrives.',
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                                        color: DesignTokens.textSecondary,
-                                      ),
-                                ),
-                                if (state.stats.totalBytes > 0) ...[
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    '${formatBytes(state.stats.downloadedBytes)} of ${formatBytes(state.stats.totalBytes)} · ${formatSpeed(state.stats.downloadRate)}',
-                                    style: Theme.of(context).textTheme.bodySmall
-                                        ?.copyWith(
-                                          color: DesignTokens.textTertiary,
-                                          fontFeatures: const [
-                                            FontFeature.tabularFigures(),
-                                          ],
-                                        ),
-                                  ),
-                                ],
-                                const SizedBox(height: DesignTokens.space4),
-                                TorrentStatistics(stats: state.stats),
-                                const SizedBox(height: DesignTokens.space2),
-                                _DiagnosticsStrip(state: state),
-                              ],
-                            ],
+                        ],
+                      );
+                    }
+                    final sidebarWidth = (constraints.maxWidth * 0.22)
+                        .clamp(320.0, 420.0)
+                        .toDouble();
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(child: stage),
+                        Container(
+                          width: sidebarWidth,
+                          decoration: const BoxDecoration(
+                            border: Border(
+                              left: BorderSide(color: DesignTokens.line),
+                            ),
                           ),
+                          child: SingleChildScrollView(child: details),
                         ),
-                      ),
-                    ),
-                  ],
+                      ],
+                    );
+                  },
                 ),
               ),
+      ),
+    );
+  }
+
+  /// Details and transfer statistics. Rendered under the video on narrow
+  /// windows and in the right sidebar on wide ones.
+  Widget _buildDetails(
+    StreamingState state,
+    String? episodeLabel,
+    String mediaTitle,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.all(DesignTokens.pageGutter),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (state.phase == StreamingPhase.error)
+            _ErrorState(
+              message: state.message,
+              onRetry: _retry,
+              onBack: () => context.pop(),
+              onSwitchSource: () {
+                unawaited(_persistProgress());
+                _stopOwnedSession();
+                context.go(
+                  Uri(
+                    path: '/sources/${widget.mediaRef.routeKey}',
+                    queryParameters: {
+                      if (widget.season != null) 'season': '${widget.season}',
+                      if (widget.episode != null)
+                        'episode': '${widget.episode}',
+                    },
+                  ).toString(),
+                );
+              },
+            )
+          else ...[
+            if (episodeLabel != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: DesignTokens.space2),
+                child: Badge(label: episodeLabel, tone: BadgeTone.neutral),
+              ),
+            Text(
+              state.playback?.file.name ?? mediaTitle,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              state.origin == PlaybackOrigin.cache
+                  ? 'Playing from this device. This replay starts without a provider lookup.'
+                  : 'Seeking works while downloading. Playback resumes from the local stream once enough data arrives.',
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: DesignTokens.textSecondary),
+            ),
+            if (state.stats.totalBytes > 0) ...[
+              const SizedBox(height: 8),
+              Text(
+                '${formatBytes(state.stats.downloadedBytes)} of ${formatBytes(state.stats.totalBytes)} · ${formatSpeed(state.stats.downloadRate)}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: DesignTokens.textTertiary,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+            const SizedBox(height: DesignTokens.space4),
+            TorrentStatistics(stats: state.stats),
+            const SizedBox(height: DesignTokens.space2),
+            _DiagnosticsStrip(state: state),
+          ],
+        ],
       ),
     );
   }
@@ -970,25 +1641,38 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
 /// Full-bleed black stage that caps the video height to the viewport so
 /// the in-player bottom control bar always stays visible without scrolling.
 class _VideoStage extends StatelessWidget {
-  const _VideoStage({required this.aspectRatio, required this.child});
+  const _VideoStage({
+    required this.aspectRatio,
+    required this.child,
+    this.maxHeight,
+    this.alignTop = false,
+  });
   final double aspectRatio;
   final Widget child;
 
+  /// Caps the stage height. When null, 62% of the viewport keeps the
+  /// in-player controls and the details below both visible.
+  final double? maxHeight;
+
+  /// Pins the video to the top of the stage instead of centering it, so a
+  /// full-height stage does not waste a black band above the picture.
+  final bool alignTop;
+
   @override
   Widget build(BuildContext context) {
-    final maxHeight = MediaQuery.sizeOf(context).height * 0.62;
+    final cap = maxHeight ?? MediaQuery.sizeOf(context).height * 0.62;
     return LayoutBuilder(
       builder: (context, constraints) {
         final maxWidth = constraints.maxWidth;
         var height = maxWidth / aspectRatio;
-        if (height > maxHeight) height = maxHeight;
+        if (height > cap) height = cap;
         if (height <= 0) height = maxWidth / aspectRatio;
         final width = height * aspectRatio;
         return Container(
           color: Colors.black,
           width: maxWidth,
           height: height,
-          alignment: Alignment.center,
+          alignment: alignTop ? Alignment.topCenter : Alignment.center,
           child: SizedBox(width: width, height: height, child: child),
         );
       },
@@ -1420,21 +2104,16 @@ class _PlaybackSpeedButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const rates = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
     return PopupMenuButton<double>(
-      tooltip: 'Playback speed (${rate.toStringAsFixed(rate == 1 ? 0 : 2)}x)',
+      tooltip: 'Playback speed (${formatPlaybackRate(rate)})',
       onSelected: onSelected,
-      itemBuilder: (context) => rates
+      itemBuilder: (context) => playerPlaybackRates
           .map(
             (value) => PopupMenuItem(
               value: value,
               child: Row(
                 children: [
-                  Expanded(
-                    child: Text(
-                      '${value.toStringAsFixed(value == 1 ? 0 : 2)}x',
-                    ),
-                  ),
+                  Expanded(child: Text(formatPlaybackRate(value))),
                   if (value == rate) const Icon(Icons.check, size: 16),
                 ],
               ),
@@ -1446,22 +2125,47 @@ class _PlaybackSpeedButton extends StatelessWidget {
   }
 }
 
+/// YouTube-style skip button used in the center controls bar.
+class _SeekButton extends StatelessWidget {
+  const _SeekButton({required this.forward, required this.onPressed});
+
+  final bool forward;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: forward ? 'Forward 10 seconds' : 'Back 10 seconds',
+      onPressed: onPressed,
+      color: Colors.white,
+      iconSize: 36,
+      icon: Icon(forward ? Icons.forward_10 : Icons.replay_10),
+    );
+  }
+}
+
 class _InPlayerMenus extends StatelessWidget {
   const _InPlayerMenus({
     required this.volume,
     required this.fit,
     required this.aspectRatio,
-    required this.onVolumeChanged,
+    required this.onToggleMute,
     required this.onFitSelected,
     required this.onAspectRatioSelected,
+    required this.onShowShortcuts,
+    required this.onToggleStats,
+    required this.statsEnabled,
   });
 
   final double volume;
   final BoxFit fit;
   final double? aspectRatio;
-  final ValueChanged<double> onVolumeChanged;
+  final VoidCallback onToggleMute;
   final ValueChanged<BoxFit> onFitSelected;
   final ValueChanged<double?> onAspectRatioSelected;
+  final VoidCallback onShowShortcuts;
+  final VoidCallback onToggleStats;
+  final bool statsEnabled;
 
   void _selectDisplay(_DisplayOption option) {
     switch (option) {
@@ -1528,8 +2232,20 @@ class _InPlayerMenus extends StatelessWidget {
         IconButton(
           tooltip: volume <= 0 ? 'Unmute' : 'Mute',
           color: Colors.white,
-          onPressed: () => onVolumeChanged(volume <= 0 ? 100 : 0),
+          onPressed: onToggleMute,
           icon: Icon(volume <= 0 ? Icons.volume_off : Icons.volume_up),
+        ),
+        IconButton(
+          tooltip: 'Keyboard shortcuts',
+          color: Colors.white,
+          onPressed: onShowShortcuts,
+          icon: const Icon(Icons.keyboard_outlined),
+        ),
+        IconButton(
+          tooltip: statsEnabled ? 'Hide playback stats' : 'Playback stats',
+          color: statsEnabled ? DesignTokens.accent : Colors.white,
+          onPressed: onToggleStats,
+          icon: const Icon(Icons.monitor_heart_outlined),
         ),
       ],
     );
@@ -1651,6 +2367,263 @@ class _DiagnosticsStrip extends ConsumerWidget {
       style: Theme.of(context).textTheme.bodySmall?.copyWith(
         color: DesignTokens.textTertiary,
         fontFeatures: const [FontFeature.tabularFigures()],
+      ),
+    );
+  }
+}
+
+/// Modal sheet listing every shortcut in [playerShortcuts] that opts into help.
+class _ShortcutsSheet extends StatelessWidget {
+  const _ShortcutsSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = playerShortcuts
+        .where((shortcut) => shortcut.helpKeys != null)
+        .toList(growable: false);
+    return SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 8, 24, 4),
+            child: Text(
+              'Keyboard shortcuts',
+              style: Theme.of(context).textTheme.titleLarge
+                  ?.copyWith(fontWeight: FontWeight.w700),
+            ),
+          ),
+          for (final shortcut in entries)
+            ListTile(
+              dense: true,
+              title: Text(shortcut.helpDescription ?? ''),
+              trailing: _KeyChip(label: shortcut.helpKeys!),
+            ),
+          const ListTile(
+            dense: true,
+            title: Text('Back or forward 10 seconds'),
+            trailing: _KeyChip(label: 'Double-tap'),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+class _KeyChip extends StatelessWidget {
+  const _KeyChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: DesignTokens.surface,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: DesignTokens.lineStrong),
+      ),
+      child: Text(label, style: Theme.of(context).textTheme.labelMedium),
+    );
+  }
+}
+
+/// Transient feedback for keyboard/button actions (seek, volume, speed).
+class _PlayerHud extends StatelessWidget {
+  const _PlayerHud({this.label, this.icon});
+
+  final String? label;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      opacity: label == null ? 0 : 1,
+      duration: const Duration(milliseconds: 150),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.72),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, color: Colors.white, size: 20),
+                const SizedBox(width: 8),
+              ],
+              if (label != null)
+                Text(
+                  label!,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// End-of-playback card: replay plus next episode for series.
+class _EndOfPlaybackOverlay extends StatelessWidget {
+  const _EndOfPlaybackOverlay({
+    required this.episodeLabel,
+    required this.nextEpisodeLabel,
+    required this.onReplay,
+    this.onNextEpisode,
+  });
+
+  final String? episodeLabel;
+  final String? nextEpisodeLabel;
+  final VoidCallback onReplay;
+  final VoidCallback? onNextEpisode;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.65),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.check_circle_outline, color: Colors.white, size: 40),
+          const SizedBox(height: 12),
+          Text(
+            episodeLabel == null
+                ? 'Playback finished'
+                : '$episodeLabel finished',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            alignment: WrapAlignment.center,
+            children: [
+              OutlinedButton.icon(
+                onPressed: onReplay,
+                icon: const Icon(Icons.replay),
+                label: const Text('Replay'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  side: const BorderSide(color: Colors.white70),
+                ),
+              ),
+              if (onNextEpisode != null)
+                FilledButton.icon(
+                  onPressed: onNextEpisode,
+                  icon: const Icon(Icons.skip_next),
+                  label: Text(
+                    nextEpisodeLabel == null
+                        ? 'Next episode'
+                        : 'Next: $nextEpisodeLabel',
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Stats-for-nerds style overlay; refreshes once per second while visible.
+class _PlayerStatsOverlay extends ConsumerStatefulWidget {
+  const _PlayerStatsOverlay({required this.player});
+
+  final Player player;
+
+  @override
+  ConsumerState<_PlayerStatsOverlay> createState() =>
+      _PlayerStatsOverlayState();
+}
+
+class _PlayerStatsOverlayState extends ConsumerState<_PlayerStatsOverlay> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  static String _clock(Duration value) {
+    final hours = value.inHours;
+    final minutes = value.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final streaming =
+        ref.watch(streamingStateProvider).value ??
+        ref.read(streamingServiceProvider).state;
+    final bridge = ref.watch(bridgeVersionProvider);
+    final player = widget.player;
+    final diag = streaming.diagnostics;
+    final video = player.state.videoParams;
+    final audio = player.state.audioParams;
+    final lines = <String>[
+      'phase ${streaming.phase.name}',
+      'native $bridge',
+      if (diag?['tapToFirstFrameMs'] != null)
+        'first frame ${diag!['tapToFirstFrameMs']}ms',
+      if (diag?['bufferingEvents'] != null)
+        'buffering x${diag!['bufferingEvents']}',
+      if (diag?['stallEvents'] != null) 'stalls x${diag!['stallEvents']}',
+      if (diag?['seekEvents'] != null) 'seeks x${diag!['seekEvents']}',
+      'position ${_clock(player.state.position)} / '
+          '${_clock(player.state.duration)}',
+      'buffer ${player.state.buffer.inSeconds}s',
+      if (video.w != null && video.h != null)
+        'video ${video.w}x${video.h}'
+            '${video.pixelformat == null ? '' : ' ${video.pixelformat}'}',
+      if (audio.format != null || audio.sampleRate != null)
+        'audio ${[if (audio.format != null) audio.format, if (audio.sampleRate != null) '${audio.sampleRate}Hz'].join(' ')}',
+      'rate ${player.state.rate}x · volume ${player.state.volume.round()}%',
+    ];
+    return Align(
+      alignment: Alignment.topLeft,
+      child: Container(
+        margin: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.72),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          lines.join('\n'),
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 11,
+            fontFamily: 'monospace',
+            height: 1.5,
+          ),
+        ),
       ),
     );
   }
