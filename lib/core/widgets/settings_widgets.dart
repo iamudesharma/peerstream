@@ -26,18 +26,15 @@ class SettingsSection extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
+                style: Theme.of(context).textTheme.titleMedium
                     ?.copyWith(fontWeight: FontWeight.w700),
               ),
               if (subtitle != null) ...[
                 const SizedBox(height: 2),
                 Text(
                   subtitle!,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: DesignTokens.textTertiary,
-                      ),
+                  style: Theme.of(context).textTheme.bodySmall
+                      ?.copyWith(color: DesignTokens.textTertiary),
                 ),
               ],
             ],
@@ -90,9 +87,7 @@ class SettingsTile extends StatelessWidget {
       title: Text(
         title,
         style: TextStyle(
-          color: enabled
-              ? DesignTokens.textPrimary
-              : DesignTokens.textTertiary,
+          color: enabled ? DesignTokens.textPrimary : DesignTokens.textTertiary,
         ),
       ),
       subtitle: subtitle != null ? Text(subtitle!) : null,
@@ -135,9 +130,7 @@ class SettingsToggle extends StatelessWidget {
       title: Text(
         title,
         style: TextStyle(
-          color: enabled
-              ? DesignTokens.textPrimary
-              : DesignTokens.textTertiary,
+          color: enabled ? DesignTokens.textPrimary : DesignTokens.textTertiary,
         ),
       ),
       subtitle: subtitle != null ? Text(subtitle!) : null,
@@ -182,6 +175,7 @@ class SettingsSelect<T> extends StatelessWidget {
             .map(
               (option) => PopupMenuItem<T>(
                 value: option.value,
+                enabled: option.enabled,
                 child: Text(
                   option.label,
                   style: option.value == value
@@ -189,7 +183,9 @@ class SettingsSelect<T> extends StatelessWidget {
                           color: DesignTokens.accent,
                           fontWeight: FontWeight.w600,
                         )
-                      : null,
+                      : option.enabled
+                      ? null
+                      : const TextStyle(color: DesignTokens.textTertiary),
                 ),
               ),
             )
@@ -211,9 +207,14 @@ class SettingsSelect<T> extends StatelessWidget {
 }
 
 class SelectOption<T> {
-  const SelectOption({required this.value, required this.label});
+  const SelectOption({
+    required this.value,
+    required this.label,
+    this.enabled = true,
+  });
   final T value;
   final String label;
+  final bool enabled;
 }
 
 class SettingsAction extends StatelessWidget {
@@ -250,10 +251,7 @@ class SettingsAction extends StatelessWidget {
               ),
             )
           : null,
-      trailing: Icon(
-        Icons.chevron_right,
-        color: DesignTokens.textTertiary,
-      ),
+      trailing: Icon(Icons.chevron_right, color: DesignTokens.textTertiary),
       onTap: onTap,
     );
   }

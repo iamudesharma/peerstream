@@ -49,12 +49,29 @@ class PlayerProfile {
     required this.demuxerMaxBytes,
     required this.cacheSecs,
     required this.readaheadSecs,
+    this.cacheOnDisk = false,
+    this.probeSizeBytes,
+    this.analyzeDurationSecs,
   });
 
   final String networkTimeoutSecs;
   final String demuxerMaxBytes;
   final String cacheSecs;
   final String readaheadSecs;
+
+  /// mpv `cache-on-disk`: the demuxer cache is mirrored to a temp file.
+  /// For a seekable localhost range server this only duplicates disk I/O
+  /// (the torrent layer is already writing the file); memory caching is
+  /// sufficient and avoids startup writes.
+  final bool cacheOnDisk;
+
+  /// FFmpeg probe budget for stream detection. Null keeps mpv/FFmpeg
+  /// defaults (used for direct URLs). Torrent streams set a bounded budget so
+  /// time-to-first-frame does not wait on a full default probe window.
+  final int? probeSizeBytes;
+
+  /// FFmpeg analyze duration in seconds (null = defaults).
+  final double? analyzeDurationSecs;
 
   static const direct = PlayerProfile(
     networkTimeoutSecs: '30',
@@ -70,6 +87,11 @@ class PlayerProfile {
     demuxerMaxBytes: '33554432',
     cacheSecs: '20',
     readaheadSecs: '10',
+    // 2MB / 1s mirrors the MediaForge torrent-localhost fast probe profile:
+    // container/codec detection needs far less than the FFmpeg defaults
+    // (5MB/5s) for the MP4/MKV files this path serves.
+    probeSizeBytes: 2 * 1024 * 1024,
+    analyzeDurationSecs: 1.0,
   );
 
   static const cache = PlayerProfile(

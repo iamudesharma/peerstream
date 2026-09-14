@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:media_forge_player/media_forge_player.dart'
+    show VideoEnhancementMode;
 
 import '../../core/design_tokens.dart';
 import '../../core/format.dart';
@@ -9,6 +11,7 @@ import '../../providers/app_providers.dart';
 import '../../providers/settings_providers.dart';
 import '../../services/playback/playback_cache_models.dart';
 import '../../services/settings/settings_store.dart';
+import '../player/player_backend.dart';
 
 class PlaybackScreen extends ConsumerWidget {
   const PlaybackScreen({super.key});
@@ -67,6 +70,9 @@ class PlaybackScreen extends ConsumerWidget {
     final summary = ref.watch(playbackCacheSummaryProvider);
     final entries = ref.watch(playbackCacheEntriesProvider);
     final settings = ref.watch(appSettingsProvider);
+    final enhancementCapabilities = ref.watch(
+      mediaForgeVideoEnhancementCapabilitiesProvider,
+    );
 
     return Scaffold(
       appBar: AppBar(title: const Text('Playback & Storage')),
@@ -75,17 +81,14 @@ class PlaybackScreen extends ConsumerWidget {
         children: [
           Text(
             'Playback & Storage',
-            style: Theme.of(context)
-                .textTheme
-                .headlineSmall
+            style: Theme.of(context).textTheme.headlineSmall
                 ?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 4),
           Text(
             'Configure cache, saved video, and language preferences.',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: DesignTokens.textSecondary,
-                ),
+            style: Theme.of(context).textTheme.bodyMedium
+                ?.copyWith(color: DesignTokens.textSecondary),
           ),
           const SizedBox(height: 16),
           SettingsSection(
@@ -134,8 +137,7 @@ class PlaybackScreen extends ConsumerWidget {
                           SelectOption(value: lang, label: lang),
                       ],
                       onChanged: (value) {
-                        final notifier =
-                            ref.read(appSettingsProvider.notifier);
+                        final notifier = ref.read(appSettingsProvider.notifier);
                         notifier.setAudioLanguage(
                           value == 'Default' ? null : value,
                         );
@@ -151,8 +153,7 @@ class PlaybackScreen extends ConsumerWidget {
                           SelectOption(value: lang, label: lang),
                       ],
                       onChanged: (value) {
-                        final notifier =
-                            ref.read(appSettingsProvider.notifier);
+                        final notifier = ref.read(appSettingsProvider.notifier);
                         notifier.setSubtitleLanguage(
                           value == 'None' ? null : value,
                         );
@@ -177,8 +178,7 @@ class PlaybackScreen extends ConsumerWidget {
                   children: [
                     SettingsToggle(
                       title: 'Use MediaForge Player (Experimental)',
-                      subtitle:
-                          'Use the experimental MediaForge playback engine instead of the default player. Applies to the next video you open.',
+                      subtitle: 'Use the experimental MediaForge playback engine instead of the default player. Applies to the next video you open.',
                       icon: Icons.science_outlined,
                       value: s.useMediaForgePlayer,
                       onChanged: (value) {
@@ -188,6 +188,43 @@ class PlaybackScreen extends ConsumerWidget {
                       },
                     ),
                   ],
+                ),
+              ),
+            ],
+          ),
+          SettingsSection(
+            title: 'Experimental MediaForge settings',
+            subtitle: 'Defaults for future MediaForge sessions',
+            children: [
+              settings.when(
+                loading: () => const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+                error: (_, _) => const SizedBox.shrink(),
+                data: (s) => SettingsSelect<VideoEnhancementMode>(
+                  title: 'Video Enhancement',
+                  subtitle: mediaForgeVideoEnhancementCapabilityDescription(
+                    enhancementCapabilities,
+                  ),
+                  icon: Icons.auto_awesome_outlined,
+                  value: s.mediaForgeVideoEnhancementMode,
+                  options: [
+                    for (final mode in VideoEnhancementMode.values)
+                      SelectOption(
+                        value: mode,
+                        label: mode.displayName,
+                        enabled: isMediaForgeVideoEnhancementModeSupported(
+                          mode: mode,
+                          capabilities: enhancementCapabilities,
+                        ),
+                      ),
+                  ],
+                  onChanged: (value) {
+                    ref
+                        .read(appSettingsProvider.notifier)
+                        .setMediaForgeVideoEnhancementMode(value);
+                  },
                 ),
               ),
             ],
@@ -208,8 +245,7 @@ class PlaybackScreen extends ConsumerWidget {
                         child: AppEmpty(
                           icon: Icons.video_library_outlined,
                           title: 'No saved video yet',
-                          hint:
-                              'Play a torrent and its downloaded parts will be kept here.',
+                          hint: 'Play a torrent and its downloaded parts will be kept here.',
                         ),
                       )
                     : Column(

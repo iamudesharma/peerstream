@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -7,10 +8,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:media_forge_player/media_forge_player.dart';
 
+import '../../core/image_url.dart';
 import '../../models/media_item.dart';
 import '../../models/torrent_models.dart';
 import '../../models/watch_progress.dart';
 import '../../providers/app_providers.dart';
+import '../../providers/settings_providers.dart';
 import '../../services/streaming/playback_session.dart';
 import '../../services/streaming/source_ranking.dart';
 import '../../services/streaming/streaming_service.dart';
@@ -57,8 +60,7 @@ class MediaForgePlayerScreen extends ConsumerStatefulWidget {
       _MediaForgePlayerScreenState();
 }
 
-class _MediaForgePlayerScreenState
-    extends ConsumerState<MediaForgePlayerScreen>
+class _MediaForgePlayerScreenState extends ConsumerState<MediaForgePlayerScreen>
     with WidgetsBindingObserver {
   late final MediaForgePlayerController _controller;
   late final StreamingService _service;
@@ -74,13 +76,13 @@ class _MediaForgePlayerScreenState
   /// Updated without setState; the package-owned chrome listens to the
   /// controller itself, so PeerStream chrome never rebuilds the video.
   late final ValueNotifier<MediaForgePlaybackStage> _stage;
-  final MediaForgeSeekCoordinator _seekCoordinator = MediaForgeSeekCoordinator();
+  final MediaForgeSeekCoordinator _seekCoordinator =
+      MediaForgeSeekCoordinator();
 
   /// Retried resume-seek driver (open-resume + history-dialog confirm share
   /// it). Superseded runs cancel via run-id; teardown/fallback cancel
   /// explicitly. Never touches video state itself.
-  final MediaForgeResumeSeekDriver _resumeDriver =
-      MediaForgeResumeSeekDriver();
+  final MediaForgeResumeSeekDriver _resumeDriver = MediaForgeResumeSeekDriver();
 
   bool _lastBuffering = false;
   bool _askedAboutResume = false;
@@ -90,6 +92,9 @@ class _MediaForgePlayerScreenState
   Object? _lastSeenError;
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
+  // The last displayed, progressing frame. Decoder/seek timestamps during a
+  // torrent wait must never become future resume history.
+  Duration _lastPersistablePosition = Duration.zero;
   int _lastReportedPositionMs = -1;
 
   // ---- dispose-safe persist state ----
@@ -110,6 +115,7 @@ class _MediaForgePlayerScreenState
   int _rebufferEvents = 0;
   int _lastSubtitleCuesPending = 0;
   MediaForgeDiagnostics? _lastDiag;
+  String _lastEnhancementFallbackReason = '';
 
   // ---- torrent cache ranges (timeline availability, never video state) ---
   //
@@ -135,6 +141,9 @@ class _MediaForgePlayerScreenState
       configuration: mediaForgeBaseConfiguration,
     );
     _controller.addListener(_onControllerValue);
+    _controller.enhancementCapabilities.addListener(
+      _publishVideoEnhancementCapabilities,
+    );
     _eventsSub = _controller.events.listen(_onEvent);
     _diagSub = _controller.diagnostics.listen(_onDiagnostics);
     _torrentStats = ValueNotifier(null);
@@ -147,7 +156,15 @@ class _MediaForgePlayerScreenState
       active: PlayerBackend.mediaForge,
     );
     _saveTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      if (_controller.value.isPlaying) unawaited(_persistProgress());
+      final value = _controller.value;
+      if (value.isPlaying &&
+          canPersistMediaForgeProgress(
+            firstFramePresented: value.firstFramePresented,
+            isBuffering: value.isBuffering,
+            hasPendingSeek: _seekCoordinator.hasPendingSeek,
+          )) {
+        unawaited(_persistProgress());
+      }
     });
     Future<void>.microtask(() => _start());
   }
@@ -179,9 +196,14 @@ class _MediaForgePlayerScreenState
       _service.markPlaying();
       _updatePolling();
     }
-    if (value.firstFramePresented &&
-        value.isBuffering &&
-        !_lastBuffering) {
+    if (canPersistMediaForgeProgress(
+      firstFramePresented: value.firstFramePresented,
+      isBuffering: value.isBuffering,
+      hasPendingSeek: _seekCoordinator.hasPendingSeek,
+    )) {
+      _lastPersistablePosition = value.position;
+    }
+    if (value.firstFramePresented && value.isBuffering && !_lastBuffering) {
       _rebufferEvents++;
     }
     if (value.isBuffering != _lastBuffering &&
@@ -201,10 +223,7 @@ class _MediaForgePlayerScreenState
         _lastSeenError != error &&
         mounted) {
       _lastSeenError = error;
-      _offerFallback(
-        'Playback error: $error',
-        snack: true,
-      );
+      _offerFallback('Playback error: $error', snack: true);
     }
     // Duration/position moved: re-derive torrent cache ranges (change-gated,
     // no rebuilds).
@@ -225,11 +244,9 @@ class _MediaForgePlayerScreenState
           buildMediaForgeBenchmarkPayload(
             requested: PlayerBackend.mediaForge,
             active: PlayerBackend.mediaForge,
-            sourceType:
-                _openSourceType ??
-                MediaForgeSourceType.directHttp,
-            tapToFirstFrameMs: _service.currentDiagnostics?.tapToFirstFrame
-                ?.inMilliseconds,
+            sourceType: _openSourceType ?? MediaForgeSourceType.directHttp,
+            tapToFirstFrameMs:
+                _service.currentDiagnostics?.tapToFirstFrame?.inMilliseconds,
             firstFrameLatencyMs: event.latencyMs,
             positionMs: event.positionMs,
             note: 'first-frame',
@@ -260,9 +277,7 @@ class _MediaForgePlayerScreenState
           buildMediaForgeBenchmarkPayload(
             requested: PlayerBackend.mediaForge,
             active: PlayerBackend.mediaForge,
-            sourceType:
-                _openSourceType ??
-                MediaForgeSourceType.directHttp,
+            sourceType: _openSourceType ?? MediaForgeSourceType.directHttp,
             lastSeekLatencyMs: event.latencyMs,
             lastSeekGeneration: generation,
             positionMs: event.positionMs,
@@ -297,6 +312,43 @@ class _MediaForgePlayerScreenState
     if (_fallbackActive || _releaseFuture != null) return;
     _lastDiag = diag;
     _lastSubtitleCuesPending = diag.subtitleCuesPending;
+    final fallbackReason = diag.videoEnhancementFallbackReason;
+    if (fallbackReason != _lastEnhancementFallbackReason) {
+      _lastEnhancementFallbackReason = fallbackReason;
+      if (fallbackReason.isNotEmpty) {
+        debugPrint(
+          '[Playback] MediaForge video enhancement bypassed: $fallbackReason. '
+          'Continuing normal MediaForge rendering.',
+        );
+      }
+    }
+  }
+
+  /// Shares the actual package probe with PeerStream Settings. This listens
+  /// to the existing controller; it neither creates another controller nor
+  /// starts MediaForge when the standard player is selected.
+  void _publishVideoEnhancementCapabilities() {
+    ref
+        .read(mediaForgeVideoEnhancementCapabilitiesProvider.notifier)
+        .setCapabilities(_controller.videoEnhancementCapabilities);
+  }
+
+  /// Presentation-only, runtime-safe mode update. The public player method
+  /// applies it to the next frame without reopening media or disturbing
+  /// torrent/audio/subtitle/session state. A rejected mode is intentionally
+  /// contained here: playback remains on the same MediaForge controller.
+  Future<void> _applyVideoEnhancementMode(VideoEnhancementMode mode) async {
+    if (_fallbackActive || _releaseFuture != null) return;
+    final accepted = await applyMediaForgeVideoEnhancementMode(
+      mode: mode,
+      setMode: _controller.setVideoEnhancementMode,
+    );
+    if (!accepted && mounted && !_fallbackActive && _releaseFuture == null) {
+      debugPrint(
+        '[Playback] MediaForge video enhancement unavailable; '
+        'continuing normal MediaForge rendering.',
+      );
+    }
   }
 
   void _updateStage(bool isBuffering) {
@@ -453,7 +505,14 @@ class _MediaForgePlayerScreenState
       await _service.start(source, claimed: token);
       _updatePolling();
       if (preservePosition != null) _position = preservePosition;
-    } catch (error) {
+    } catch (error, stackTrace) {
+      // This occurs before MediaForge receives a URI (for example while a
+      // cached torrent source is being prepared). Keep the user-facing
+      // message concise, but retain the root cause in the app log so a
+      // source-start failure is not misdiagnosed as a player failure.
+      debugPrint(
+        '[Playback] MediaForge source preparation failed: $error\n$stackTrace',
+      );
       if (mounted) {
         _service.reportError(
           'Unable to open this source. Go back and search again.',
@@ -542,9 +601,7 @@ class _MediaForgePlayerScreenState
     final List<MediaForgeBufferedRange> ranges;
     if (playback.fromCache) {
       // Verified complete local file: the whole timeline is available.
-      ranges = [
-        MediaForgeBufferedRange(start: Duration.zero, end: duration),
-      ];
+      ranges = [MediaForgeBufferedRange(start: Duration.zero, end: duration)];
     } else {
       final availability = _service.currentTorrentAvailability();
       // No engine data yet: keep the last pushed ranges, never blank good
@@ -611,6 +668,13 @@ class _MediaForgePlayerScreenState
         ),
       );
       await _controller.open(media, play: true);
+      // The public setter intentionally runs after source open. Its failure
+      // is then presentation-only and cannot be confused with a MediaForge
+      // source/open failure that warrants the existing default-player fallback.
+      await _applyVideoEnhancementMode(
+        ref.read(appSettingsProvider).value?.mediaForgeVideoEnhancementMode ??
+            VideoEnhancementMode.off,
+      );
       final explicitStart = _explicitStart();
       if (explicitStart != null &&
           mounted &&
@@ -655,8 +719,7 @@ class _MediaForgePlayerScreenState
       buildMediaForgeBenchmarkPayload(
         requested: PlayerBackend.mediaForge,
         active: PlayerBackend.defaultPlayer,
-        sourceType:
-            _openSourceType ?? MediaForgeSourceType.directHttp,
+        sourceType: _openSourceType ?? MediaForgeSourceType.directHttp,
         positionMs: _fallbackResumeMs,
         note: 'fallback: $reason',
       ),
@@ -673,6 +736,9 @@ class _MediaForgePlayerScreenState
     unawaited(_diagSub?.cancel());
     _diagSub = null;
     _controller.removeListener(_onControllerValue);
+    _controller.enhancementCapabilities.removeListener(
+      _publishVideoEnhancementCapabilities,
+    );
     try {
       WidgetsBinding.instance.removeObserver(this);
     } catch (_) {}
@@ -772,11 +838,11 @@ class _MediaForgePlayerScreenState
     final explicit = widget.resumeMs;
     int? targetMs = explicit != null && explicit > 0 ? explicit : null;
     targetMs ??= _cachedHistory
-        ?.where((entry) => entry.key == watchKey(
-              widget.mediaRef,
-              widget.season,
-              widget.episode,
-            ))
+        ?.where(
+          (entry) =>
+              entry.key ==
+              watchKey(widget.mediaRef, widget.season, widget.episode),
+        )
         .firstOrNull
         ?.positionMs;
     if (targetMs == null || targetMs < watchTrivialPositionMs) return null;
@@ -791,7 +857,10 @@ class _MediaForgePlayerScreenState
   /// Dispose-safe: uses only [_service] and the cached history/details
   /// snapshots — never `ref`, so calling this from dispose() is safe.
   Future<void> _persistProgress({bool allowPendingSeek = false}) async {
-    final positionMs = _position.inMilliseconds;
+    // Persist only known presented progress. In particular, do not overwrite
+    // a valid entry with a resume target while the local torrent stream is
+    // buffering at that target.
+    final positionMs = _lastPersistablePosition.inMilliseconds;
     if (positionMs <= 0 || _fallbackActive) return;
     // Periodic ticks never record mid-seek (only settled generations count),
     // but teardown saves must not be dropped: a pending — possibly stuck —
@@ -878,6 +947,9 @@ class _MediaForgePlayerScreenState
       WidgetsBinding.instance.removeObserver(this);
     } catch (_) {}
     _controller.removeListener(_onControllerValue);
+    _controller.enhancementCapabilities.removeListener(
+      _publishVideoEnhancementCapabilities,
+    );
     try {
       await _eventsSub?.cancel();
     } catch (_) {}
@@ -902,8 +974,7 @@ class _MediaForgePlayerScreenState
         active: _fallbackActive
             ? PlayerBackend.defaultPlayer
             : PlayerBackend.mediaForge,
-        sourceType:
-            _openSourceType ?? MediaForgeSourceType.directHttp,
+        sourceType: _openSourceType ?? MediaForgeSourceType.directHttp,
         presentedFps: diag?.presentedFps,
         decodedFps: diag?.decodedFps,
         droppedFrames: diag?.droppedFrames,
@@ -914,6 +985,7 @@ class _MediaForgePlayerScreenState
         stallEvents: _service.currentDiagnostics?.stallEvents,
         subtitleCuesPending: _lastSubtitleCuesPending,
         positionMs: _position.inMilliseconds,
+        enhancementDiagnostics: diag,
         note: 'teardown',
       ),
     );
@@ -941,6 +1013,10 @@ class _MediaForgePlayerScreenState
   Widget build(BuildContext context) {
     ref.listen(streamingStateProvider, (_, next) {
       next.whenData(_onStreamingState);
+    });
+    ref.listen(appSettingsProvider, (_, next) {
+      final mode = next.value?.mediaForgeVideoEnhancementMode;
+      if (mode != null) unawaited(_applyVideoEnhancementMode(mode));
     });
     if (_fallbackActive) {
       return DefaultPlayerScreen(
@@ -987,6 +1063,10 @@ class _MediaForgePlayerScreenState
             widget.episode != null
         ? 'S${widget.season} E${widget.episode}'
         : null;
+    final detailValue = details.asData?.value;
+    final openingBackdropPath =
+        detailValue?.item.backdropPath ?? _cachedBackdropPath;
+    final openingPosterPath = detailValue?.item.posterPath ?? _cachedPosterPath;
 
     if (phase == StreamingPhase.unsupported) {
       return Scaffold(
@@ -1023,10 +1103,8 @@ class _MediaForgePlayerScreenState
                 if (_fallbackReason != null) ...[
                   const SizedBox(height: 12),
                   OutlinedButton.icon(
-                    onPressed: () => _offerFallback(
-                      _fallbackReason!,
-                      snack: false,
-                    ),
+                    onPressed: () =>
+                        _offerFallback(_fallbackReason!, snack: false),
                     icon: const Icon(Icons.swap_horiz),
                     label: const Text('Retry with default player'),
                   ),
@@ -1051,16 +1129,135 @@ class _MediaForgePlayerScreenState
       child: Scaffold(
         backgroundColor: Colors.black,
         body: SafeArea(
-          child: MediaPlayerScreen(
-            controller: _controller,
-            title: mediaTitle,
-            subtitle: 'MediaForge • ${episodeLabel ?? playback.file.name}',
-            torrentStats: _torrentStats,
-            onPickExternalSubtitle: _pickExternalSubtitle,
-            onRetry: _retry,
-            onBack: () => unawaited(_handleBack()),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              MediaPlayerScreen(
+                controller: _controller,
+                title: mediaTitle,
+                subtitle: 'MediaForge • ${episodeLabel ?? playback.file.name}',
+                torrentStats: _torrentStats,
+                onPickExternalSubtitle: _pickExternalSubtitle,
+                onRetry: _retry,
+                onBack: () => unawaited(_handleBack()),
+              ),
+              ValueListenableBuilder<MediaForgePlayerValue>(
+                valueListenable: _controller,
+                builder: (context, value, _) {
+                  if (!shouldShowMediaForgeOpeningPreview(
+                    firstFramePresented: value.firstFramePresented,
+                    hasError: value.hasError,
+                  )) {
+                    return const SizedBox.shrink();
+                  }
+                  return IgnorePointer(
+                    child: _MediaForgeOpeningPreview(
+                      title: mediaTitle,
+                      episodeLabel: episodeLabel,
+                      resumeAt: _explicitStart(),
+                      backdropPath: openingBackdropPath,
+                      posterPath: openingPosterPath,
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Stable opening/resume artwork. It deliberately disappears only after the
+/// public player's `firstFramePresented` signal, so a requested resume
+/// position can never masquerade as a visible video frame.
+class _MediaForgeOpeningPreview extends StatelessWidget {
+  const _MediaForgeOpeningPreview({
+    required this.title,
+    required this.episodeLabel,
+    required this.resumeAt,
+    required this.backdropPath,
+    required this.posterPath,
+  });
+
+  final String title;
+  final String? episodeLabel;
+  final Duration? resumeAt;
+  final String? backdropPath;
+  final String? posterPath;
+
+  @override
+  Widget build(BuildContext context) {
+    final backdrop = resolveImageUrl(backdropPath, tmdbSize: 'w1280');
+    final poster = resolveImageUrl(posterPath, tmdbSize: 'w780');
+    final imageUrl = backdrop ?? poster;
+    final resumeLabel = resumeAt == null
+        ? 'Preparing stream'
+        : 'Resuming from ${formatWatchTimestamp(resumeAt!)}';
+    return ColoredBox(
+      color: Colors.black,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (imageUrl != null)
+            CachedNetworkImage(
+              imageUrl: imageUrl,
+              fit: BoxFit.cover,
+              memCacheWidth: backdrop != null ? 1280 : 780,
+              maxWidthDiskCache: backdrop != null ? 1280 : 780,
+              fadeInDuration: const Duration(milliseconds: 120),
+              placeholder: (_, _) => const ColoredBox(color: Colors.black),
+              errorWidget: (_, _, _) => const ColoredBox(color: Colors.black),
+            ),
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Colors.black38, Colors.black87],
+              ),
+            ),
+          ),
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.play_circle_outline,
+                  size: 46,
+                  color: Colors.white,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (episodeLabel != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    episodeLabel!,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                Text(
+                  resumeLabel,
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                const SizedBox(height: 12),
+                const SizedBox(
+                  width: 120,
+                  child: LinearProgressIndicator(minHeight: 2),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

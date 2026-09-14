@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -57,6 +59,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
         _frozen = freezeBackendChoice(_frozen, resolveBackend(s));
         final backend = _frozen!;
         if (backend == PlayerBackend.mediaForge) {
+          // Pre-warm the Rust runtime while the route/session is being set
+          // up; the first open then skips the one-time init.
+          unawaited(
+            MediaForgeRuntime.ensureInitialized().then<void>(
+              (_) {},
+              onError: (Object error) {
+                debugPrint('[Playback] MediaForge prewarm failed: $error');
+              },
+            ),
+          );
           return MediaForgePlayerScreen(
             mediaRef: widget.mediaRef,
             sourceId: widget.sourceId,

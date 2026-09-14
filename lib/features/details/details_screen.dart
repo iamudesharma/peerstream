@@ -154,10 +154,11 @@ class _DetailsBodyState extends State<_DetailsBody> {
     final theme = Theme.of(context);
     final item = widget.details.item;
     final backdrop = resolveImageUrl(item.backdropPath, tmdbSize: 'w1280');
+    final wide = MediaQuery.sizeOf(context).width >= 900;
     return ListView(
       children: [
         AspectRatio(
-          aspectRatio: 16 / 7,
+          aspectRatio: wide ? 21 / 9 : 16 / 7,
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -182,8 +183,61 @@ class _DetailsBodyState extends State<_DetailsBody> {
                     end: Alignment.bottomCenter,
                     colors: [
                       Colors.transparent,
+                      Colors.black54,
                       DesignTokens.background,
                     ],
+                    stops: [0.0, 0.55, 1.0],
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      maxWidth: DesignTokens.contentMaxWidth,
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        DesignTokens.pageGutter,
+                        0,
+                        DesignTokens.pageGutter,
+                        DesignTokens.space4,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Badge(
+                            label: item.type == MediaType.movie
+                                ? 'Movie'
+                                : 'Series',
+                            tone: BadgeTone.accent,
+                            icon: item.type == MediaType.movie
+                                ? Icons.movie_outlined
+                                : Icons.tv_outlined,
+                          ),
+                          const SizedBox(height: DesignTokens.space2),
+                          Text(
+                            item.title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.headlineMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              height: 1.08,
+                            ),
+                          ),
+                          const SizedBox(height: DesignTokens.space2),
+                          MediaMeta(
+                            year: item.releaseDate,
+                            rating: item.rating,
+                            runtimeMinutes: widget.details.runtimeMinutes,
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -193,7 +247,7 @@ class _DetailsBodyState extends State<_DetailsBody> {
         Padding(
           padding: const EdgeInsets.fromLTRB(
             DesignTokens.pageGutter,
-            0,
+            DesignTokens.space4,
             DesignTokens.pageGutter,
             24,
           ),
@@ -205,35 +259,18 @@ class _DetailsBodyState extends State<_DetailsBody> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Badge(
-                    label:
-                        item.type == MediaType.movie ? 'Movie' : 'Series',
-                    tone: BadgeTone.accent,
-                    icon: item.type == MediaType.movie
-                        ? Icons.movie_outlined
-                        : Icons.tv_outlined,
-                  ),
-                  const SizedBox(height: DesignTokens.space2),
-                  Text(
-                    item.title,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      height: 1.08,
+                  if (item.type == MediaType.movie)
+                    _MovieActions(item: item)
+                  else
+                    EpisodeSelection(
+                      seriesId: item.id,
+                      seasons: widget.details.seasons,
                     ),
-                  ),
-                  const SizedBox(height: DesignTokens.space2),
-                  MediaMeta(
-                    year: item.releaseDate,
-                    rating: item.rating,
-                    runtimeMinutes: widget.details.runtimeMinutes,
-                  ),
                   if (widget.details.genres.isNotEmpty) ...[
-                    const SizedBox(height: DesignTokens.space3),
+                    const SizedBox(height: DesignTokens.space4),
                     Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+                      spacing: DesignTokens.space2,
+                      runSpacing: DesignTokens.space2,
                       children: widget.details.genres
                           .map((genre) => Chip(label: Text(genre)))
                           .toList(),
@@ -265,19 +302,15 @@ class _DetailsBodyState extends State<_DetailsBody> {
                         TextButton(
                           onPressed: () =>
                               setState(() => _expanded = !_expanded),
+                          style: TextButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            alignment: Alignment.centerLeft,
+                          ),
                           child: Text(
                             _expanded ? 'Show less' : 'Show more',
                           ),
                         ),
                       ],
-                    ),
-                  const SizedBox(height: DesignTokens.space2),
-                  if (item.type == MediaType.movie)
-                    _MovieActions(item: item)
-                  else
-                    EpisodeSelection(
-                      seriesId: item.id,
-                      seasons: widget.details.seasons,
                     ),
                 ],
               ),
@@ -320,38 +353,37 @@ class _MovieActions extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            FilledButton.icon(
-              onPressed: () =>
-                  context.push('/sources/${item.ref.routeKey}'),
-              icon: const Icon(Icons.play_arrow),
-              label: const Text('Find sources'),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: () =>
+                context.push('/sources/${item.ref.routeKey}'),
+            icon: const Icon(Icons.play_arrow),
+            label: const Text('Find sources'),
+          ),
+        ),
+        const SizedBox(height: DesignTokens.space2),
+        sources.when(
+          data: (list) => Text(
+            list.isEmpty
+                ? 'No sources cached'
+                : '${list.length} source${list.length == 1 ? '' : 's'} found',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: DesignTokens.textTertiary,
             ),
-            const SizedBox(width: 12),
-            sources.when(
-              data: (list) => Text(
-                list.isEmpty
-                    ? 'No sources cached'
-                    : '${list.length} source${list.length == 1 ? '' : 's'} found',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: DesignTokens.textTertiary,
-                ),
-              ),
-              loading: () => Text(
-                'Checking sources',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: DesignTokens.textTertiary,
-                ),
-              ),
-              error: (_, _) => Text(
-                'Source check unavailable',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: DesignTokens.textTertiary,
-                ),
-              ),
+          ),
+          loading: () => Text(
+            'Checking sources',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: DesignTokens.textTertiary,
             ),
-          ],
+          ),
+          error: (_, _) => Text(
+            'Source check unavailable',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: DesignTokens.textTertiary,
+            ),
+          ),
         ),
       ],
     );

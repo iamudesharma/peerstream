@@ -1,4 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:media_forge_player/media_forge_player.dart'
+    show VideoEnhancementMode;
 
 /// Background behind player-rendered subtitles.
 enum SubtitleBackgroundStyle { none, translucent, solid }
@@ -10,6 +12,7 @@ class AppSettings {
     this.autoLoadSubtitles = false,
     this.streamingCatalogsEnabled = true,
     this.useMediaForgePlayer = false,
+    this.mediaForgeVideoEnhancementMode = VideoEnhancementMode.off,
     this.playerVolume = 100,
     this.playerRate = 1,
     this.subtitleTextScale = 1,
@@ -24,6 +27,10 @@ class AppSettings {
   /// Experimental MediaForge playback backend. Default false: existing
   /// media_kit player is used. Persisted; applies on next media open.
   final bool useMediaForgePlayer;
+
+  /// Presentation-only GPU enhancement default for future experimental
+  /// MediaForge sessions. The standard media_kit player never reads it.
+  final VideoEnhancementMode mediaForgeVideoEnhancementMode;
 
   /// Last player volume (0–100), restored when the player opens.
   final double playerVolume;
@@ -98,6 +105,7 @@ class AppSettings {
     bool? autoLoadSubtitles,
     bool? streamingCatalogsEnabled,
     bool? useMediaForgePlayer,
+    VideoEnhancementMode? mediaForgeVideoEnhancementMode,
     double? playerVolume,
     double? playerRate,
     double? subtitleTextScale,
@@ -111,6 +119,8 @@ class AppSettings {
     streamingCatalogsEnabled:
         streamingCatalogsEnabled ?? this.streamingCatalogsEnabled,
     useMediaForgePlayer: useMediaForgePlayer ?? this.useMediaForgePlayer,
+    mediaForgeVideoEnhancementMode:
+        mediaForgeVideoEnhancementMode ?? this.mediaForgeVideoEnhancementMode,
     playerVolume: playerVolume ?? this.playerVolume,
     playerRate: playerRate ?? this.playerRate,
     subtitleTextScale: subtitleTextScale ?? this.subtitleTextScale,
@@ -123,6 +133,8 @@ const _kAudioLanguage = 'settings.audio_language';
 const _kAutoLoadSubtitles = 'settings.auto_load_subtitles';
 const _kStreamingCatalogsEnabled = 'settings.streaming_catalogs_enabled';
 const _kUseMediaForgePlayer = 'settings.use_media_forge_player';
+const _kMediaForgeVideoEnhancementMode =
+    'settings.media_forge_video_enhancement_mode';
 const _kPlayerVolume = 'settings.player_volume';
 const _kPlayerRate = 'settings.player_rate';
 const _kSubtitleTextScale = 'settings.subtitle_text_scale';
@@ -145,6 +157,10 @@ Future<AppSettings> readAppSettings() async {
       streamingCatalogsEnabled:
           prefs.getBool(_kStreamingCatalogsEnabled) ?? true,
       useMediaForgePlayer: prefs.getBool(_kUseMediaForgePlayer) ?? false,
+      mediaForgeVideoEnhancementMode: VideoEnhancementMode.fromWireName(
+        prefs.getString(_kMediaForgeVideoEnhancementMode) ??
+            VideoEnhancementMode.off.wireName,
+      ),
       playerVolume: prefs.getDouble(_kPlayerVolume) ?? 100,
       playerRate: prefs.getDouble(_kPlayerRate) ?? 1,
       subtitleTextScale: prefs.getDouble(_kSubtitleTextScale) ?? 1,
@@ -179,6 +195,10 @@ Future<void> writeAppSettings(AppSettings settings) async {
       settings.streamingCatalogsEnabled,
     );
     await prefs.setBool(_kUseMediaForgePlayer, settings.useMediaForgePlayer);
+    await prefs.setString(
+      _kMediaForgeVideoEnhancementMode,
+      settings.mediaForgeVideoEnhancementMode.wireName,
+    );
     await prefs.setDouble(_kPlayerVolume, settings.playerVolume);
     await prefs.setDouble(_kPlayerRate, settings.playerRate);
     await prefs.setDouble(_kSubtitleTextScale, settings.subtitleTextScale);
