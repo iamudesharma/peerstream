@@ -31,10 +31,7 @@ void main() {
   group('MediaForge configuration', () {
     test('native-resolution configuration is requested', () {
       const config = mediaForgeBaseConfiguration;
-      expect(
-        config.decodeResolution,
-        MediaForgeDecodeResolution.native,
-      );
+      expect(config.decodeResolution, MediaForgeDecodeResolution.native);
       expect(config.isNative, isTrue);
     });
 
@@ -216,10 +213,7 @@ void main() {
       );
 
       expect(stage(pendingSeek: true), MediaForgePlaybackStage.seeking);
-      expect(
-        stage(buffering: true),
-        MediaForgePlaybackStage.rebuffering,
-      );
+      expect(stage(buffering: true), MediaForgePlaybackStage.rebuffering);
       expect(stage(completed: true), MediaForgePlaybackStage.ended);
       expect(stage(error: true), MediaForgePlaybackStage.error);
       expect(
@@ -257,10 +251,7 @@ void main() {
 
   group('StreamingService MediaForge hooks', () {
     test('seek-start/seek-settled propagate with generations', () async {
-      final service = StreamingService(
-        _FakeEngine(),
-        _EmptyCache(),
-      );
+      final service = StreamingService(_FakeEngine(), _EmptyCache());
       await service.start(_magnetSource('e' * 40));
       expect(service.state.playback, isNotNull);
 
@@ -280,10 +271,7 @@ void main() {
     });
 
     test('active playback position is recorded without emitting', () async {
-      final service = StreamingService(
-        _FakeEngine(),
-        _EmptyCache(),
-      );
+      final service = StreamingService(_FakeEngine(), _EmptyCache());
       await service.start(_magnetSource('f' * 40));
       var emissions = 0;
       final sub = service.states.listen((_) => emissions++);
@@ -298,10 +286,7 @@ void main() {
     });
 
     test('ungenerated seek reports keep legacy behavior', () async {
-      final service = StreamingService(
-        _FakeEngine(),
-        _EmptyCache(),
-      );
+      final service = StreamingService(_FakeEngine(), _EmptyCache());
       await service.start(_magnetSource('g' * 40));
       service.reportSeekStarted();
       expect(service.state.phase, StreamingPhase.seeking);
@@ -369,22 +354,24 @@ void main() {
   });
 
   group('dispose-safe persist entry', () {
-    WatchEntry? buildEntry({int positionMs = 61000, int durationMs = 3600000}) =>
-        buildWatchPersistEntry(
-          positionMs: positionMs,
-          durationMs: durationMs,
-          key: 'movie-1',
-          media: const MediaRef(id: 1, type: MediaType.movie),
-          title: 'Cached Title',
-          posterPath: '/p.jpg',
-          backdropPath: '/b.jpg',
-          season: null,
-          episode: null,
-          sourceId: 's1',
-          providerName: 'Test',
-          sourceUri: 'http://127.0.0.1:1/x',
-          inputType: 'magnet',
-        );
+    WatchEntry? buildEntry({
+      int positionMs = 61000,
+      int durationMs = 3600000,
+    }) => buildWatchPersistEntry(
+      positionMs: positionMs,
+      durationMs: durationMs,
+      key: 'movie-1',
+      media: const MediaRef(id: 1, type: MediaType.movie),
+      title: 'Cached Title',
+      posterPath: '/p.jpg',
+      backdropPath: '/b.jpg',
+      season: null,
+      episode: null,
+      sourceId: 's1',
+      providerName: 'Test',
+      sourceUri: 'http://127.0.0.1:1/x',
+      inputType: 'magnet',
+    );
 
     test('zero position records nothing (safe from dispose)', () {
       expect(buildEntry(positionMs: 0), isNull);
@@ -408,7 +395,8 @@ void main() {
     });
   });
 
-  group('fallback contract', () {    test('failure fallback preserves latest valid position', () {
+  group('fallback contract', () {
+    test('failure fallback preserves latest valid position', () {
       expect(
         resolveFallbackResumeMs(
           controllerPositionMs: 90123,
@@ -502,6 +490,7 @@ class _EmptyCache extends PlaybackCacheStore {
     TorrentFileEntry f, {
     required bool complete,
     required int byteSize,
+    bool preserveComplete = false,
   }) async {}
 }
 

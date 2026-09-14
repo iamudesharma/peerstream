@@ -42,6 +42,33 @@ abstract interface class FileCompletenessChecker {
   Future<bool> isFileComplete(TorrentHandle handle, TorrentFileEntry file);
 }
 
+/// Optional capability: pre-seek scheduler hints.
+///
+/// Engines that can reprioritize pieces ahead of the player's first request
+/// (libtorrent) implement this so a resume position starts downloading
+/// alongside the head/tail metadata instead of waiting for the seek.
+abstract interface class StreamPositionController {
+  /// Pre-prioritizes pieces around [byteOffset].
+  ///
+  /// [windowBytes] 0 selects the engine's own heuristic; [urgent] gives the
+  /// first pieces the earliest deadlines (rebuffer recovery).
+  void setStreamPosition(
+    TorrentHandle handle,
+    int byteOffset, {
+    int windowBytes = 0,
+    bool urgent = false,
+  });
+
+  /// Reports the observed media duration for bitrate/buffer sizing.
+  void setStreamDuration(TorrentHandle handle, int durationMs);
+
+  /// Latest native read head (byte offset) for the active stream, or null.
+  int? streamReadHead(TorrentHandle handle);
+
+  /// One-line native scheduler snapshot, or null when unavailable.
+  String? streamDebugSnapshot(TorrentHandle handle);
+}
+
 /// Optional capability: verified per-file availability snapshot.
 ///
 /// Engines backed by piece-verifying stores (libtorrent) implement this so
@@ -118,4 +145,56 @@ TorrentFileEntry selectVideoFile(List<TorrentFileEntry> files, {String? hint}) {
   }
   videos.sort((a, b) => b.size.compareTo(a.size));
   return videos.first;
+}
+
+/// Byte offset of a resume position inside a media file, used to hint the
+/// torrent scheduler before the player seeks. Pure so the mapping stays
+/// testable without a native engine.
+int resumeByteOffset({
+  required int positionMs,
+  required int durationMs,
+  required int fileSize,
+}) {
+  if (positionMs <= 0 || durationMs <= 0 || fileSize <= 0) return 0;
+  final offset = (positionMs / durationMs) * fileSize;
+  return offset.round().clamp(0, fileSize);
+}
+
+/// Forward prefetch budget in bytes for a resume/seek hint.
+///
+/// Sized in seconds of video rather than a fixed MB window: a fast swarm gets
+/// a smaller buffer, a slow or unstable one a larger one. [bitrateBps] should
+/// come from the learned time↔byte map when available, else the file-average
+/// bitrate. Pure so the policy stays testable.
+int adaptiveWindowBytes({
+  required int bitrateBps,
+  required int bufferedAheadMs,
+  required int downloadRateBps,
+  required int peers,
+}) {
+  if (bitrateBps <= 0) return 0;
+  final bufferedSeconds = bufferedAheadMs / 1000.0;
+  double seconds;
+  if (bufferedSeconds >= 60) {
+    seconds = 15;
+  } else if (bufferedSeconds >= 30) {
+    seconds = 25;
+  } else if (bufferedSeconds >= 10) {
+    seconds = 40;
+  } else {
+    // Startup, resume, or actively starving: fetch aggressively.
+    seconds = 60;
+  }
+  if (downloadRateBps > 0) {
+    if (downloadRateBps > bitrateBps * 2) {
+      // Swarm comfortably outruns the media: don't over-buffer.
+      seconds *= 0.6;
+    } else if (downloadRateBps < bitrateBps * 1.2) {
+      // Swarm is the bottleneck: build a deeper safety margin.
+      seconds *= 1.5;
+    }
+  }
+  if (peers > 0 && peers < 4) seconds *= 1.3; // thin/unstable swarm
+  seconds = seconds.clamp(10, 90);
+  return (bitrateBps * seconds).round();
 }

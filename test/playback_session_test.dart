@@ -66,65 +66,85 @@ void main() {
     await service.dispose();
   });
 
-  test('markPlaying is idempotent and buffering events do not duplicate', () async {
-    final engine = _FakeEngine();
-    final service = StreamingService(engine, _EmptyCache());
-    await service.start(_source('c' * 40));
-    expect(service.state.playback, isNotNull);
-    final states = <StreamingState>[];
-    final sub = service.states.listen(states.add);
-    service.markPlaying();
-    service.markPlaying();
-    service.markPlaying();
-    await Future<void>.delayed(Duration.zero);
-    final playing = states.where((s) => s.phase == StreamingPhase.playing);
-    expect(playing.length, lessThanOrEqualTo(1));
-    // Buffering reports are idempotent.
-    service.reportBuffering(true, bufferedPositionMs: 1000);
-    service.reportBuffering(true, bufferedPositionMs: 1000);
-    await Future<void>.delayed(Duration.zero);
-    await sub.cancel();
-    await service.dispose();
-  });
+  test(
+    'markPlaying is idempotent and buffering events do not duplicate',
+    () async {
+      final engine = _FakeEngine();
+      final service = StreamingService(engine, _EmptyCache());
+      await service.start(_source('c' * 40));
+      expect(service.state.playback, isNotNull);
+      final states = <StreamingState>[];
+      final sub = service.states.listen(states.add);
+      service.markPlaying();
+      service.markPlaying();
+      service.markPlaying();
+      await Future<void>.delayed(Duration.zero);
+      final playing = states.where((s) => s.phase == StreamingPhase.playing);
+      expect(playing.length, lessThanOrEqualTo(1));
+      // Buffering reports are idempotent.
+      service.reportBuffering(true, bufferedPositionMs: 1000);
+      service.reportBuffering(true, bufferedPositionMs: 1000);
+      await Future<void>.delayed(Duration.zero);
+      await sub.cancel();
+      await service.dispose();
+    },
+  );
 
-  test('prefetch deduplicates concurrent adds and releases old candidate', () async {
-    final engine = _CountingEngine();
-    final service = StreamingService(engine, _EmptyCache());
-    final a = _source('a' * 40);
-    final b = _source('b' * 40);
-    await Future.wait([service.prefetchSource(a), service.prefetchSource(a)]);
-    expect(engine.addCalls, 1);
-    await service.prefetchSource(b);
-    // Old candidate released (stop called) when switching.
-    expect(engine.stopCalls, greaterThanOrEqualTo(1));
-    await service.dispose();
-  });
+  test(
+    'prefetch deduplicates concurrent adds and releases old candidate',
+    () async {
+      final engine = _CountingEngine();
+      final service = StreamingService(engine, _EmptyCache());
+      final a = _source('a' * 40);
+      final b = _source('b' * 40);
+      await Future.wait([service.prefetchSource(a), service.prefetchSource(a)]);
+      expect(engine.addCalls, 1);
+      await service.prefetchSource(b);
+      // Old candidate released (stop called) when switching.
+      expect(engine.stopCalls, greaterThanOrEqualTo(1));
+      await service.dispose();
+    },
+  );
 
-  test('sparse file with right length but no recorded bytes never verifies', () async {
-    final engine = _FakeEngine();
-    final entry = PlaybackCacheEntry(
-      cacheKey: 'k',
-      source: _source('d' * 40),
-      file: const TorrentFileEntry(index: 0, name: 'm.mp4', size: 1000, isStreamable: true),
-      filePath: '/tmp/m.mp4',
-      complete: true,
-      byteSize: 0, // preallocated sparse: length ok, bytes missing
-      lastUsedAt: DateTime(2026),
-    );
-    final service = StreamingService(engine, _SizedCache(entry));
-    await service.start(_source('d' * 40));
-    // Must fall through to torrent engine, not cache.
-    expect(engine.added, isTrue);
-    expect(service.state.origin, PlaybackOrigin.network);
-    await service.dispose();
-  });
+  test(
+    'sparse file with right length but no recorded bytes never verifies',
+    () async {
+      final engine = _FakeEngine();
+      final entry = PlaybackCacheEntry(
+        cacheKey: 'k',
+        source: _source('d' * 40),
+        file: const TorrentFileEntry(
+          index: 0,
+          name: 'm.mp4',
+          size: 1000,
+          isStreamable: true,
+        ),
+        filePath: '/tmp/m.mp4',
+        complete: true,
+        byteSize: 0, // preallocated sparse: length ok, bytes missing
+        lastUsedAt: DateTime(2026),
+      );
+      final service = StreamingService(engine, _SizedCache(entry));
+      await service.start(_source('d' * 40));
+      // Must fall through to torrent engine, not cache.
+      expect(engine.added, isTrue);
+      expect(service.state.origin, PlaybackOrigin.network);
+      await service.dispose();
+    },
+  );
 }
 
 class _EmptyCache extends PlaybackCacheStore {
   @override
   Future<PlaybackCacheEntry?> completeFile(TorrentSource source) async => null;
   @override
-  Future<void> record(TorrentSource s, TorrentFileEntry f, {required bool complete, required int byteSize}) async {}
+  Future<void> record(
+    TorrentSource s,
+    TorrentFileEntry f, {
+    required bool complete,
+    required int byteSize,
+    bool preserveComplete = false,
+  }) async {}
 }
 
 class _SizedCache extends PlaybackCacheStore {
@@ -133,7 +153,13 @@ class _SizedCache extends PlaybackCacheStore {
   @override
   Future<PlaybackCacheEntry?> completeFile(TorrentSource source) async => entry;
   @override
-  Future<void> record(TorrentSource s, TorrentFileEntry f, {required bool complete, required int byteSize}) async {}
+  Future<void> record(
+    TorrentSource s,
+    TorrentFileEntry f, {
+    required bool complete,
+    required int byteSize,
+    bool preserveComplete = false,
+  }) async {}
 }
 
 class _FakeEngine implements TorrentEngine {
@@ -151,14 +177,21 @@ class _FakeEngine implements TorrentEngine {
   }
 
   @override
-  Future<List<TorrentFileEntry>> waitForFiles(TorrentHandle handle) async => const [
-    TorrentFileEntry(index: 0, name: 'm.mp4', size: 10, isStreamable: true),
-  ];
+  Future<List<TorrentFileEntry>> waitForFiles(TorrentHandle handle) async =>
+      const [
+        TorrentFileEntry(index: 0, name: 'm.mp4', size: 10, isStreamable: true),
+      ];
   @override
   Stream<TorrentStats> watch(TorrentHandle handle) => const Stream.empty();
   @override
-  Future<TorrentPlaybackStream> startStream(TorrentHandle handle, TorrentFileEntry file) async =>
-      TorrentPlaybackStream(id: '2', uri: Uri.parse('http://127.0.0.1:1/x'), file: file);
+  Future<TorrentPlaybackStream> startStream(
+    TorrentHandle handle,
+    TorrentFileEntry file,
+  ) async => TorrentPlaybackStream(
+    id: '2',
+    uri: Uri.parse('http://127.0.0.1:1/x'),
+    file: file,
+  );
   @override
   Future<void> stop(TorrentHandle handle, {bool deleteFiles = false}) async {}
   @override
@@ -175,19 +208,28 @@ class _ControllableEngine implements TorrentEngine {
   @override
   Future<void> initialize() async {}
   @override
-  Future<TorrentHandle> add(TorrentSource source) async => const TorrentHandle('9');
+  Future<TorrentHandle> add(TorrentSource source) async =>
+      const TorrentHandle('9');
   void completeMetadata(List<TorrentFileEntry> files) {
     if (!_metadata.isCompleted) _metadata.complete(files);
   }
 
   @override
-  Future<List<TorrentFileEntry>> waitForFiles(TorrentHandle handle) => _metadata.future;
+  Future<List<TorrentFileEntry>> waitForFiles(TorrentHandle handle) =>
+      _metadata.future;
   @override
   Stream<TorrentStats> watch(TorrentHandle handle) => const Stream.empty();
   @override
-  Future<TorrentPlaybackStream> startStream(TorrentHandle handle, TorrentFileEntry file) async {
+  Future<TorrentPlaybackStream> startStream(
+    TorrentHandle handle,
+    TorrentFileEntry file,
+  ) async {
     startStreamCalls++;
-    return TorrentPlaybackStream(id: 's', uri: Uri.parse('http://127.0.0.1:1/x'), file: file);
+    return TorrentPlaybackStream(
+      id: 's',
+      uri: Uri.parse('http://127.0.0.1:1/x'),
+      file: file,
+    );
   }
 
   @override
@@ -213,12 +255,19 @@ class _CountingEngine implements TorrentEngine {
   }
 
   @override
-  Future<List<TorrentFileEntry>> waitForFiles(TorrentHandle handle) async => const [];
+  Future<List<TorrentFileEntry>> waitForFiles(TorrentHandle handle) async =>
+      const [];
   @override
   Stream<TorrentStats> watch(TorrentHandle handle) => const Stream.empty();
   @override
-  Future<TorrentPlaybackStream> startStream(TorrentHandle handle, TorrentFileEntry file) async =>
-      TorrentPlaybackStream(id: 'x', uri: Uri.parse('http://127.0.0.1:1/x'), file: file);
+  Future<TorrentPlaybackStream> startStream(
+    TorrentHandle handle,
+    TorrentFileEntry file,
+  ) async => TorrentPlaybackStream(
+    id: 'x',
+    uri: Uri.parse('http://127.0.0.1:1/x'),
+    file: file,
+  );
   @override
   Future<void> stop(TorrentHandle handle, {bool deleteFiles = false}) async {
     stopCalls++;

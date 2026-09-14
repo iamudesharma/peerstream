@@ -45,6 +45,9 @@ key.properties
 **/*.jks
 **/*.p12
 **/*.pem
+# Public Mozilla CA bundle vendored with libtorrent_flutter; required at build
+# time even though it is only loaded at runtime on Android.
+!packages/libtorrent_flutter/assets/cacert.pem
 local.properties
 google-services.json
 GoogleService-Info.plist

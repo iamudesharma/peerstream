@@ -1,6 +1,9 @@
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:media_forge_player/media_forge_player.dart'
     show VideoEnhancementMode;
-import 'package:shared_preferences/shared_preferences.dart';
+
+/// Background behind player-rendered subtitles.
+enum SubtitleBackgroundStyle { none, translucent, solid }
 
 class AppSettings {
   const AppSettings({
@@ -10,6 +13,10 @@ class AppSettings {
     this.streamingCatalogsEnabled = true,
     this.useMediaForgePlayer = false,
     this.mediaForgeVideoEnhancementMode = VideoEnhancementMode.off,
+    this.playerVolume = 100,
+    this.playerRate = 1,
+    this.subtitleTextScale = 1,
+    this.subtitleBackground = SubtitleBackgroundStyle.translucent,
   });
 
   final String? preferredSubtitleLanguage;
@@ -24,6 +31,36 @@ class AppSettings {
   /// Presentation-only GPU enhancement default for future experimental
   /// MediaForge sessions. The standard media_kit player never reads it.
   final VideoEnhancementMode mediaForgeVideoEnhancementMode;
+
+  /// Last player volume (0–100), restored when the player opens.
+  final double playerVolume;
+
+  /// Last playback speed, restored when the player opens.
+  final double playerRate;
+
+  /// Multiplier applied to the subtitle font size (see
+  /// [subtitleTextScales]).
+  final double subtitleTextScale;
+
+  /// Background behind player-rendered subtitles.
+  final SubtitleBackgroundStyle subtitleBackground;
+
+  /// Player subtitle size presets and their user-facing labels.
+  static const subtitleTextScales = <double>[0.8, 1, 1.25, 1.5];
+
+  static String subtitleTextScaleLabel(double scale) => switch (scale) {
+    0.8 => 'Small',
+    1.25 => 'Large',
+    1.5 => 'Huge',
+    _ => 'Medium',
+  };
+
+  static String subtitleBackgroundLabel(SubtitleBackgroundStyle style) =>
+      switch (style) {
+        SubtitleBackgroundStyle.none => 'None',
+        SubtitleBackgroundStyle.solid => 'Solid',
+        SubtitleBackgroundStyle.translucent => 'Translucent',
+      };
 
   static const _defaultSubtitleLanguages = [
     'None',
@@ -69,6 +106,10 @@ class AppSettings {
     bool? streamingCatalogsEnabled,
     bool? useMediaForgePlayer,
     VideoEnhancementMode? mediaForgeVideoEnhancementMode,
+    double? playerVolume,
+    double? playerRate,
+    double? subtitleTextScale,
+    SubtitleBackgroundStyle? subtitleBackground,
   }) => AppSettings(
     preferredSubtitleLanguage:
         preferredSubtitleLanguage ?? this.preferredSubtitleLanguage,
@@ -80,6 +121,10 @@ class AppSettings {
     useMediaForgePlayer: useMediaForgePlayer ?? this.useMediaForgePlayer,
     mediaForgeVideoEnhancementMode:
         mediaForgeVideoEnhancementMode ?? this.mediaForgeVideoEnhancementMode,
+    playerVolume: playerVolume ?? this.playerVolume,
+    playerRate: playerRate ?? this.playerRate,
+    subtitleTextScale: subtitleTextScale ?? this.subtitleTextScale,
+    subtitleBackground: subtitleBackground ?? this.subtitleBackground,
   );
 }
 
@@ -90,6 +135,17 @@ const _kStreamingCatalogsEnabled = 'settings.streaming_catalogs_enabled';
 const _kUseMediaForgePlayer = 'settings.use_media_forge_player';
 const _kMediaForgeVideoEnhancementMode =
     'settings.media_forge_video_enhancement_mode';
+const _kPlayerVolume = 'settings.player_volume';
+const _kPlayerRate = 'settings.player_rate';
+const _kSubtitleTextScale = 'settings.subtitle_text_scale';
+const _kSubtitleBackground = 'settings.subtitle_background';
+
+SubtitleBackgroundStyle _parseSubtitleBackground(String? value) {
+  for (final style in SubtitleBackgroundStyle.values) {
+    if (style.name == value) return style;
+  }
+  return SubtitleBackgroundStyle.translucent;
+}
 
 Future<AppSettings> readAppSettings() async {
   try {
@@ -104,6 +160,12 @@ Future<AppSettings> readAppSettings() async {
       mediaForgeVideoEnhancementMode: VideoEnhancementMode.fromWireName(
         prefs.getString(_kMediaForgeVideoEnhancementMode) ??
             VideoEnhancementMode.off.wireName,
+      ),
+      playerVolume: prefs.getDouble(_kPlayerVolume) ?? 100,
+      playerRate: prefs.getDouble(_kPlayerRate) ?? 1,
+      subtitleTextScale: prefs.getDouble(_kSubtitleTextScale) ?? 1,
+      subtitleBackground: _parseSubtitleBackground(
+        prefs.getString(_kSubtitleBackground),
       ),
     );
   } catch (_) {
@@ -136,6 +198,13 @@ Future<void> writeAppSettings(AppSettings settings) async {
     await prefs.setString(
       _kMediaForgeVideoEnhancementMode,
       settings.mediaForgeVideoEnhancementMode.wireName,
+    );
+    await prefs.setDouble(_kPlayerVolume, settings.playerVolume);
+    await prefs.setDouble(_kPlayerRate, settings.playerRate);
+    await prefs.setDouble(_kSubtitleTextScale, settings.subtitleTextScale);
+    await prefs.setString(
+      _kSubtitleBackground,
+      settings.subtitleBackground.name,
     );
   } catch (_) {}
 }

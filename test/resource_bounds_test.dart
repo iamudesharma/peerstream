@@ -25,7 +25,10 @@ TorrentSource _src(String id) => TorrentSource(
 
 void main() {
   test('repeated browsing stays bounded (LRU cache)', () async {
-    final cache = ExpiringCache<String, int>(maxEntries: 5, ttl: const Duration(minutes: 5));
+    final cache = ExpiringCache<String, int>(
+      maxEntries: 5,
+      ttl: const Duration(minutes: 5),
+    );
     for (var i = 0; i < 50; i++) {
       await cache.get('key-$i', () async => i);
     }
@@ -38,7 +41,13 @@ void main() {
     await service.start(_src('a' * 40));
     // Simulate 500 stats ticks.
     for (var i = 0; i < 500; i++) {
-      engine.emit(TorrentStats(downloadedBytes: i * 1000, totalBytes: 1000000, downloadRate: 1000));
+      engine.emit(
+        TorrentStats(
+          downloadedBytes: i * 1000,
+          totalBytes: 1000000,
+          downloadRate: 1000,
+        ),
+      );
       await Future<void>.delayed(Duration.zero);
     }
     expect(service.state.stats.downloadedBytes, 499 * 1000);
@@ -61,7 +70,13 @@ class _EmptyCache extends PlaybackCacheStore {
   @override
   Future<PlaybackCacheEntry?> completeFile(TorrentSource source) async => null;
   @override
-  Future<void> record(TorrentSource s, TorrentFileEntry f, {required bool complete, required int byteSize}) async {}
+  Future<void> record(
+    TorrentSource s,
+    TorrentFileEntry f, {
+    required bool complete,
+    required int byteSize,
+    bool preserveComplete = false,
+  }) async {}
 }
 
 class _StreamingEngine implements TorrentEngine {
@@ -81,14 +96,22 @@ class _StreamingEngine implements TorrentEngine {
   }
 
   @override
-  Future<List<TorrentFileEntry>> waitForFiles(TorrentHandle handle) async => const [
+  Future<List<TorrentFileEntry>> waitForFiles(
+    TorrentHandle handle,
+  ) async => const [
     TorrentFileEntry(index: 0, name: 'm.mp4', size: 100, isStreamable: true),
   ];
   @override
   Stream<TorrentStats> watch(TorrentHandle handle) => _controller.stream;
   @override
-  Future<TorrentPlaybackStream> startStream(TorrentHandle handle, TorrentFileEntry file) async =>
-      TorrentPlaybackStream(id: 's', uri: Uri.parse('http://127.0.0.1:1/x'), file: file);
+  Future<TorrentPlaybackStream> startStream(
+    TorrentHandle handle,
+    TorrentFileEntry file,
+  ) async => TorrentPlaybackStream(
+    id: 's',
+    uri: Uri.parse('http://127.0.0.1:1/x'),
+    file: file,
+  );
   @override
   Future<void> stop(TorrentHandle handle, {bool deleteFiles = false}) async {
     if (liveHandles > 0) liveHandles--;

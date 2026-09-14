@@ -52,6 +52,30 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     final updated = current.copyWith(mediaForgeVideoEnhancementMode: value);
     await _save(updated);
   }
+
+  Future<void> setPlayerVolume(double volume) async {
+    final current = state.value ?? await readAppSettings();
+    final updated = current.copyWith(playerVolume: volume);
+    await _save(updated);
+  }
+
+  Future<void> setPlayerRate(double rate) async {
+    final current = state.value ?? await readAppSettings();
+    final updated = current.copyWith(playerRate: rate);
+    await _save(updated);
+  }
+
+  Future<void> setSubtitleTextScale(double scale) async {
+    final current = state.value ?? await readAppSettings();
+    final updated = current.copyWith(subtitleTextScale: scale);
+    await _save(updated);
+  }
+
+  Future<void> setSubtitleBackground(SubtitleBackgroundStyle style) async {
+    final current = state.value ?? await readAppSettings();
+    final updated = current.copyWith(subtitleBackground: style);
+    await _save(updated);
+  }
 }
 
 final appSettingsProvider =
@@ -59,11 +83,8 @@ final appSettingsProvider =
       AppSettingsNotifier.new,
     );
 
-/// The latest public MediaForge capability probe for this app process.
-///
-/// It is populated only by an active MediaForge session. This deliberately
-/// never starts MediaForge merely to render Settings, and therefore cannot
-/// affect default-player playback or create a competing controller.
+/// Capabilities observed from the active MediaForge session. Keeping this
+/// session-scoped avoids starting MediaForge merely to render Settings.
 class MediaForgeVideoEnhancementCapabilitiesNotifier
     extends Notifier<VideoEnhancementCapabilities?> {
   @override
