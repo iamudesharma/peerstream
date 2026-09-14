@@ -380,6 +380,35 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
             profile.readaheadSecs,
           );
         } catch (_) {}
+        // Memory demuxer cache only: the on-disk mirror is unnecessary for
+        // a seekable localhost range server and competes with torrent I/O.
+        try {
+          await native.setProperty(
+            'cache-on-disk',
+            profile.cacheOnDisk ? 'yes' : 'no',
+          );
+        } catch (_) {}
+        // Bounded stream probing on the torrent path (skipped for direct
+        // URLs, which keep the defaults). Each property is best-effort:
+        // mpv versions that reject runtime writes simply fall back.
+        final probeSizeBytes = profile.probeSizeBytes;
+        if (probeSizeBytes != null) {
+          try {
+            await native.setProperty(
+              'demuxer-lavf-probesize',
+              '$probeSizeBytes',
+            );
+          } catch (_) {}
+        }
+        final analyzeDurationSecs = profile.analyzeDurationSecs;
+        if (analyzeDurationSecs != null) {
+          try {
+            await native.setProperty(
+              'demuxer-lavf-analyzeduration',
+              '$analyzeDurationSecs',
+            );
+          } catch (_) {}
+        }
       }
       await _player.open(
         Media(uri, httpHeaders: state.source?.headers, start: explicitStart),
@@ -832,7 +861,7 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
       child: Scaffold(
         appBar: AppBar(
           title: Text(
-            episodeLabel == null ? mediaTitle : '$mediaTitle · $episodeLabel',
+            mediaTitle,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -843,103 +872,165 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
             : ScrollConfiguration(
                 behavior: ScrollConfiguration.of(context)
                     .copyWith(scrollbars: false),
-                child: ListView(
-                  padding: EdgeInsets.zero,
-                  children: [
-                    _VideoStage(
-                      aspectRatio: _aspectRatio ?? 16 / 9,
-                      child: state.playback == null
-                          ? _LoadingState(
-                              state: state,
-                              onCancel: () {
-                                _stopOwnedSession();
-                                if (context.mounted) context.pop();
-                              },
-                            )
-                          : _inPlayerControls(),
-                    ),
-                    Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(
-                          maxWidth: DesignTokens.contentMaxWidth,
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(
-                            DesignTokens.pageGutter,
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (state.phase == StreamingPhase.error)
-                                _ErrorState(
-                                  message: state.message,
-                                  onRetry: _retry,
-                                  onBack: () => context.pop(),
-                                  onSwitchSource: () {
-                                    unawaited(_persistProgress());
+                child: CustomScrollView(
+                  slivers: [
+                    SliverPersistentHeader(
+                      pinned: true,
+                      delegate: _StickyVideoStage(
+                        aspectRatio: _aspectRatio ?? 16 / 9,
+                        child: state.playback == null
+                            ? ColoredBox(
+                                color: Colors.black,
+                                child: _LoadingState(
+                                  state: state,
+                                  onCancel: () {
                                     _stopOwnedSession();
-                                    context.go(
-                                      Uri(
-                                        path:
-                                            '/sources/${widget.mediaRef.routeKey}',
-                                        queryParameters: {
-                                          if (widget.season != null)
-                                            'season': '${widget.season}',
-                                          if (widget.episode != null)
-                                            'episode': '${widget.episode}',
-                                        },
-                                      ).toString(),
-                                    );
+                                    if (context.mounted) context.pop();
                                   },
-                                )
-                              else ...[
-                                if (episodeLabel != null)
-                                  Padding(
-                                    padding: const EdgeInsets.only(
-                                      bottom: DesignTokens.space2,
-                                    ),
-                                    child: Badge(
-                                      label: episodeLabel,
-                                      tone: BadgeTone.neutral,
-                                    ),
-                                  ),
-                                Text(
-                                  state.playback?.file.name ?? mediaTitle,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context).textTheme.titleLarge
-                                      ?.copyWith(fontWeight: FontWeight.w700),
                                 ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  state.origin == PlaybackOrigin.cache
-                                      ? 'Playing from this device. This replay starts without a provider lookup.'
-                                      : 'Seeking works while downloading. Playback resumes from the local stream once enough data arrives.',
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                                        color: DesignTokens.textSecondary,
+                              )
+                            : _VideoStage(
+                                aspectRatio: _aspectRatio ?? 16 / 9,
+                                child: _inPlayerControls(),
+                              ),
+                      ),
+                    ),
+                    SliverToBoxAdapter(
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            maxWidth: DesignTokens.contentMaxWidth,
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(
+                              DesignTokens.pageGutter,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (state.phase == StreamingPhase.error)
+                                  _ErrorState(
+                                    message: state.message,
+                                    onRetry: _retry,
+                                    onBack: () => context.pop(),
+                                    onSwitchSource: () {
+                                      unawaited(_persistProgress());
+                                      _stopOwnedSession();
+                                      context.go(
+                                        Uri(
+                                          path:
+                                              '/sources/${widget.mediaRef.routeKey}',
+                                          queryParameters: {
+                                            if (widget.season != null)
+                                              'season': '${widget.season}',
+                                            if (widget.episode != null)
+                                              'episode': '${widget.episode}',
+                                          },
+                                        ).toString(),
+                                      );
+                                    },
+                                  )
+                                else ...[
+                                  if (episodeLabel != null)
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        bottom: DesignTokens.space2,
                                       ),
-                                ),
-                                if (state.stats.totalBytes > 0) ...[
-                                  const SizedBox(height: 8),
+                                      child: Badge(
+                                        label: episodeLabel,
+                                        tone: BadgeTone.neutral,
+                                      ),
+                                    ),
                                   Text(
-                                    '${formatBytes(state.stats.downloadedBytes)} of ${formatBytes(state.stats.totalBytes)} · ${formatSpeed(state.stats.downloadRate)}',
-                                    style: Theme.of(context).textTheme.bodySmall
+                                    mediaTitle,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleLarge
                                         ?.copyWith(
-                                          color: DesignTokens.textTertiary,
-                                          fontFeatures: const [
-                                            FontFeature.tabularFigures(),
-                                          ],
+                                          fontWeight: FontWeight.w700,
                                         ),
                                   ),
+                                  if (state.playback?.file.name != null) ...[
+                                    const SizedBox(
+                                      height: DesignTokens.space1,
+                                    ),
+                                    Text(
+                                      state.playback!.file.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall
+                                          ?.copyWith(
+                                            color:
+                                                DesignTokens.textSecondary,
+                                          ),
+                                    ),
+                                  ],
+                                  const SizedBox(
+                                    height: DesignTokens.space2,
+                                  ),
+                                  Text(
+                                    state.origin == PlaybackOrigin.cache
+                                        ? 'Playing from this device. This replay starts without a provider lookup.'
+                                        : 'Seeking works while downloading. Playback resumes from the local stream once enough data arrives.',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
+                                          color: DesignTokens.textSecondary,
+                                        ),
+                                  ),
+                                  const SizedBox(
+                                    height: DesignTokens.space4,
+                                  ),
+                                  ExpansionTile(
+                                    tilePadding: EdgeInsets.zero,
+                                    childrenPadding: EdgeInsets.zero,
+                                    title: Text(
+                                      'Stream stats',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleSmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                    ),
+                                    children: [
+                                      if (state.stats.totalBytes > 0) ...[
+                                        Text(
+                                          '${formatBytes(state.stats.downloadedBytes)} of ${formatBytes(state.stats.totalBytes)} · ${formatSpeed(state.stats.downloadRate)}',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall
+                                              ?.copyWith(
+                                                color: DesignTokens
+                                                    .textTertiary,
+                                                fontFeatures: const [
+                                                  FontFeature
+                                                      .tabularFigures(),
+                                                ],
+                                              ),
+                                        ),
+                                        const SizedBox(
+                                          height: DesignTokens.space2,
+                                        ),
+                                      ],
+                                      TorrentStatistics(
+                                        stats: state.stats,
+                                      ),
+                                      const SizedBox(
+                                        height: DesignTokens.space2,
+                                      ),
+                                      _DiagnosticsStrip(state: state),
+                                    ],
+                                  ),
                                 ],
-                                const SizedBox(height: DesignTokens.space4),
-                                TorrentStatistics(stats: state.stats),
-                                const SizedBox(height: DesignTokens.space2),
-                                _DiagnosticsStrip(state: state),
                               ],
-                            ],
+                            ),
                           ),
                         ),
                       ),
@@ -964,6 +1055,37 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
         _service.cancelSession(token.id);
       }
     }
+  }
+}
+
+/// Pinned delegate so the video stage stays visible while details scroll.
+class _StickyVideoStage extends SliverPersistentHeaderDelegate {
+  const _StickyVideoStage({
+    required this.aspectRatio,
+    required this.child,
+  });
+  final double aspectRatio;
+  final Widget child;
+
+  @override
+  double get minExtent => 220;
+
+  @override
+  double get maxExtent => 520;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return SizedBox.expand(child: child);
+  }
+
+  @override
+  bool shouldRebuild(covariant _StickyVideoStage oldDelegate) {
+    return oldDelegate.aspectRatio != aspectRatio ||
+        oldDelegate.child != child;
   }
 }
 

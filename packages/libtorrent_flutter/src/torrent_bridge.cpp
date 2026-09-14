@@ -45,6 +45,9 @@
 #include <libtorrent/download_priority.hpp>
 #include <libtorrent/mmap_disk_io.hpp>
 #include <libtorrent/posix_disk_io.hpp>
+#include <libtorrent/read_resume_data.hpp>
+#include <libtorrent/write_resume_data.hpp>
+#include <libtorrent/span.hpp>
 
 // ── cross-platform sockets ──────────────────────────────────────────────────────
 #ifdef _WIN32
@@ -86,9 +89,11 @@
 #include <deque>
 #include <memory>
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <cstring>
 #include <cinttypes>
+#include <cstdlib>
 #include <functional>
 #include <cstdio>
 #include <stdexcept>
@@ -96,11 +101,16 @@
 namespace lt  = libtorrent;
 namespace chr = std::chrono;
 
+static int64_t epoch_ms() {
+    return chr::duration_cast<chr::milliseconds>(
+        chr::system_clock::now().time_since_epoch()).count();
+}
+
 // ── native bridge revision ────────────────────────────────────────────────────
 // Bump together with `nativeBridgeVersion` in
 // lib/services/torrent/native_torrent_engine.dart. Runtime diagnostics expose
 // this so platform comparisons only run on identical implementations.
-static constexpr const char* kBridgeVersion = "bridge-1.5.0+lt2.0.11";
+static constexpr const char* kBridgeVersion = "bridge-1.7.0+lt2.0.11";
 
 // Coordinated timeout budget: the player's mpv network-timeout (60s) and the
 // native piece wait must agree so both layers abandon the same request
@@ -121,7 +131,17 @@ static void tb_log_init() {
 #elif defined(__ANDROID__)
         g_logfile = nullptr; // Android uses __android_log_print instead
 #else
-        g_logfile = fopen("/tmp/torrent_bridge.log", "w");
+        // Sandboxed macOS apps cannot write to /tmp; TMPDIR points inside
+        // the app container. Try it first, then fall back to /tmp for
+        // unsandboxed CLI/library builds.
+        const char* tmpdir = getenv("TMPDIR");
+        if (tmpdir && *tmpdir) {
+            std::string path = tmpdir;
+            if (path.back() != '/') path += '/';
+            path += "torrent_bridge.log";
+            g_logfile = fopen(path.c_str(), "w");
+        }
+        if (!g_logfile) g_logfile = fopen("/tmp/torrent_bridge.log", "w");
 #endif
         if (g_logfile) {
             setvbuf(g_logfile, nullptr, _IONBF, 0);
@@ -142,6 +162,54 @@ static void tb_log_init() {
 // ── error handling ──────────────────────────────────────────────────────────────
 static thread_local std::string g_last_error;
 static void set_err(const std::string& s) { g_last_error = s; }
+
+// ── durable state files (fast resume / DHT session state) ───────────────────
+// Session state path is process-global by design: it must be provided before
+// lt_create_session() so the DHT can be restored at construction time.
+static std::mutex g_state_path_mu;
+static std::string g_session_state_path;
+
+// Write via temp file + rename so a killed process can never leave a partial
+// resume/state file that the next launch would try to parse.
+static bool write_file_atomic(const std::string& path, const char* data,
+                              size_t len) {
+    if (path.empty() || (!data && len > 0)) return false;
+    const std::string tmp = path + ".tmp";
+    FILE* f = fopen(tmp.c_str(), "wb");
+    if (!f) return false;
+    size_t written = len > 0 ? fwrite(data, 1, len, f) : 0;
+    fclose(f);
+    if (written != len) {
+        remove(tmp.c_str());
+        return false;
+    }
+#ifdef _WIN32
+    remove(path.c_str());
+#endif
+    if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+        remove(tmp.c_str());
+        return false;
+    }
+    return true;
+}
+
+static std::vector<char> read_file_binary(const std::string& path) {
+    std::vector<char> out;
+    if (path.empty()) return out;
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return out;
+    if (fseek(f, 0, SEEK_END) == 0) {
+        const long n = ftell(f);
+        if (n > 0) {
+            out.resize(static_cast<size_t>(n));
+            rewind(f);
+            const size_t rd = fread(out.data(), 1, out.size(), f);
+            out.resize(rd);
+        }
+    }
+    fclose(f);
+    return out;
+}
 
 #ifdef __ANDROID__
 static std::string android_openssl_error() {
@@ -949,11 +1017,32 @@ struct StreamEngine {
     std::atomic<int64_t> preload_size{0};
     std::atomic<int64_t> preloaded_bytes{0};
     std::atomic<bool>    preloading{false};
+    // One preload run per stream. std::thread is joinable after it finishes,
+    // so re-assigning it would call std::terminate; this flag also guarantees
+    // a single detached-ish lifetime for the ported preload loop.
+    std::atomic<bool>    preload_started{false};
     std::thread          preload_thread;
 
     // speed tracking — port of torrent.go progressEvent
     std::atomic<double> download_speed{0};
     std::atomic<double> upload_speed{0};
+
+    // Stream-level diagnostics. These counters distinguish verified bytes
+    // that existed before playback from bytes acquired after playback began,
+    // and local rereads from peer transfer.
+    std::atomic<int> active_deadlines{0};
+    std::atomic<int64_t> cached_verified_bytes{0};
+    std::atomic<int64_t> newly_downloaded_bytes{0};
+    std::atomic<int64_t> local_reread_bytes{0};
+    std::atomic<int64_t> first_http_range_at_ms{0};
+
+    int64_t file_bytes_in_piece(int p) const {
+        const int64_t piece_begin = static_cast<int64_t>(p) * piece_length;
+        const int64_t piece_end = piece_begin + piece_length;
+        const int64_t file_begin = std::max(piece_begin, file_offset);
+        const int64_t file_end = std::min(piece_end, file_offset + file_size);
+        return std::max<int64_t>(0, file_end - file_begin);
+    }
 
     // trailing retention — keep last N played pieces for re-reads/rewinds
     static constexpr int TRAILING_WINDOW = 3;
@@ -963,6 +1052,33 @@ struct StreamEngine {
     // adaptive bitrate estimate (bytes/sec) — derived from file size
     float estimated_bitrate_bps = 625000.0f;
     int   critical_startup_pieces = 2;  // computed at init
+
+    // Connection fanout boost during startup/seeks. High fanout completes
+    // the urgent window faster on big swarms; the steady-state cap drops
+    // back to the configured (TorrServer-style) limit to avoid head-of-line
+    // blocking from slow peers once playback is flowing. Atomic because
+    // serve_range (client threads) and lt_set_cache_settings (UI isolate)
+    // can read/update it while streams are running.
+    std::atomic<int> configured_connections{32};
+    std::atomic<bool> conn_boosted{false};
+
+    void boost_connections(int boosted) {
+        if (boosted <= configured_connections.load(std::memory_order_relaxed))
+            return;
+        try {
+            handle.set_max_connections(boosted);
+            conn_boosted.store(true, std::memory_order_relaxed);
+        } catch (...) {}
+    }
+
+    void restore_connections() {
+        if (!conn_boosted.load(std::memory_order_relaxed)) return;
+        conn_boosted.store(false, std::memory_order_relaxed);
+        try {
+            handle.set_max_connections(
+                configured_connections.load(std::memory_order_relaxed));
+        } catch (...) {}
+    }
 
     std::atomic<bool> active{true};
 
@@ -1001,9 +1117,18 @@ struct StreamEngine {
     // signal piece_finished from alert thread
     void on_piece_finished(int p) {
         TB_LOG("on_piece_finished: piece=%d", p);
+        bool newly_verified = false;
         {
             std::lock_guard<std::mutex> lk(piece_mu);
-            pieces_have.insert(p);
+            newly_verified = pieces_have.insert(p).second;
+        }
+        if (newly_verified) {
+            newly_downloaded_bytes.fetch_add(file_bytes_in_piece(p),
+                                             std::memory_order_relaxed);
+            int pending = active_deadlines.load(std::memory_order_relaxed);
+            while (pending > 0 &&
+                   !active_deadlines.compare_exchange_weak(
+                       pending, pending - 1, std::memory_order_relaxed)) {}
         }
         // Wake serve_range — it waits on piece_cv for pieces_have
         piece_cv.notify_all();
@@ -1084,6 +1209,10 @@ struct SessionWrapper {
     std::unordered_map<int64_t, lt::torrent_handle> handles;
     std::unordered_set<int64_t> ephemeral_torrents;
     std::atomic<int64_t> next_id{1};
+
+    // Fast-resume save targets, consumed by the alert thread when
+    // save_resume_data_alert arrives for the matching torrent.
+    std::unordered_map<int64_t, std::string> pending_resume_paths;
 
     std::mutex streams_mu;
     std::unordered_map<int64_t, std::unique_ptr<StreamEngine>> streams;
@@ -1214,6 +1343,49 @@ struct SessionWrapper {
                                 } catch (...) {}
                             }
                         }
+
+                        // fast-resume save completed → write the bencoded
+                        // add_torrent_params (info-dict + verified pieces +
+                        // peers) to the path registered by lt_save_resume_data.
+                        else if (auto* srd = lt::alert_cast<lt::save_resume_data_alert>(a)) {
+                            int64_t rid = id_for_handle(srd->handle);
+                            std::string path;
+                            {
+                                std::lock_guard<std::mutex> lk(mu);
+                                auto it = pending_resume_paths.find(rid);
+                                if (it != pending_resume_paths.end()) {
+                                    path = it->second;
+                                    pending_resume_paths.erase(it);
+                                }
+                            }
+                            if (!path.empty()) {
+                                try {
+                                    auto buf = lt::write_resume_data_buf(srd->params);
+                                    if (!buf.empty()) {
+                                        const bool ok = write_file_atomic(
+                                            path, buf.data(), buf.size());
+                                        TB_LOG("save_resume_data: id=%lld written=%d bytes=%zu",
+                                               (long long)rid, ok ? 1 : 0, buf.size());
+                                    }
+                                } catch (...) {}
+                            }
+                            continue; // internal only — never surfaced to Dart
+                        }
+
+                        // failed fast-resume save → drop the pending target
+                        else if (auto* srf = lt::alert_cast<lt::save_resume_data_failed_alert>(a)) {
+                            int64_t rid = id_for_handle(srf->handle);
+                            std::lock_guard<std::mutex> lk(mu);
+                            pending_resume_paths.erase(rid);
+                            continue;
+                        }
+
+                        // Queue for Dart only error-class alerts. Peer/DHT/
+                        // tracker chatter used to allocate a string per alert
+                        // here and then be discarded on the UI isolate, which
+                        // measurably loaded the isolate during startup.
+                        if (!(a->category() & lt::alert_category::error))
+                            continue;
 
                         // queue alert for dart
                         lt_torrent_id tid = -1;
@@ -1404,8 +1576,11 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
         int64_t send_end = std::min(range_end, pfend);
         if (send_end < sbeg) { cursor = pfend + 1; continue; }
 
-        // ── lt2http pattern: prioritize current + 2 ahead, then wait ──
-        // Like lt2http's Reader::wait_for_piece → prioritize_pieces(start, start+2)
+        // ── time-critical streaming window ──
+        // Keep startup small, then grow the forward window only when the
+        // measured download rate is close to the estimated media bitrate.
+        // This replaces a fixed 16-piece request burst with a seconds-based
+        // target while retaining libtorrent's deadline scheduler.
         bool have_it = false;
         {
             std::lock_guard<std::mutex> lk(s->piece_mu);
@@ -1413,19 +1588,41 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
         }
 
         if (!have_it) {
-            // Wider deadline pipeline: current + 16 pieces with stagger.
-            // The deadline picker orders by deadline, so i=0 still gets
-            // priority — the extra entries just keep peer request queues
-            // full so the swarm doesn't idle between piece completions.
-            // (Previous current+2 window was below libtorrent's own
-            //  request pipeline depth → peers sat idle after each piece.)
-            constexpr int PIPELINE_AHEAD = 16;
-            TB_LOG("serve_range: piece=%d not ready, prioritizing p..p+%d", p, PIPELINE_AHEAD);
+            const auto torrent_status = s->handle.status();
+            const double bitrate = std::max<double>(s->estimated_bitrate_bps, 1.0);
+            const double speed = std::max<double>(torrent_status.download_rate, 0.0);
+            const double ratio = speed > 0.0 ? speed / bitrate : 0.0;
+            // Steady-state window doubled vs the original 6/10s: the 128MB
+            // native cache can hold it, and a 20s cushion absorbs swarm
+            // dips without rebuffering on mid-speed torrents.
+            const double target_seconds =
+                (s->read_head.load() <= s->piece_length * 2) ? 3.0
+                : (ratio > 1.5 ? 10.0 : 20.0);
+            int contiguous_ahead = 0;
+            {
+                std::lock_guard<std::mutex> lk(s->piece_mu);
+                for (int q = p; q <= s->end_piece && s->pieces_have.count(q); ++q)
+                    contiguous_ahead++;
+            }
+            const double buffered_seconds =
+                contiguous_ahead * s->piece_length / bitrate;
+            const double deficit_seconds =
+                std::max(1.0, target_seconds - buffered_seconds);
+            const int pipeline_ahead = std::clamp(
+                (int)std::ceil(deficit_seconds * bitrate /
+                               std::max(1, s->piece_length)),
+                2, 16);
+            int scheduled_deadlines = 0;
+            TB_LOG("serve_range: piece=%d not ready, buffered=%.1fs target=%.1fs pipeline=%d rate=%d",
+                   p, buffered_seconds, target_seconds, pipeline_ahead,
+                   torrent_status.download_rate);
+
             try {
                 s->handle.piece_priority(lt::piece_index_t(p), lt::top_priority);
                 s->handle.set_piece_deadline(lt::piece_index_t(p), 0);
+                scheduled_deadlines++;
             } catch (...) {}
-            for (int i = 1; i <= PIPELINE_AHEAD && p + i <= s->end_piece; ++i) {
+            for (int i = 1; i <= pipeline_ahead && p + i <= s->end_piece; ++i) {
                 bool have_next = false;
                 { std::lock_guard<std::mutex> lk(s->piece_mu); have_next = s->pieces_have.count(p+i) > 0; }
                 if (!have_next) {
@@ -1433,10 +1630,16 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
                         // First two stay at top, rest at priority 6
                         auto pri = (i <= 2) ? lt::top_priority : lt::download_priority_t(6);
                         s->handle.piece_priority(lt::piece_index_t(p+i), pri);
-                        s->handle.set_piece_deadline(lt::piece_index_t(p+i), i * 80);
+                        const int deadline_ms = (int)std::clamp(
+                            std::ceil(i * 1000.0 / std::max(1.0, target_seconds)),
+                            50.0, 3000.0);
+                        s->handle.set_piece_deadline(
+                            lt::piece_index_t(p+i), deadline_ms);
+                        scheduled_deadlines++;
                     } catch (...) {}
                 }
             }
+            s->active_deadlines.store(scheduled_deadlines, std::memory_order_relaxed);
 
             // Wait for piece — coordinated with the player's 60s
             // network-timeout so both layers abandon together.
@@ -1528,6 +1731,9 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
             try { s->handle.read_piece(lt::piece_index_t(np)); } catch (...) {}
         }
 
+        if (have_it)
+            s->local_reread_bytes.fetch_add(nb, std::memory_order_relaxed);
+
         if (send_all(cli, rd.data.data() + off, (int)nb) < 0)
             return false;
 
@@ -1541,6 +1747,20 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
 
         if (s->stream_state.load() != LT_STREAM_READY)
             s->stream_state.store(LT_STREAM_READY);
+
+        // Forward-buffer check: once the served window covers a full steady
+        // target, ease the startup fanout boost back to the configured cap.
+        if (s->conn_boosted.load(std::memory_order_relaxed)) {
+            const double bitrate = std::max<double>(s->estimated_bitrate_bps, 1.0);
+            int ahead = 0;
+            {
+                std::lock_guard<std::mutex> lk(s->piece_mu);
+                for (int q = p; q <= s->end_piece && s->pieces_have.count(q); ++q)
+                    ahead++;
+            }
+            if (ahead * s->piece_length / bitrate >= 10.0)
+                s->restore_connections();
+        }
 
         // Trailing retention — keep last N played pieces for re-reads.
         // Only drop pieces that fall off the trailing window.
@@ -1656,6 +1876,11 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
             if (fsz <= 0) goto cleanup;
 
             RangeReq rr = parse_range(buf, total);
+            if (is_get && rr.valid) {
+                int64_t unset = 0;
+                s->first_http_range_at_ms.compare_exchange_strong(
+                    unset, epoch_ms(), std::memory_order_relaxed);
+            }
             int64_t rstart = (rr.valid && rr.start >= 0) ? rr.start : 0;
             int64_t rend   = (rr.valid && rr.end >= 0)   ? rr.end   : fsz - 1;
 
@@ -1772,9 +1997,11 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
                 }
                 s->read_cv.notify_all();
 
-                // Flush trailing retention window — drop old pieces to
-                // free bandwidth for the new seek position
-                if (!cached_target) {
+                // Flush trailing retention window — drop old priorities for
+                // every seek generation, including cache hits. This prevents
+                // stale pieces from downloading after a seek while preserving
+                // their verified bytes on disk for local rereads.
+                {
                     std::lock_guard<std::mutex> tlk(s->trailing_mu);
                     for (int old_p : s->trailing_pieces) {
                         try {
@@ -1786,6 +2013,12 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
                 }
 
                 try {
+                    // Every seek starts a new scheduling generation. Clear
+                    // deadlines even for a cache hit so requests from the
+                    // previous position cannot keep downloading in the
+                    // background.
+                    s->handle.clear_piece_deadlines();
+                    s->active_deadlines.store(0, std::memory_order_relaxed);
                     // Minimal seek path — just unblock the picker, then let
                     // serve_range do its normal 16-piece + 80ms gradient on
                     // the very first piece it processes.
@@ -1796,21 +2029,24 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
                     // artificial seek latency from the stagger alone.
                     //
                     // Keep this path tiny:
-                    //   1. clear deadlines (cancels old time-critical picks
-                    //      → cancel_non_critical patch fires immediately)
-                    //   2. fire ONE deadline on the seek target so the
+                    //   1. fire ONE deadline on the seek target so the
                     //      picker pivots NOW, before the first serve_range
                     //      iteration runs (~1ms later)
                     //   3. force-resume in case the torrent went to seeding
-                    // A local reread must not cancel useful peer requests.
                     // serve_range schedules missing pieces if it reaches a gap.
                     if (!cached_target) {
-                        s->handle.clear_piece_deadlines();
                         s->handle.piece_priority(
                             lt::piece_index_t(seek_piece), lt::top_priority);
                         s->handle.set_piece_deadline(
                             lt::piece_index_t(seek_piece), 0);
                         s->handle.resume();
+                        // A seek re-opens the urgent window: widen fanout
+                        // again until the new position is buffered.
+                        s->boost_connections(
+                            std::max(
+                                s->configured_connections.load(
+                                    std::memory_order_relaxed),
+                                48));
                     }
                     // If the seek target is already on disk, kick a read
                     // immediately so serve_range's read_piece_data returns
@@ -1996,6 +2232,7 @@ static void preload_stream(StreamEngine* s, int64_t preload_bytes) {
     if (preload_bytes <= 0) return;
     s->preload_size.store(preload_bytes);
     s->preloading.store(true);
+    TB_LOG("preload: start bytes=%lld", (long long)preload_bytes);
 
     if (preload_bytes > s->file_size)
         preload_bytes = s->file_size;
@@ -2017,14 +2254,11 @@ static void preload_stream(StreamEngine* s, int64_t preload_bytes) {
     head_end_piece = std::min(head_end_piece, s->end_piece);
 
     for (int p = head_piece; p <= head_end_piece && s->active.load() && s->preloading.load(); ++p) {
-        // wait for piece data in cache (alert thread eagerly pre-fetches)
+        // wait_for_piece drives the picker; the cache buffer fill is handled
+        // by the readers. The old per-piece cache-buffer poll used to sleep
+        // up to 5s per piece when nobody had read that piece yet, which
+        // serialized preload into a crawl.
         if (!wait_for_piece(s, p, 30000)) break;
-        // small extra wait for cache buffer if needed
-        for (int w = 0; w < 50 && s->active.load(); ++w) {
-            auto* cp = s->cache ? s->cache->get_piece(p) : nullptr;
-            if (cp && !cp->buffer.empty()) break;
-            std::this_thread::sleep_for(chr::milliseconds(100));
-        }
         s->preloaded_bytes.fetch_add(s->piece_length);
     }
 
@@ -2035,15 +2269,12 @@ static void preload_stream(StreamEngine* s, int64_t preload_bytes) {
 
         for (int p = tail_piece; p <= s->end_piece && s->active.load() && s->preloading.load(); ++p) {
             if (!wait_for_piece(s, p, 30000)) break;
-            for (int w = 0; w < 50 && s->active.load(); ++w) {
-                auto* cp = s->cache ? s->cache->get_piece(p) : nullptr;
-                if (cp && !cp->buffer.empty()) break;
-                std::this_thread::sleep_for(chr::milliseconds(100));
-            }
             s->preloaded_bytes.fetch_add(s->piece_length);
         }
     }
 
+    TB_LOG("preload: done preloaded=%lld",
+           (long long)s->preloaded_bytes.load());
     s->preloading.store(false);
 }
 
@@ -2065,6 +2296,11 @@ TORRENT_API void lt_set_ssl_cert_path(const char* path) {
 #else
     (void)path;
 #endif
+}
+
+TORRENT_API void lt_set_session_state_path(const char* path) {
+    std::lock_guard<std::mutex> lk(g_state_path_mu);
+    g_session_state_path = path ? path : "";
 }
 
 TORRENT_API lt_session_t lt_create_session(const char* iface, int dl, int ul) {
@@ -2238,6 +2474,41 @@ TORRENT_API lt_session_t lt_create_session(const char* iface, int dl, int ul) {
 #else
         params.disk_io_constructor = lt::mmap_disk_io_constructor;
 #endif
+
+        // Restore DHT routing state from the previous run when available so
+        // magnets can find peers without re-bootstrapping the DHT from root
+        // nodes. Our tuned settings always win over anything in the file.
+        {
+            std::string state_path;
+            {
+                std::lock_guard<std::mutex> lk(g_state_path_mu);
+                state_path = g_session_state_path;
+            }
+            if (!state_path.empty()) {
+                try {
+                    auto buf = read_file_binary(state_path);
+                    if (!buf.empty()) {
+                        auto loaded = lt::read_session_params(
+                            lt::span<char const>(buf.data(),
+                                                 (std::ptrdiff_t)buf.size()),
+                            lt::session_handle::save_dht_state);
+                        lt::settings_pack tuned = params.settings;
+                        params = std::move(loaded);
+                        params.settings = std::move(tuned);
+#ifdef __ANDROID__
+                        params.disk_io_constructor = lt::posix_disk_io_constructor;
+#else
+                        params.disk_io_constructor = lt::mmap_disk_io_constructor;
+#endif
+                        TB_LOG("session_state: restored DHT state (%zu bytes)",
+                               buf.size());
+                    }
+                } catch (...) {
+                    // Corrupt/old state must never block session startup.
+                }
+            }
+        }
+
         auto* sw = new SessionWrapper(std::move(params));
         sw->init_default_config();
         sw->start_alert_thread();
@@ -2297,6 +2568,29 @@ TORRENT_API void lt_destroy_session(lt_session_t session) {
     try { delete sw; } catch (...) {}
 }
 
+TORRENT_API int lt_save_session_state(lt_session_t session, const char* path) {
+    if (!session || !path) return 0;
+    auto* sw = to_sw(session);
+    // Serialize state saves: the periodic timer and the app-exit hook can
+    // fire together, and two writers on one temp file could interleave.
+    static std::mutex state_write_mu;
+    std::lock_guard<std::mutex> lk(state_write_mu);
+    try {
+        // DHT routing table + node IDs only: settings are always rebuilt
+        // from the tuned settings pack, so restoring them is unnecessary.
+        auto params = sw->session.session_state(
+            lt::session_handle::save_dht_state);
+        auto buf = lt::write_session_params_buf(
+            params, lt::session_handle::save_dht_state);
+        if (buf.empty()) return 0;
+        const bool ok = write_file_atomic(path, buf.data(), buf.size());
+        TB_LOG("session_state: saved=%d bytes=%zu", ok ? 1 : 0, buf.size());
+        return ok ? 1 : 0;
+    } catch (...) {
+        return 0;
+    }
+}
+
 TORRENT_API void lt_set_alert_callback(lt_session_t session,
                                        lt_alert_callback cb, void* ud) {
     if (!session) return;
@@ -2334,23 +2628,26 @@ TORRENT_API lt_torrent_id lt_add_magnet(lt_session_t session,
         atp.flags &= ~lt::torrent_flags::paused;
         atp.flags &= ~lt::torrent_flags::auto_managed;
 
-        // Trackerless magnet (only an info-hash, no &tr=...)? Seed it with a
-        // curated set of public open trackers so peer discovery doesn't have
-        // to wait for DHT bootstrap (which can take 30-60s on a cold start).
-        // These are the same trackers shipped by qBittorrent's default
-        // "automatically add" list and TorrServer.
-        if (atp.trackers.empty()) {
-            static const char* kDefaultTrackers[] = {
-                "udp://tracker.opentrackr.org:1337/announce",
-                "udp://open.demonii.com:1337/announce",
-                "udp://open.stealth.si:80/announce",
-                "udp://tracker.torrent.eu.org:451/announce",
-                "udp://exodus.desync.com:6969/announce",
-                "udp://tracker.openbittorrent.com:6969/announce",
-                "udp://tracker.dler.org:6969/announce",
-                "udp://explodie.org:6969/announce",
-            };
-            for (auto* t : kDefaultTrackers) atp.trackers.emplace_back(t);
+        // Always fold in the curated public open trackers. Addon magnets
+        // often carry one or two trackers of unknown health; merging (not
+        // replacing) gives peer discovery a reliable fallback without the
+        // hundreds-of-trackers alert storm that a full external list causes.
+        static const char* kDefaultTrackers[] = {
+            "udp://tracker.opentrackr.org:1337/announce",
+            "udp://open.demonii.com:1337/announce",
+            "udp://open.stealth.si:80/announce",
+            "udp://tracker.torrent.eu.org:451/announce",
+            "udp://exodus.desync.com:6969/announce",
+            "udp://tracker.openbittorrent.com:6969/announce",
+            "udp://tracker.dler.org:6969/announce",
+            "udp://explodie.org:6969/announce",
+        };
+        for (auto* t : kDefaultTrackers) {
+            bool already = false;
+            for (auto& existing : atp.trackers) {
+                if (existing == t) { already = true; break; }
+            }
+            if (!already) atp.trackers.emplace_back(t);
         }
 
         if (stream_only) {
@@ -2368,6 +2665,7 @@ TORRENT_API lt_torrent_id lt_add_magnet(lt_session_t session,
             sw->handles[id] = h;
             if (stream_only) sw->ephemeral_torrents.insert(id);
         }
+        TB_LOG("add_magnet: id=%lld", (long long)id);
         set_err(""); return id;
     } catch (const std::exception& e) { set_err(e.what()); return -1; }
 }
@@ -2400,8 +2698,93 @@ TORRENT_API lt_torrent_id lt_add_torrent_file(lt_session_t session,
             sw->handles[id] = h;
             if (stream_only) sw->ephemeral_torrents.insert(id);
         }
+        TB_LOG("add_torrent_file: id=%lld", (long long)id);
         set_err(""); return id;
     } catch (const std::exception& e) { set_err(e.what()); return -1; }
+}
+
+TORRENT_API lt_torrent_id lt_add_torrent_resume(lt_session_t session,
+                                                const char* resume_path,
+                                                const char* path,
+                                                int stream_only) {
+    if (!session || !resume_path || !path) { set_err("null arg"); return -1; }
+    auto* sw = to_sw(session);
+    try {
+        auto buf = read_file_binary(resume_path);
+        if (buf.empty()) { set_err("resume data missing or empty"); return -1; }
+
+        lt::error_code ec;
+        lt::add_torrent_params atp = lt::read_resume_data(
+            lt::span<char const>(buf.data(), (std::ptrdiff_t)buf.size()), ec);
+        if (ec) { set_err(ec.message()); return -1; }
+
+        // The resume file lives in our own per-source cache directory; the
+        // security-sensitive fields (save_path, trackers) are still
+        // overridden here rather than trusted verbatim.
+        atp.save_path = path;
+        atp.flags &= ~lt::torrent_flags::paused;
+        atp.flags &= ~lt::torrent_flags::auto_managed;
+
+        if (stream_only) {
+            atp.storage_mode = lt::storage_mode_sparse;
+            atp.flags |= lt::torrent_flags::stop_when_ready;
+        }
+
+        lt::torrent_handle h = sw->session.add_torrent(std::move(atp), ec);
+        if (ec) { set_err(ec.message()); return -1; }
+
+        int64_t id = sw->next_id.fetch_add(1);
+        {
+            std::lock_guard<std::mutex> lk(sw->mu);
+            sw->handles[id] = h;
+            if (stream_only) sw->ephemeral_torrents.insert(id);
+        }
+        TB_LOG("add_torrent_resume: id=%lld path=%s", (long long)id, resume_path);
+
+        // Mirror the magnet path: an ephemeral torrent stays paused until
+        // lt_start_stream schedules the playback window. There is no
+        // metadata_received alert on the resume path, so pause here — before
+        // any resume() can start a picker. File priorities are intentionally
+        // left untouched: prioritize_files() applies asynchronously and would
+        // race lt_start_stream's prioritize_pieces() window.
+        if (stream_only) {
+            try { h.pause(); } catch (...) {}
+        } else {
+            h.resume();
+        }
+        set_err(""); return id;
+    } catch (const std::exception& e) { set_err(e.what()); return -1; }
+}
+
+TORRENT_API int lt_save_resume_data(lt_session_t session,
+                                    lt_torrent_id id,
+                                    const char* path) {
+    if (!session || !path) return 0;
+    auto* sw = to_sw(session);
+    lt::torrent_handle handle;
+    {
+        std::lock_guard<std::mutex> lk(sw->mu);
+        auto it = sw->handles.find(id);
+        if (it == sw->handles.end()) return 0;
+        handle = it->second;
+        sw->pending_resume_paths[id] = path;
+    }
+    if (!handle.is_valid()) {
+        std::lock_guard<std::mutex> lk(sw->mu);
+        sw->pending_resume_paths.erase(id);
+        return 0;
+    }
+    try {
+        // save_info_dict embeds the info-dict, so this single file can
+        // re-add the torrent with no metadata exchange and no recheck.
+        handle.save_resume_data(lt::torrent_handle::save_info_dict);
+        TB_LOG("save_resume_data: requested id=%lld", (long long)id);
+    } catch (...) {
+        std::lock_guard<std::mutex> lk(sw->mu);
+        sw->pending_resume_paths.erase(id);
+        return 0;
+    }
+    return 1;
 }
 
 TORRENT_API void lt_remove_torrent(lt_session_t session,
@@ -2415,6 +2798,7 @@ TORRENT_API void lt_remove_torrent(lt_session_t session,
         del ? lt::session::delete_files : lt::remove_flags_t{});
     sw->handles.erase(it);
     sw->ephemeral_torrents.erase(id);
+    sw->pending_resume_paths.erase(id);
 }
 
 TORRENT_API void lt_pause_torrent(lt_session_t session, lt_torrent_id id) {
@@ -2628,12 +3012,14 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
         else                                                     duration_guess = 9000.0f;  // 8GB+ → 2.5h
         s->estimated_bitrate_bps = (float)s->file_size / duration_guess;
 
-        // Critical startup: target ~2 seconds of video, but at least 1 piece
-        // and at most 5 pieces. For a 4GB file with 4MB pieces and ~3.3MB/s
-        // bitrate, this gives max(1, 6.6/4) = 1-2 pieces instead of 5.
+        // Critical startup: target ~2 seconds of video, floor of 3 pieces
+        // (container header + first GOP + audio often spans more than one
+        // piece; a single-piece window serializes first-frame delivery) and
+        // cap at 6. Deadline-0 on piece 0 still finishes first, so the floor
+        // adds parallel throughput without delaying the first frame.
         int startup_bytes = (int)(s->estimated_bitrate_bps * 2.0f);
         startup_bytes = std::max(startup_bytes, s->piece_length);
-        s->critical_startup_pieces = std::clamp(startup_bytes / s->piece_length, 1, 5);
+        s->critical_startup_pieces = std::clamp(startup_bytes / s->piece_length, 3, 6);
 
         TB_LOG("ADAPTIVE: file_size=%lldMB piece=%dKB bitrate_est=%.0fKB/s critical_pieces=%d",
                (long long)(s->file_size / (1024*1024)), s->piece_length / 1024,
@@ -2654,10 +3040,19 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
     // the time-critical picker fans block requests across hundreds of
     // peers — head-of-line blocked by the slowest one. TorrServer caps at
     // 25 per torrent for exactly this reason.
+    s->configured_connections = sw->bt_config.connections_limit > 0
+        ? sw->bt_config.connections_limit
+        : 25;
     if (sw->bt_config.connections_limit > 0) {
         s->cache->connections_limit = sw->bt_config.connections_limit;
         try { handle.set_max_connections(sw->bt_config.connections_limit); } catch (...) {}
     }
+    // Startup fanout boost: a wider peer set while the urgent startup window
+    // downloads. serve_range restores the configured cap once the forward
+    // buffer is full, so steady playback keeps TorrServer's head-of-line
+    // protection.
+    s->boost_connections(std::max(
+        s->configured_connections.load(std::memory_order_relaxed), 48));
     // apply session-level reader_read_ahead to cache
     if (sw->bt_config.reader_read_ahead >= 5 && sw->bt_config.reader_read_ahead <= 100)
         s->cache->reader_read_ahead_pct = sw->bt_config.reader_read_ahead;
@@ -2683,30 +3078,23 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
         for (int p = s->start_piece; p <= std::min(s->start_piece + crit - 1, s->end_piece); ++p)
             prios[p] = lt::top_priority;
 
-        // Remaining head pieces at lower priority — they'll download after
-        // critical pieces without competing for bandwidth
-        for (int p = s->start_piece + crit; p <= s->head_end_piece; ++p)
-            prios[p] = lt::download_priority_t(4);
-
-        // Tail pieces for moov atom — priority 5 (below head critical,
-        // above remaining head). For large files this prevents tail from
-        // stealing bandwidth that the first frame needs.
-        for (int p = s->tail_start_piece; p <= s->end_piece; ++p)
-            prios[p] = lt::download_priority_t(5);
-
         handle.prioritize_pieces(prios);
 
-        // Deadlines: critical pieces get tight deadlines (0-100ms),
-        // tail gets pushed back (1000ms) so time-critical picker
-        // strongly favors head over tail.
+        // Deadlines are limited to the critical startup window. Metadata,
+        // audio, and later video ranges are scheduled when FFmpeg actually
+        // asks the HTTP Range server for them.
         for (int i = 0; i < crit && s->start_piece + i <= s->end_piece; ++i)
             handle.set_piece_deadline(
                 lt::piece_index_t(s->start_piece + i), i * 50);
-        for (int p = s->tail_start_piece; p <= s->end_piece; ++p)
-            handle.set_piece_deadline(lt::piece_index_t(p), 1000);
+        s->active_deadlines.store(crit, std::memory_order_relaxed);
 
         // NOW resume — priorities are already set, no random downloads
         handle.resume();
+
+        // First announce should not wait for the periodic tracker schedule:
+        // a fresh stream wants peers now. Both calls are best-effort.
+        try { handle.force_reannounce(0); } catch (...) {}
+        try { handle.force_dht_announce(); } catch (...) {}
 
         // Do NOT use sequential_download — let deadlines drive piece order.
         // libtorrent's time-critical picker (via set_piece_deadline) is the
@@ -2715,22 +3103,23 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
         handle.unset_flags(lt::torrent_flags::sequential_download);
 
         // populate pieces we already have — mark them in pieces_have set.
-        // Only load nearby pieces into RAM cache (head + tail).
-        // Loading ALL pieces would flood I/O and fill the cache budget.
+        // Only load the first two verified pieces into the read-result cache.
+        // All other verified pieces remain disk-backed and are read on demand
+        // when FFmpeg requests their HTTP ranges.
         lt::torrent_status ts = handle.status(lt::torrent_handle::query_pieces);
         // Guard: on Android ARM64, pieces bitfield can have null internal
         // buffer immediately after resume() — get_bit() would SIGSEGV.
         if (ts.has_metadata && !ts.pieces.empty() && ts.pieces.size() > 0)
         for (int p = s->start_piece; p <= s->end_piece; ++p) {
             if (ts.pieces.get_bit(lt::piece_index_t(p))) {
+                s->cached_verified_bytes.fetch_add(s->file_bytes_in_piece(p),
+                                                   std::memory_order_relaxed);
                 s->pieces_have.insert(p);
                 auto* cp = s->cache->get_piece(p);
                 if (cp) cp->mark_complete();
-                // only pre-load first 2 + tail pieces into read_results
-                // (kept minimal to limit RAM — serve_range reads the rest on demand)
+                // Keep startup reads limited to the first keyframe window.
                 bool is_head = (p <= s->start_piece + 1);
-                bool is_tail = (p >= s->tail_start_piece);
-                if (is_head || is_tail) {
+                if (is_head) {
                     try { handle.read_piece(lt::piece_index_t(p)); } catch (...) {}
                 }
             }
@@ -2833,18 +3222,21 @@ static void fill_stream_status(lt_stream_status* out, const StreamEngine* s) {
     int play = std::clamp(s->byte_to_piece(s->read_head.load()),
                           s->start_piece, s->end_piece);
     int contiguous = 0;
+    int64_t contiguous_bytes = 0;
     {
         std::lock_guard<std::mutex> lk(const_cast<std::mutex&>(s->piece_mu));
         int p = play;
         while (p <= s->end_piece && s->pieces_have.count(p)) {
-            contiguous++; p++;
+            contiguous++;
+            contiguous_bytes += s->file_bytes_in_piece(p);
+            p++;
         }
     }
     out->buffer_pieces = contiguous;
 
     // Use estimated bitrate for buffer reporting — adaptive to file size
     float bitrate = s->estimated_bitrate_bps;
-    out->buffer_seconds = (float)contiguous * s->piece_length / bitrate;
+    out->buffer_seconds = (float)contiguous_bytes / bitrate;
 
     // telemetry from handle
     try {
@@ -2855,6 +3247,17 @@ static void fill_stream_status(lt_stream_status* out, const StreamEngine* s) {
         out->active_peers  = 0;
         out->download_rate = 0;
     }
+
+    out->active_deadlines = s->active_deadlines.load(std::memory_order_relaxed);
+    const double target_bitrate = std::max<double>(s->estimated_bitrate_bps, 1.0);
+    const double speed = std::max<double>(out->download_rate, 0.0);
+    const double ratio = speed > 0.0 ? speed / target_bitrate : 0.0;
+    out->target_buffer_seconds = (s->read_head.load() <= s->piece_length * 2)
+        ? 3.0f : (ratio > 1.5 ? 6.0f : 10.0f);
+    out->cached_verified_bytes = s->cached_verified_bytes.load(std::memory_order_relaxed);
+    out->newly_downloaded_bytes = s->newly_downloaded_bytes.load(std::memory_order_relaxed);
+    out->local_reread_bytes = s->local_reread_bytes.load(std::memory_order_relaxed);
+    out->first_http_range_at_ms = s->first_http_range_at_ms.load(std::memory_order_relaxed);
 
     std::string url = s->make_url();
     std::strncpy(out->url, url.c_str(), sizeof(out->url) - 1);
@@ -2918,9 +3321,15 @@ TORRENT_API int lt_preload_stream(lt_session_t session, lt_stream_id sid,
 
     auto* s = it->second.get();
     if (s->preloading.load() || !s->active.load()) return 0;
+    // Exactly one preload run per stream: a second std::thread assignment on
+    // a finished (joinable) preload_thread would call std::terminate.
+    if (s->preload_started.exchange(true)) return 0;
 
     // default preload 16MB — port of preload.go startend
     if (preload_bytes <= 0) preload_bytes = 16 * 1024 * 1024;
+
+    TB_LOG("preload: requested stream=%lld bytes=%lld", (long long)sid,
+           (long long)preload_bytes);
 
     s->preload_thread = std::thread([s, preload_bytes]() {
         preload_stream(s, preload_bytes);
@@ -2949,8 +3358,15 @@ TORRENT_API void lt_set_cache_settings(lt_session_t session, lt_stream_id sid,
         s->cache->reader_read_ahead_pct = read_ahead_pct;
     if (connections_limit > 0) {
         s->cache->connections_limit = connections_limit;
+        s->configured_connections = connections_limit;
         // Wire to libtorrent so it actually takes effect on the swarm.
-        try { s->handle.set_max_connections(connections_limit); } catch (...) {}
+        // Preserve an active startup boost: re-apply the wider cap instead of
+        // silently resetting it moments after lt_start_stream widened it.
+        if (s->conn_boosted.load(std::memory_order_relaxed)) {
+            s->boost_connections(std::max(connections_limit, 48));
+        } else {
+            try { s->handle.set_max_connections(connections_limit); } catch (...) {}
+        }
     }
 }
 

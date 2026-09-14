@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:ui' show AppExitResponse;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -17,6 +20,7 @@ import 'features/settings/subtitles_screen.dart';
 import 'features/sources/source_selection_screen.dart';
 import 'models/media_item.dart';
 import 'models/torrent_models.dart';
+import 'providers/app_providers.dart';
 
 const _genreNames = <int, String>{
   28: 'Action',
@@ -148,11 +152,51 @@ class _NotFound extends StatelessWidget {
   }
 }
 
-class PeerStreamApp extends ConsumerWidget {
+class PeerStreamApp extends ConsumerStatefulWidget {
   const PeerStreamApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PeerStreamApp> createState() => _PeerStreamAppState();
+}
+
+class _PeerStreamAppState extends ConsumerState<PeerStreamApp> {
+  late final AppLifecycleListener _lifecycle;
+
+  @override
+  void initState() {
+    super.initState();
+    // Durable playback state: hand the DHT routing table and fast-resume
+    // data to disk when the app backgrounds or exits. Desktop exit can be
+    // deferred briefly so the writes complete before the process dies.
+    _lifecycle = AppLifecycleListener(
+      onExitRequested: () async {
+        try {
+          await ref.read(streamingServiceProvider).persistState();
+          // Session state writes are synchronous, but fast-resume writes
+          // complete on the native alert thread; give them a brief grace
+          // period so the process does not exit mid-write.
+          await Future<void>.delayed(const Duration(milliseconds: 350));
+        } catch (_) {}
+        return AppExitResponse.exit;
+      },
+      onStateChange: (state) {
+        if (state == AppLifecycleState.paused ||
+            state == AppLifecycleState.hidden ||
+            state == AppLifecycleState.detached) {
+          unawaited(ref.read(streamingServiceProvider).persistState());
+        }
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return MaterialApp.router(
       title: 'PeerStream',
       debugShowCheckedModeBanner: false,

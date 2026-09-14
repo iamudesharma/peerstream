@@ -2,11 +2,14 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:peerstream/models/media_item.dart';
 import 'package:peerstream/models/torrent_models.dart';
+import 'package:peerstream/providers/app_providers.dart';
 import 'package:peerstream/services/streaming/source_ranking.dart';
 import 'package:peerstream/services/torrent/provider_cache.dart';
 import 'package:peerstream/services/torrent/source_discovery.dart';
+import 'package:peerstream/services/torrent/source_policy.dart';
 import 'package:peerstream/services/torrent/torrent_provider.dart';
 
 const _movie = MediaRef(id: 7, type: MediaType.movie);
@@ -28,6 +31,8 @@ TorrentSource _src(String id, {TorrentInputType type = TorrentInputType.magnet, 
     );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('fast provider emits before slow one hangs (incremental)', () async {
     final fast = _Fake('Fast', [_src('a' * 40, seeds: 5)]);
     final hanging = _Fake('Slow', null); // never completes
@@ -139,6 +144,37 @@ void main() {
     expect(results, [42, 42]);
     expect(runs, 1);
   });
+
+  test(
+    'source results remains alive while a resume policy probe is pending',
+    () async {
+      final policy = Completer<SourcePolicy>();
+      final container = ProviderContainer(
+        overrides: [
+          addonUrlsProvider.overrideWith(_TestAddonUrls.new),
+          sourcePolicyProvider.overrideWith((ref) => policy.future),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      // Make the add-on setting resolve first. Calling `.future` below has no
+      // widget listener, which models an immediate navigation to playback.
+      await container.read(addonUrlsProvider.future);
+      final request = (media: _movie, season: null, episode: null);
+      final subscription = container.listen(
+        sourceResultsProvider(request),
+        (_, _) {},
+      );
+      final results = container.read(sourceResultsProvider(request).future);
+      subscription.close();
+      await Future<void>.delayed(Duration.zero);
+      policy.complete(const SourcePolicy());
+
+      final resolved = await results;
+      expect(resolved, hasLength(1));
+      expect(resolved.single.sources, isEmpty);
+    },
+  );
 }
 
 class _Fake implements TorrentProvider {
@@ -167,4 +203,9 @@ class _Cancellable implements TorrentProvider {
     }
     return result;
   }
+}
+
+class _TestAddonUrls extends AddonUrls {
+  @override
+  Future<List<String>> build() async => const [];
 }

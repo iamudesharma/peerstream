@@ -126,6 +126,20 @@ void main() {
     expect(service.state.playback?.uri.scheme, 'file');
     await service.dispose();
   });
+
+  test('persistState forwards to engines with durable state', () async {
+    final engine = _PersistentFakeTorrentEngine();
+    final service = StreamingService(engine, _EmptyCacheStore());
+    await service.persistState();
+    expect(engine.persistCalls, 1);
+    await service.dispose();
+  });
+
+  test('persistState is a no-op on engines without durable state', () async {
+    final service = StreamingService(FakeTorrentEngine(), _EmptyCacheStore());
+    await service.persistState();
+    await service.dispose();
+  });
 }
 
 class _CapturedTimer implements Timer {
@@ -212,4 +226,14 @@ class FakeTorrentEngine implements TorrentEngine {
 
   @override
   Future<void> dispose() async {}
+}
+
+class _PersistentFakeTorrentEngine extends FakeTorrentEngine
+    implements TorrentStatePersistence {
+  int persistCalls = 0;
+
+  @override
+  Future<void> persistSessionState() async {
+    persistCalls++;
+  }
 }

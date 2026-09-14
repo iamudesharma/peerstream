@@ -52,12 +52,12 @@ class MediaCard extends StatelessWidget {
         children: [
           Text(
             item.title,
-            maxLines: 1,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.titleSmall
                 ?.copyWith(fontWeight: FontWeight.w600),
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: DesignTokens.space2),
           MediaMeta(
             year: item.releaseDate,
             rating: item.rating,

@@ -1,3 +1,5 @@
+import 'package:media_forge_player/media_forge_player.dart'
+    show VideoEnhancementMode;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AppSettings {
@@ -7,6 +9,7 @@ class AppSettings {
     this.autoLoadSubtitles = false,
     this.streamingCatalogsEnabled = true,
     this.useMediaForgePlayer = false,
+    this.mediaForgeVideoEnhancementMode = VideoEnhancementMode.off,
   });
 
   final String? preferredSubtitleLanguage;
@@ -17,6 +20,10 @@ class AppSettings {
   /// Experimental MediaForge playback backend. Default false: existing
   /// media_kit player is used. Persisted; applies on next media open.
   final bool useMediaForgePlayer;
+
+  /// Presentation-only GPU enhancement default for future experimental
+  /// MediaForge sessions. The standard media_kit player never reads it.
+  final VideoEnhancementMode mediaForgeVideoEnhancementMode;
 
   static const _defaultSubtitleLanguages = [
     'None',
@@ -61,18 +68,19 @@ class AppSettings {
     bool? autoLoadSubtitles,
     bool? streamingCatalogsEnabled,
     bool? useMediaForgePlayer,
-  }) =>
-      AppSettings(
-        preferredSubtitleLanguage:
-            preferredSubtitleLanguage ?? this.preferredSubtitleLanguage,
-        preferredAudioLanguage:
-            preferredAudioLanguage ?? this.preferredAudioLanguage,
-        autoLoadSubtitles: autoLoadSubtitles ?? this.autoLoadSubtitles,
-        streamingCatalogsEnabled:
-            streamingCatalogsEnabled ?? this.streamingCatalogsEnabled,
-        useMediaForgePlayer:
-            useMediaForgePlayer ?? this.useMediaForgePlayer,
-      );
+    VideoEnhancementMode? mediaForgeVideoEnhancementMode,
+  }) => AppSettings(
+    preferredSubtitleLanguage:
+        preferredSubtitleLanguage ?? this.preferredSubtitleLanguage,
+    preferredAudioLanguage:
+        preferredAudioLanguage ?? this.preferredAudioLanguage,
+    autoLoadSubtitles: autoLoadSubtitles ?? this.autoLoadSubtitles,
+    streamingCatalogsEnabled:
+        streamingCatalogsEnabled ?? this.streamingCatalogsEnabled,
+    useMediaForgePlayer: useMediaForgePlayer ?? this.useMediaForgePlayer,
+    mediaForgeVideoEnhancementMode:
+        mediaForgeVideoEnhancementMode ?? this.mediaForgeVideoEnhancementMode,
+  );
 }
 
 const _kSubtitleLanguage = 'settings.subtitle_language';
@@ -80,6 +88,8 @@ const _kAudioLanguage = 'settings.audio_language';
 const _kAutoLoadSubtitles = 'settings.auto_load_subtitles';
 const _kStreamingCatalogsEnabled = 'settings.streaming_catalogs_enabled';
 const _kUseMediaForgePlayer = 'settings.use_media_forge_player';
+const _kMediaForgeVideoEnhancementMode =
+    'settings.media_forge_video_enhancement_mode';
 
 Future<AppSettings> readAppSettings() async {
   try {
@@ -91,6 +101,10 @@ Future<AppSettings> readAppSettings() async {
       streamingCatalogsEnabled:
           prefs.getBool(_kStreamingCatalogsEnabled) ?? true,
       useMediaForgePlayer: prefs.getBool(_kUseMediaForgePlayer) ?? false,
+      mediaForgeVideoEnhancementMode: VideoEnhancementMode.fromWireName(
+        prefs.getString(_kMediaForgeVideoEnhancementMode) ??
+            VideoEnhancementMode.off.wireName,
+      ),
     );
   } catch (_) {
     return const AppSettings();
@@ -109,10 +123,7 @@ Future<void> writeAppSettings(AppSettings settings) async {
       await prefs.remove(_kSubtitleLanguage);
     }
     if (settings.preferredAudioLanguage != null) {
-      await prefs.setString(
-        _kAudioLanguage,
-        settings.preferredAudioLanguage!,
-      );
+      await prefs.setString(_kAudioLanguage, settings.preferredAudioLanguage!);
     } else {
       await prefs.remove(_kAudioLanguage);
     }
@@ -122,5 +133,9 @@ Future<void> writeAppSettings(AppSettings settings) async {
       settings.streamingCatalogsEnabled,
     );
     await prefs.setBool(_kUseMediaForgePlayer, settings.useMediaForgePlayer);
+    await prefs.setString(
+      _kMediaForgeVideoEnhancementMode,
+      settings.mediaForgeVideoEnhancementMode.wireName,
+    );
   } catch (_) {}
 }

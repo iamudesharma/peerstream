@@ -6,7 +6,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
-import 'dart:math';
 
 import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -101,6 +100,12 @@ StreamInfo _toStreamInfo(LtStreamStatus s) => StreamInfo(
       readaheadWindow: s.readaheadWindow,
       activePeers: s.activePeers,
       downloadRate: s.downloadRate,
+      activeDeadlines: s.activeDeadlines,
+      targetBufferSeconds: s.targetBufferSeconds,
+      cachedVerifiedBytes: s.cachedVerifiedBytes,
+      newlyDownloadedBytes: s.newlyDownloadedBytes,
+      localRereadBytes: s.localRereadBytes,
+      firstHttpRangeAtMs: s.firstHttpRangeAtMs,
     );
 
 // ─── LibtorrentFlutter ──────────────────────────────────────────────────────
@@ -130,7 +135,6 @@ class LibtorrentFlutter {
   final _streamsCtrl = StreamController<Map<int, StreamInfo>>.broadcast();
   final Map<int, StreamInfo> _streams = {};
 
-  static const _maxTorrents = 1024;
   static const _maxStreams = 64;
 
   LibtorrentFlutter._();
@@ -153,6 +157,8 @@ class LibtorrentFlutter {
   /// - [pollInterval] — how often to poll for torrent/stream status updates.
   /// - [fetchTrackers] — automatically fetch best public trackers on startup.
   /// - [defaultSavePath] — where to save torrent data. Defaults to system temp dir.
+  /// - [sessionStatePath] — optional DHT state file from a previous run,
+  ///   restored at session construction. Missing/corrupt files are ignored.
   static Future<void> init({
     String listenInterface = '',
     int downloadLimit = 0,
@@ -160,6 +166,7 @@ class LibtorrentFlutter {
     Duration pollInterval = const Duration(milliseconds: 600),
     bool fetchTrackers = true,
     String? defaultSavePath,
+    String? sessionStatePath,
   }) async {
     if (_instance != null) return;
     final engine = LibtorrentFlutter._();
@@ -171,6 +178,18 @@ class LibtorrentFlutter {
 
     final lib = TorrentBridgeBindings.open();
     engine._b = lib;
+
+    if (sessionStatePath != null && sessionStatePath.isNotEmpty) {
+      final setStatePath = engine._b.setSessionStatePath;
+      if (setStatePath != null) {
+        final statePathPtr = sessionStatePath.toNativeUtf8();
+        try {
+          setStatePath(statePathPtr);
+        } finally {
+          malloc.free(statePathPtr);
+        }
+      }
+    }
 
     if (Platform.isAndroid) {
       try {
@@ -262,7 +281,7 @@ class LibtorrentFlutter {
   /// libtorrent version string.
   String get libraryVersion => _b.version().toDartString();
 
-  /// Exact native bridge revision (e.g. `bridge-1.5.0+lt2.0.11`).
+  /// Exact native bridge revision (e.g. `bridge-1.7.0+lt2.0.11`).
   /// All platforms must report the same revision before comparing
   /// performance. Falls back to libtorrent version when the symbol is
   /// missing (older prebuilt binary).
@@ -336,6 +355,70 @@ class LibtorrentFlutter {
     } finally {
       malloc.free(f);
       malloc.free(s);
+    }
+  }
+
+  /// Add a torrent from cached fast-resume data.
+  ///
+  /// Resume data saved with [saveResumeData] embeds the info-dict, the
+  /// verified piece map, and last-known peers, so adding it skips metadata
+  /// exchange and disk rechecks entirely. Returns the torrent ID.
+  ///
+  /// Throws [UnsupportedError] on older native binaries without the symbol;
+  /// callers should fall back to the magnet/.torrent add paths.
+  int addTorrentResume(
+    String resumePath, [
+    String? savePath,
+    bool streamOnly = false,
+  ]) {
+    final addResume = _b.addTorrentResume;
+    if (addResume == null) {
+      throw UnsupportedError(
+        'Fast-resume requires a libtorrent_flutter bridge >= 1.7.0',
+      );
+    }
+    final r = resumePath.toNativeUtf8();
+    final s = (savePath ?? _defaultSavePath).toNativeUtf8();
+    try {
+      final id = addResume(_session, r, s, streamOnly ? 1 : 0);
+      if (id < 0) throw Exception(_b.lastError().toDartString());
+      return id;
+    } finally {
+      malloc.free(r);
+      malloc.free(s);
+    }
+  }
+
+  /// Asynchronously save fast-resume data for [torrentId] to [path].
+  ///
+  /// The native alert thread writes the file when libtorrent reports the
+  /// resume data is ready; this call never blocks. Returns true when the
+  /// request was accepted (false on older binaries without the symbol).
+  bool saveResumeData(int torrentId, String path) {
+    final save = _b.saveResumeData;
+    if (save == null) return false;
+    final p = path.toNativeUtf8();
+    try {
+      return save(_session, torrentId, p) != 0;
+    } catch (_) {
+      return false;
+    } finally {
+      malloc.free(p);
+    }
+  }
+
+  /// Persist DHT/session state to [path] for the next startup. Returns false
+  /// on older binaries without the symbol.
+  bool saveSessionState(String path) {
+    final save = _b.saveSessionState;
+    if (save == null) return false;
+    final p = path.toNativeUtf8();
+    try {
+      return save(_session, p) != 0;
+    } catch (_) {
+      return false;
+    } finally {
+      malloc.free(p);
     }
   }
 
@@ -590,9 +673,13 @@ class LibtorrentFlutter {
 
   void _pollTorrents() {
     final count = _b.getTorrentCount(_session);
-    final buf = calloc<LtTorrentStatus>(max(count, _maxTorrents));
+    // Size to the live torrent count (usually 1-3). The previous
+    // max(count, 1024) allocated and zeroed ~2MB on every 250ms startup
+    // poll — pure churn exactly while the UI needs the isolate.
+    final capacity = count < 8 ? 8 : count;
+    final buf = calloc<LtTorrentStatus>(capacity);
     try {
-      final n = _b.getAllStatuses(_session, buf, max(count, _maxTorrents));
+      final n = _b.getAllStatuses(_session, buf, capacity);
       bool changed = false;
       final seen = <int>{};
 

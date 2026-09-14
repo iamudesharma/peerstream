@@ -107,6 +107,43 @@ void main() {
     });
   });
 
+  group('canPersistMediaForgeProgress', () {
+    test('requires a presented frame outside buffering and seeks', () {
+      expect(
+        canPersistMediaForgeProgress(
+          firstFramePresented: false,
+          isBuffering: false,
+          hasPendingSeek: false,
+        ),
+        isFalse,
+      );
+      expect(
+        canPersistMediaForgeProgress(
+          firstFramePresented: true,
+          isBuffering: true,
+          hasPendingSeek: false,
+        ),
+        isFalse,
+      );
+      expect(
+        canPersistMediaForgeProgress(
+          firstFramePresented: true,
+          isBuffering: false,
+          hasPendingSeek: true,
+        ),
+        isFalse,
+      );
+      expect(
+        canPersistMediaForgeProgress(
+          firstFramePresented: true,
+          isBuffering: false,
+          hasPendingSeek: false,
+        ),
+        isTrue,
+      );
+    });
+  });
+
   group('resumeMsForSource', () {
     TorrentSource source() => TorrentSource(
       id: 's1',

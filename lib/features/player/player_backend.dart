@@ -5,9 +5,12 @@ import 'package:media_forge/media_forge.dart' show RustLib;
 import 'package:media_forge_player/media_forge_player.dart'
     show
         MediaForgeDecodeResolution,
+        MediaForgeDiagnostics,
         MediaForgeMedia,
         MediaForgeNetworkProfile,
-        MediaForgePlayerConfiguration;
+        MediaForgePlayerConfiguration,
+        VideoEnhancementCapabilities,
+        VideoEnhancementMode;
 
 import '../../models/media_item.dart';
 import '../../models/torrent_models.dart';
@@ -155,6 +158,59 @@ const mediaForgeBaseConfiguration = MediaForgePlayerConfiguration(
   decodeResolution: MediaForgeDecodeResolution.native,
 );
 
+/// Applies a requested presentation mode through the public player API.
+///
+/// Enhancement is deliberately isolated from backend selection and source
+/// opening: a rejected/failed request simply leaves MediaForge on its normal
+/// render path. It must never trigger an engine swap, media reopen, torrent
+/// restart, seek, or default-player fallback.
+typedef MediaForgeEnhancementModeSetter = Future<bool> Function(
+  VideoEnhancementMode mode,
+);
+
+Future<bool> applyMediaForgeVideoEnhancementMode({
+  required VideoEnhancementMode mode,
+  required MediaForgeEnhancementModeSetter setMode,
+}) async {
+  try {
+    return await setMode(mode);
+  } catch (error) {
+    debugPrint('[Playback] MediaForge video enhancement bypassed: $error');
+    return false;
+  }
+}
+
+/// Whether [mode] is selectable according to the latest package-provided
+/// device capability probe. `null` means no MediaForge session has probed yet,
+/// so the preference remains configurable for a future session.
+bool isMediaForgeVideoEnhancementModeSupported({
+  required VideoEnhancementMode mode,
+  VideoEnhancementCapabilities? capabilities,
+}) => capabilities == null || capabilities.supports(mode);
+
+/// Short, honest Settings copy sourced from public MediaForge capabilities.
+String mediaForgeVideoEnhancementCapabilityDescription(
+  VideoEnhancementCapabilities? capabilities,
+) {
+  if (capabilities == null) {
+    return 'Applies only to MediaForge. Device support is checked when it starts.';
+  }
+  if (!capabilities.supported) {
+    final reason = capabilities.reason.trim();
+    return reason.isEmpty
+        ? 'Unavailable on this device. MediaForge will use normal rendering.'
+        : 'Unavailable: $reason. MediaForge will use normal rendering.';
+  }
+  if (capabilities.isProbePending) {
+    return 'Checking GPU support for this MediaForge session.';
+  }
+  final hasRestrictedModes =
+      capabilities.supportedModes.length < VideoEnhancementMode.values.length;
+  return hasRestrictedModes
+      ? 'GPU: ${capabilities.backend}. Unsupported modes are unavailable.'
+      : 'GPU: ${capabilities.backend}. Applies to future MediaForge sessions.';
+}
+
 /// Builds the MediaForge source for a resolved playback URI.
 ///
 /// File URIs (verified cache hits) open as local files; loopback HTTP(S)
@@ -285,6 +341,15 @@ bool isMediaForgeVisuallyReady({
   required bool hasError,
 }) => isInitialized && firstFramePresented && !hasError;
 
+/// Keeps the resume/opening visual stable until MediaForge confirms that a
+/// decoded frame reached the display. A non-zero clock position alone is not
+/// enough: it may be the requested resume target while the decoder is still
+/// seeking its first keyframe.
+bool shouldShowMediaForgeOpeningPreview({
+  required bool firstFramePresented,
+  required bool hasError,
+}) => !firstFramePresented && !hasError;
+
 /// Tracks MediaForge seek generations so only the latest seek drives UI,
 /// service, and history state. Stale completions are rejected and must
 /// never overwrite a newer seek. Pure for tests.
@@ -349,6 +414,19 @@ bool mediaForgeResumeSeekLanded({
   return position + const Duration(seconds: 3) >= target &&
       position <= target + const Duration(seconds: 30);
 }
+
+/// A MediaForge position is safe to store as watch progress only after a
+/// presented, non-buffering frame outside a pending seek. This prevents a
+/// demux/seek target from being mistaken for watched time while a torrent
+/// stream is still waiting for the requested bytes.
+///
+/// This is persistence-only: it neither seeks nor changes decoder, audio,
+/// subtitle, network, or torrent state.
+bool canPersistMediaForgeProgress({
+  required bool firstFramePresented,
+  required bool isBuffering,
+  required bool hasPendingSeek,
+}) => firstFramePresented && !isBuffering && !hasPendingSeek;
 
 /// Resume query value for opening [source] from saved history, if any.
 ///
@@ -581,6 +659,7 @@ Map<String, dynamic> buildMediaForgeBenchmarkPayload({
   int? stallEvents,
   int? subtitleCuesPending,
   int? positionMs,
+  MediaForgeDiagnostics? enhancementDiagnostics,
   String? note,
 }) {
   final payload = <String, dynamic>{
@@ -612,6 +691,41 @@ Map<String, dynamic> buildMediaForgeBenchmarkPayload({
   setNum('stallEvents', stallEvents);
   setNum('subtitleCuesPending', subtitleCuesPending);
   setNum('positionMs', positionMs);
+  if (enhancementDiagnostics != null) {
+    payload.addAll({
+      'videoEnhancementSupported':
+          enhancementDiagnostics.videoEnhancementSupported,
+      'videoEnhancementRequested':
+          enhancementDiagnostics.videoEnhancementRequested,
+      'videoEnhancementActive': enhancementDiagnostics.videoEnhancementActive,
+      'videoEnhancementBackend': enhancementDiagnostics.videoEnhancementBackend,
+      'videoEnhancementPath': enhancementDiagnostics.videoEnhancementPath,
+      'videoEnhancementInputWidth':
+          enhancementDiagnostics.videoEnhancementInputWidth,
+      'videoEnhancementInputHeight':
+          enhancementDiagnostics.videoEnhancementInputHeight,
+      'videoEnhancementOutputWidth':
+          enhancementDiagnostics.videoEnhancementOutputWidth,
+      'videoEnhancementOutputHeight':
+          enhancementDiagnostics.videoEnhancementOutputHeight,
+      'videoEnhancementDeadlineMisses':
+          enhancementDiagnostics.videoEnhancementDeadlineMisses,
+      'videoEnhancementFallbackReason':
+          enhancementDiagnostics.videoEnhancementFallbackReason,
+    });
+    setNum(
+      'videoEnhancementFrameMs',
+      enhancementDiagnostics.videoEnhancementFrameMs,
+    );
+    setNum(
+      'videoEnhancementAverageMs',
+      enhancementDiagnostics.videoEnhancementAverageMs,
+    );
+    setNum(
+      'videoEnhancementDeadlineMs',
+      enhancementDiagnostics.videoEnhancementDeadlineMs,
+    );
+  }
   setText('note', note);
   return payload;
 }

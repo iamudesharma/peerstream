@@ -90,6 +90,18 @@ final class LtStreamStatus extends Struct {
   external int activePeers;
   @Int32()
   external int downloadRate;
+  @Int32()
+  external int activeDeadlines;
+  @Float()
+  external double targetBufferSeconds;
+  @Int64()
+  external int cachedVerifiedBytes;
+  @Int64()
+  external int newlyDownloadedBytes;
+  @Int64()
+  external int localRereadBytes;
+  @Int64()
+  external int firstHttpRangeAtMs;
 }
 
 // ─── Alert callback ───────────────────────────────────────────────────────────
@@ -111,6 +123,15 @@ typedef LtAlertCallbackDart =
 // ─── SSL cert path (Android WebTorrent) ──────────────────────────────────────
 typedef _SetSslCertPathN = Void Function(Pointer<Utf8>);
 typedef LtSetSslCertPath = void Function(Pointer<Utf8>);
+
+// ─── Durable state (DHT session state / fast resume) ─────────────────────────
+typedef _SetSessionStatePathN = Void Function(Pointer<Utf8>);
+typedef LtSetSessionStatePath = void Function(Pointer<Utf8>);
+
+typedef _SaveSessionStateN =
+    Int32 Function(Pointer<LtSessionOpaque>, Pointer<Utf8>);
+typedef LtSaveSessionState =
+    int Function(Pointer<LtSessionOpaque>, Pointer<Utf8>);
 
 // ─── Session ──────────────────────────────────────────────────────────────────
 typedef _CreateSessionN =
@@ -167,6 +188,21 @@ typedef _AddTorrentFileN =
     );
 typedef LtAddTorrentFile =
     int Function(Pointer<LtSessionOpaque>, Pointer<Utf8>, Pointer<Utf8>, int);
+
+typedef _AddTorrentResumeN =
+    Int64 Function(
+      Pointer<LtSessionOpaque>,
+      Pointer<Utf8>,
+      Pointer<Utf8>,
+      Int32,
+    );
+typedef LtAddTorrentResume =
+    int Function(Pointer<LtSessionOpaque>, Pointer<Utf8>, Pointer<Utf8>, int);
+
+typedef _SaveResumeDataN =
+    Int32 Function(Pointer<LtSessionOpaque>, Int64, Pointer<Utf8>);
+typedef LtSaveResumeData =
+    int Function(Pointer<LtSessionOpaque>, int, Pointer<Utf8>);
 
 typedef _RemoveTorrentN = Void Function(Pointer<LtSessionOpaque>, Int64, Int32);
 typedef LtRemoveTorrent = void Function(Pointer<LtSessionOpaque>, int, int);
@@ -396,6 +432,14 @@ class TorrentBridgeBindings {
   late final LtGetCacheState getCacheState;
   late final LtSetSslCertPath setSslCertPath;
 
+  // Optional symbols: present from bridge 1.7.0. Prebuilt iOS/Android
+  // binaries from older releases simply miss the durable-state features
+  // instead of crashing the binding constructor.
+  LtSetSessionStatePath? setSessionStatePath;
+  LtSaveSessionState? saveSessionState;
+  LtAddTorrentResume? addTorrentResume;
+  LtSaveResumeData? saveResumeData;
+
   TorrentBridgeBindings(this._lib) {
     createSession = _lib
         .lookup<NativeFunction<_CreateSessionN>>('lt_create_session')
@@ -415,6 +459,20 @@ class TorrentBridgeBindings {
     addTorrentFile = _lib
         .lookup<NativeFunction<_AddTorrentFileN>>('lt_add_torrent_file')
         .asFunction<LtAddTorrentFile>();
+    try {
+      addTorrentResume = _lib
+          .lookup<NativeFunction<_AddTorrentResumeN>>('lt_add_torrent_resume')
+          .asFunction<LtAddTorrentResume>();
+    } catch (_) {
+      addTorrentResume = null;
+    }
+    try {
+      saveResumeData = _lib
+          .lookup<NativeFunction<_SaveResumeDataN>>('lt_save_resume_data')
+          .asFunction<LtSaveResumeData>();
+    } catch (_) {
+      saveResumeData = null;
+    }
     removeTorrent = _lib
         .lookup<NativeFunction<_RemoveTorrentN>>('lt_remove_torrent')
         .asFunction<LtRemoveTorrent>();
@@ -498,6 +556,22 @@ class TorrentBridgeBindings {
     setSslCertPath = _lib
         .lookup<NativeFunction<_SetSslCertPathN>>('lt_set_ssl_cert_path')
         .asFunction<LtSetSslCertPath>();
+    try {
+      setSessionStatePath = _lib
+          .lookup<NativeFunction<_SetSessionStatePathN>>(
+            'lt_set_session_state_path',
+          )
+          .asFunction<LtSetSessionStatePath>();
+    } catch (_) {
+      setSessionStatePath = null;
+    }
+    try {
+      saveSessionState = _lib
+          .lookup<NativeFunction<_SaveSessionStateN>>('lt_save_session_state')
+          .asFunction<LtSaveSessionState>();
+    } catch (_) {
+      saveSessionState = null;
+    }
   }
 
   factory TorrentBridgeBindings.open() =>

@@ -15,13 +15,15 @@ import 'source_policy_loader.dart';
 /// `packages/libtorrent_flutter/src/torrent_bridge.cpp`. Bump both together
 /// so runtime diagnostics can confirm all platforms ship the same native
 /// implementation before comparing performance.
-const nativeBridgeVersion = 'bridge-1.5.0+lt2.0.11';
+const nativeBridgeVersion = 'bridge-1.7.0+lt2.0.11';
 
 class NativeTorrentEngine
     implements
         TorrentEngine,
+        TorrentStatePersistence,
         FileCompletenessChecker,
         EngineDiagnosticsProvider,
+        HttpServerDiagnosticsProvider,
         TorrentAvailabilityProvider {
   final _dio = Dio(
     BaseOptions(
@@ -33,6 +35,14 @@ class NativeTorrentEngine
   final Map<String, int> _retainedTorrents = {};
   final PlaybackCacheStore _cache = PlaybackCacheStore();
   Directory? _sessionDirectory;
+  String? _sessionStatePath;
+
+  /// Torrent id → fast-resume file path. Populated on add; the alert thread
+  /// writes the file when libtorrent reports the resume data is ready.
+  final Map<int, String> _resumePaths = {};
+
+  static const _resumeFileName = 'metadata.resume';
+
   lt.LibtorrentFlutter? _engine;
 
   @override
@@ -41,14 +51,77 @@ class NativeTorrentEngine
   String? get unsupportedReason => null;
 
   @override
+  Future<HttpServerInfo> httpServerInfo() async {
+    final stream = _engine?.streams.values.firstOrNull;
+    if (stream == null) {
+      return const HttpServerInfo(
+        status: HttpServerStatus.notStarted,
+        message:
+            'Starts automatically when you play a torrent. '
+            'Direct links and saved files do not need this server.',
+      );
+    }
+    final url = Uri.tryParse(stream.url);
+    if (url == null || !url.hasPort || url.port == 0) {
+      return const HttpServerInfo(
+        status: HttpServerStatus.unavailable,
+        message: 'The streaming server has not provided a valid address.',
+      );
+    }
+    try {
+      final response = await _dio.headUri<void>(
+        url,
+        options: Options(
+          sendTimeout: const Duration(seconds: 3),
+          receiveTimeout: const Duration(seconds: 3),
+          followRedirects: false,
+          validateStatus: (_) => true,
+        ),
+      );
+      // A stopped/replaced stream must not be reported as still running.
+      if (_engine?.streams[stream.id]?.url != stream.url) {
+        return const HttpServerInfo(status: HttpServerStatus.notStarted);
+      }
+      final healthy = response.statusCode == 200 || response.statusCode == 206;
+      return HttpServerInfo(
+        status: healthy
+            ? HttpServerStatus.running
+            : HttpServerStatus.unavailable,
+        url: url,
+        message: healthy
+            ? null
+            : 'Server returned HTTP ${response.statusCode}.',
+      );
+    } catch (_) {
+      return HttpServerInfo(
+        status: HttpServerStatus.unavailable,
+        url: url,
+        message:
+            'The local streaming server is not responding. Try refreshing.',
+      );
+    }
+  }
+
+  @override
   Future<void> initialize() async {
     if (_engine != null) return;
     final cache = await getApplicationCacheDirectory();
     _sessionDirectory = await Directory(
       '${cache.path}${Platform.pathSeparator}peerstream-session',
     ).create(recursive: true);
+    // DHT routing state lives in application support (not the prunable
+    // cache) so repeat launches can skip re-bootstrapping the DHT.
+    try {
+      final support = await getApplicationSupportDirectory();
+      await support.create(recursive: true);
+      _sessionStatePath =
+          '${support.path}${Platform.pathSeparator}libtorrent-session.state';
+    } catch (_) {
+      _sessionStatePath = null;
+    }
     await lt.LibtorrentFlutter.init(
       defaultSavePath: _sessionDirectory!.path,
+      sessionStatePath: _sessionStatePath,
       // 250ms polls halve buffering UI latency vs 500ms; the native poll
       // only emits on change so idle cost stays low.
       pollInterval: const Duration(milliseconds: 250),
@@ -62,7 +135,9 @@ class NativeTorrentEngine
       const lt.BtConfig(
         cacheSize: 128 * 1024 * 1024,
         readerReadAhead: 85,
-        preloadCache: 10,
+        // Startup is demand-driven: the player opens the Range URL and
+        // libtorrent schedules only the pieces requested by FFmpeg.
+        preloadCache: 0,
         connectionsLimit: 32,
         torrentDisconnectTimeout: 120,
         responsiveMode: true,
@@ -72,6 +147,14 @@ class NativeTorrentEngine
 
   lt.LibtorrentFlutter get _native =>
       _engine ?? (throw StateError('Torrent engine is not initialized.'));
+
+  /// Snapshot of the native stream diagnostics for one playback handle.
+  /// Kept on the PeerStream adapter so torrent types never leak into
+  /// MediaForge.
+  lt.StreamInfo? streamInfo(TorrentHandle handle) {
+    final id = _streamIds[_id(handle)];
+    return id == null ? null : _engine?.streams[id];
+  }
 
   @override
   String get bridgeVersion => nativeBridgeVersion;
@@ -163,53 +246,84 @@ class NativeTorrentEngine
       return TorrentHandle('$retainedId');
     }
     final torrentDirectory = Directory(await _cache.directoryPathFor(source));
+    final resumePath =
+        '${torrentDirectory.path}${Platform.pathSeparator}$_resumeFileName';
     int? torrentId;
-    if (source.inputType == TorrentInputType.magnet) {
-      torrentId = _native.addMagnet(
-        source.uri.toString(),
-        torrentDirectory.path,
-        true,
-      );
-    } else {
-      final file = File(
-        '${torrentDirectory.path}${Platform.pathSeparator}source.torrent',
-      );
-      // Reuse a fresh .torrent file to skip re-download on replay/prefetch.
-      // The directory is per-source (cacheKey includes the URI), so reuse is safe.
+
+    // Fast-resume path: the cached resume file embeds the info-dict (so no
+    // magnet metadata exchange), the verified piece map (so no disk recheck),
+    // and last-known peers (so peer discovery starts warm). Both magnets and
+    // .torrent URLs use it; it is written on stop and after first metadata.
+    if (await File(resumePath).exists()) {
       try {
-        if (await file.exists()) {
-          final stat = await file.stat();
-          final age = DateTime.now().difference(stat.modified);
-          if (stat.size > 0 && age < const Duration(hours: 24)) {
-            try {
-              torrentId = _native.addTorrentFile(
-                file.path,
-                torrentDirectory.path,
-                true,
-              );
-            } catch (_) {
-              torrentId = null;
-            }
-          }
-        }
-      } catch (_) {
-        torrentId = null;
-      }
-      if (torrentId == null) {
-        await _dio.downloadUri(
-          source.uri,
-          file.path,
-          options: Options(headers: source.headers),
-        );
-        torrentId = _native.addTorrentFile(
-          file.path,
+        torrentId = _native.addTorrentResume(
+          resumePath,
           torrentDirectory.path,
           true,
         );
+      } catch (error) {
+        // Corrupt/incompatible resume: fall back to a fresh add and drop the
+        // bad file so later attempts do not retry it. It is rewritten after
+        // metadata/stop. An older native binary that lacks the symbol keeps
+        // the file untouched.
+        torrentId = null;
+        if (error is! UnsupportedError) {
+          try {
+            await File(resumePath).delete();
+          } catch (_) {}
+        }
+      }
+    }
+
+    if (torrentId == null) {
+      if (source.inputType == TorrentInputType.magnet) {
+        torrentId = _native.addMagnet(
+          source.uri.toString(),
+          torrentDirectory.path,
+          true,
+        );
+      } else {
+        final file = File(
+          '${torrentDirectory.path}${Platform.pathSeparator}source.torrent',
+        );
+        // Reuse a fresh .torrent file to skip re-download on replay/prefetch.
+        // The directory is per-source (cacheKey includes the URI), so reuse is safe.
+        try {
+          if (await file.exists()) {
+            final stat = await file.stat();
+            final age = DateTime.now().difference(stat.modified);
+            if (stat.size > 0 && age < const Duration(hours: 24)) {
+              try {
+                torrentId = _native.addTorrentFile(
+                  file.path,
+                  torrentDirectory.path,
+                  true,
+                );
+              } catch (_) {
+                torrentId = null;
+              }
+            }
+          }
+        } catch (_) {
+          torrentId = null;
+        }
+        if (torrentId == null) {
+          await _dio.downloadUri(
+            source.uri,
+            file.path,
+            options: Options(headers: source.headers),
+          );
+          torrentId = _native.addTorrentFile(
+            file.path,
+            torrentDirectory.path,
+            true,
+          );
+        }
       }
     }
     final id = torrentId;
     _retainedTorrents[cacheKey] = id;
+    _resumePaths[id] = resumePath;
     return TorrentHandle('$id');
   }
 
@@ -227,7 +341,10 @@ class NativeTorrentEngine
       );
     }).toList();
     final current = _native.torrents[id];
-    if (current?.hasMetadata == true) return readFiles();
+    if (current?.hasMetadata == true) {
+      _scheduleResumeSave(id);
+      return readFiles();
+    }
     try {
       await _native.torrentUpdates
           .firstWhere((all) {
@@ -245,7 +362,19 @@ class NativeTorrentEngine
         'with more seeds.',
       );
     }
+    // Metadata is here: persist fast-resume immediately so even an abrupt
+    // session end leaves a replayable info-dict behind.
+    _scheduleResumeSave(id);
     return readFiles();
+  }
+
+  /// Fire-and-forget fast-resume save for [torrentId].
+  void _scheduleResumeSave(int torrentId) {
+    final path = _resumePaths[torrentId];
+    if (path == null) return;
+    try {
+      _native.saveResumeData(torrentId, path);
+    } catch (_) {}
   }
 
   @override
@@ -268,6 +397,12 @@ class NativeTorrentEngine
         seeds: torrent.numSeeds,
         downloadedBytes: torrent.totalDone,
         totalBytes: torrent.totalWanted,
+        activePieceDeadlines: stream?.activeDeadlines ?? 0,
+        targetBufferSeconds: stream?.targetBufferSeconds ?? 0,
+        cachedVerifiedBytes: stream?.cachedVerifiedBytes ?? 0,
+        newlyDownloadedBytes: stream?.newlyDownloadedBytes ?? 0,
+        localRereadBytes: stream?.localRereadBytes ?? 0,
+        firstHttpRangeAtMs: stream?.firstHttpRangeAtMs ?? 0,
       );
     });
   }
@@ -292,10 +427,13 @@ class NativeTorrentEngine
       readAheadPct: 85,
       connectionsLimit: 32,
     );
-    _native.preloadStream(
-      stream.id,
-      preloadBytes: Platform.isAndroid ? 4 * 1024 * 1024 : 8 * 1024 * 1024,
-    );
+    // Warm the container metadata window (head + tail) in the background.
+    // Non-faststart MP4 files keep their moov atom at the end; without this
+    // the player has to wait for tail pieces on the first-frame critical
+    // path. Bounded to 16MB and interrupted by any seek.
+    try {
+      _native.preloadStream(stream.id);
+    } catch (_) {}
     _streamIds[torrentId] = stream.id;
     return TorrentPlaybackStream(
       id: '${stream.id}',
@@ -311,7 +449,12 @@ class NativeTorrentEngine
     if (deleteFiles) {
       _native.removeTorrent(id, deleteFiles: true);
       _retainedTorrents.removeWhere((_, torrentId) => torrentId == id);
+      _resumePaths.remove(id);
     } else {
+      // Persist fast-resume (verified pieces + peers) before pausing so the
+      // next app launch skips metadata exchange and disk rechecks. The
+      // native alert thread does the file write asynchronously.
+      _scheduleResumeSave(id);
       // Keeping the handle avoids a second metadata exchange and preserves the
       // verified piece map for replay during this app session.
       _native.pauseTorrent(id);
@@ -319,12 +462,32 @@ class NativeTorrentEngine
     _streamIds.remove(id);
   }
 
+  /// Persist DHT state and fast-resume data for every known torrent. Safe to
+  /// call at any time (app pause/exit, periodic tick); never throws.
+  @override
+  Future<void> persistSessionState() async {
+    if (_engine == null) return;
+    for (final entry in Map<int, String>.from(_resumePaths).entries) {
+      try {
+        _native.saveResumeData(entry.key, entry.value);
+      } catch (_) {}
+    }
+    final statePath = _sessionStatePath;
+    if (statePath != null) {
+      try {
+        _native.saveSessionState(statePath);
+      } catch (_) {}
+    }
+  }
+
   @override
   Future<void> dispose() async {
     if (_engine == null) return;
+    await persistSessionState();
     await _native.dispose();
     _engine = null;
     _retainedTorrents.clear();
+    _resumePaths.clear();
   }
 
   /// Verified availability snapshot for the selected file: whole-file

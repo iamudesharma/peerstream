@@ -18,6 +18,21 @@ abstract interface class TorrentEngine {
   Future<void> dispose();
 }
 
+enum HttpServerStatus { notStarted, running, unavailable, unsupported }
+
+class HttpServerInfo {
+  const HttpServerInfo({required this.status, this.url, this.message});
+
+  final HttpServerStatus status;
+  final Uri? url;
+  final String? message;
+}
+
+/// Optional diagnostics for the built-in, per-stream HTTP listener.
+abstract interface class HttpServerDiagnosticsProvider {
+  Future<HttpServerInfo> httpServerInfo();
+}
+
 /// Optional capability: selected-file piece verification.
 ///
 /// Engines that track verified pieces (libtorrent `pieces_have`) implement
@@ -48,6 +63,16 @@ abstract interface class EngineDiagnosticsProvider {
   String get bridgeVersion;
 
   Future<EngineDiagnostics> engineDiagnostics();
+}
+
+/// Optional capability: durable DHT/session state across app launches.
+///
+/// Implementations persist whatever they need (DHT routing table, fast-resume
+/// files) so the next launch finds peers and verified pieces without a cold
+/// start. [persistSessionState] must be safe to call repeatedly and must
+/// never throw.
+abstract interface class TorrentStatePersistence {
+  Future<void> persistSessionState();
 }
 
 class EngineDiagnostics {

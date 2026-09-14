@@ -4,6 +4,7 @@ import '../../models/torrent_models.dart';
 import '../playback/playback_cache.dart';
 import '../playback/torrent_cache_identity.dart';
 import '../torrent/provider_cache.dart';
+import '../torrent/native_torrent_engine.dart';
 import '../torrent/torrent_engine.dart';
 import 'playback_config.dart';
 import 'playback_session.dart';
@@ -102,6 +103,7 @@ class StreamingService {
   Timer? _stallTimer;
   Timer? _slowTimer;
   Timer? _postPlayStallTimer;
+  Timer? _stateSaveTimer;
   DateTime? _lastProgressAt;
   int _lastDownloadedBytes = 0;
 
@@ -153,6 +155,23 @@ class StreamingService {
     try {
       await _engine.initialize();
     } catch (_) {}
+    // Persist DHT routing state periodically so even a hard kill keeps the
+    // next launch's peer discovery warm. Cheap: the native side copies the
+    // routing table and writes a small bencoded file.
+    _stateSaveTimer ??= Timer.periodic(const Duration(minutes: 5), (_) {
+      unawaited(persistState());
+    });
+  }
+
+  /// Persists DHT/session state and fast-resume data when the engine supports
+  /// it. Safe on app pause/exit and on a timer; never throws.
+  Future<void> persistState() async {
+    final engine = _engine;
+    if (engine is TorrentStatePersistence) {
+      try {
+        await (engine as TorrentStatePersistence).persistSessionState();
+      } catch (_) {}
+    }
   }
 
   /// Claims a session synchronously and emits `resolving` immediately.
@@ -262,7 +281,8 @@ class StreamingService {
     }
     if (generation != _generation) return generation;
 
-    bool stale() => generation != _generation || (claimed?.isCancelled ?? false);
+    bool stale() =>
+        generation != _generation || (claimed?.isCancelled ?? false);
 
     if (source.inputType == TorrentInputType.directUrl) {
       _diagnostics?.engineAddAt = DateTime.now();
@@ -335,8 +355,22 @@ class StreamingService {
       ),
     );
     try {
-      _diagnostics?.engineAddAt = DateTime.now();
-      final handle = await _engine.add(source);
+      final prefetched = _prefetchHandle;
+      final reusedPrefetch = prefetched != null &&
+          _lastPrefetchKey == torrentCacheKey(source);
+      if (!reusedPrefetch) {
+        _diagnostics?.engineAddAt = DateTime.now();
+      }
+      // NativeTorrentEngine also deduplicates by cache key, but passing the
+      // warmed handle through explicitly avoids a second add call at Play.
+      final handle = reusedPrefetch
+          ? prefetched
+          : await _engine.add(source);
+      if (reusedPrefetch) {
+        // Measure Play-to-metadata/peer waits from the user session even when
+        // the native handle was warmed earlier.
+        _diagnostics?.engineAddAt ??= DateTime.now();
+      }
       if (stale()) {
         await _engine.stop(handle, deleteFiles: false);
         return generation;
@@ -356,6 +390,35 @@ class StreamingService {
               if (generation != _generation ||
                   _state.phase == StreamingPhase.error) {
                 return;
+              }
+              final diag = _diagnostics;
+              final streamInfo = _engine is NativeTorrentEngine
+                  ? _engine.streamInfo(handle)
+                  : null;
+              if (diag != null) {
+                if (diag.peerDiscoveryWaitMs == null &&
+                    (stats.peers ?? 0) > 0 &&
+                    diag.engineAddAt != null) {
+                  diag.peerDiscoveryWaitMs = DateTime.now()
+                      .difference(diag.engineAddAt!)
+                      .inMilliseconds;
+                }
+                if (streamInfo != null) {
+                  diag.bufferedAheadSeconds = streamInfo.bufferSeconds;
+                  diag.targetBufferSeconds = streamInfo.targetBufferSeconds;
+                  diag.activePieceDeadlines = streamInfo.activeDeadlines;
+                  diag.cachedVerifiedBytes = streamInfo.cachedVerifiedBytes;
+                  diag.newlyDownloadedBytes = streamInfo.newlyDownloadedBytes;
+                  diag.localRereadBytes = streamInfo.localRereadBytes;
+                  if (streamInfo.firstHttpRangeAtMs > 0) {
+                    diag.firstHttpRangeAtMs ??= streamInfo.firstHttpRangeAtMs;
+                  }
+                  if (diag.firstVerifiedPieceAtMs == null &&
+                      streamInfo.newlyDownloadedBytes > 0) {
+                    diag.firstVerifiedPieceAtMs =
+                        DateTime.now().millisecondsSinceEpoch;
+                  }
+                }
               }
               var phase = _state.phase;
               var detail = _state.detail;
@@ -400,6 +463,11 @@ class StreamingService {
         return generation;
       }
       _diagnostics?.metadataAt = DateTime.now();
+      if (_diagnostics?.engineAddAt != null) {
+        _diagnostics?.metadataWaitMs = _diagnostics!.metadataAt!
+            .difference(_diagnostics!.engineAddAt!)
+            .inMilliseconds;
+      }
       final selected = source.fileIndex == null
           ? selectVideoFile(files, hint: source.fileNameHint)
           : files
@@ -529,6 +597,8 @@ class StreamingService {
     _slowTimer?.cancel();
     _slowTimer = null;
     _diagnostics?.firstFrameAt ??= DateTime.now();
+    _diagnostics?.firstFramePresentedAtMs ??=
+        _diagnostics?.firstFrameAt?.millisecondsSinceEpoch;
     _lastProgressAt = DateTime.now();
     _startPostPlayStallMonitor();
     _emit(
@@ -552,6 +622,11 @@ class StreamingService {
         ? DateTime.now()
         : _diagnostics?.lastBufferingAt;
     if (buffering) {
+      _diagnostics?.rebufferStarted(DateTime.now());
+    } else {
+      _diagnostics?.rebufferEnded(DateTime.now());
+    }
+    if (buffering) {
       _diagnostics?.bufferingEvents = (_diagnostics?.bufferingEvents ?? 0) + 1;
     }
     final phase = buffering
@@ -559,16 +634,14 @@ class StreamingService {
               ? StreamingPhase.resolving
               : StreamingPhase.buffering)
         : (_state.playback != null &&
-                _state.phase != StreamingPhase.error &&
-                _state.phase != StreamingPhase.seeking
-            ? StreamingPhase.playing
-            : _state.phase);
+                  _state.phase != StreamingPhase.error &&
+                  _state.phase != StreamingPhase.seeking
+              ? StreamingPhase.playing
+              : _state.phase);
     _emit(
       _state.copyWith(
         phase: phase,
-        detail: buffering
-            ? StreamingDetail.buffering
-            : StreamingDetail.none,
+        detail: buffering ? StreamingDetail.buffering : StreamingDetail.none,
         isBuffering: buffering,
         bufferedPositionMs: bufferedPositionMs ?? _state.bufferedPositionMs,
         diagnostics: _diagnostics?.toMap(),
@@ -577,7 +650,9 @@ class StreamingService {
   }
 
   void reportSeekStarted({int? generation}) {
-    _diagnostics?.lastSeekAt = DateTime.now();
+    final now = DateTime.now();
+    _diagnostics?.lastSeekAt = now;
+    _diagnostics?.seekStarted(now);
     _diagnostics?.seekEvents = (_diagnostics?.seekEvents ?? 0) + 1;
     if (generation != null &&
         (_activeSeekGeneration == null ||
@@ -598,6 +673,7 @@ class StreamingService {
     // Stale completions must never overwrite a newer seek.
     if (generation != null && generation != _activeSeekGeneration) return;
     if (generation != null) _settledSeekGeneration = generation;
+    _diagnostics?.seekSettled(DateTime.now());
     if (_state.phase != StreamingPhase.seeking) return;
     _emit(
       _state.copyWith(
@@ -696,6 +772,8 @@ class StreamingService {
   }
 
   Future<void> dispose() async {
+    _stateSaveTimer?.cancel();
+    _stateSaveTimer = null;
     await stop();
     await _engine.dispose();
     await _controller.close();
@@ -717,8 +795,9 @@ class StreamingService {
       if (bytesReceived >= 256 * 1024) return;
       if (_state.stats.downloadRate >= 50 * 1024) return;
       final peers = _state.stats.peers;
-      final peerDetail =
-          peers == null ? 'no peers yet' : '$peers connected peer(s)';
+      final peerDetail = peers == null
+          ? 'no peers yet'
+          : '$peers connected peer(s)';
       _emit(
         _state.copyWith(
           stats: _state.stats,

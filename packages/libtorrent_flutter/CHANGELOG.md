@@ -1,5 +1,14 @@
 # Changelog
 
+## bridge-1.7.0
+
+- **Instant replay (fast resume)**: new `lt_save_resume_data` / `lt_add_torrent_resume` APIs persist the info-dict, verified piece map, and last-known peers per torrent. Replays skip magnet metadata exchange and disk rechecks (`lt_add_torrent_resume` is optional on older binaries; callers fall back to magnet/.torrent).
+- **DHT state persistence**: `lt_set_session_state_path` / `lt_save_session_state` restore the DHT routing table when the session is constructed, removing the cold-bootstrap delay on repeat launches. Tuned settings always override restored ones.
+- **Container tail preload**: `lt_preload_stream` is now invoked per stream (bounded head+tail window) so non-faststart MP4 moov atoms are off the first-frame critical path. One preload run per stream.
+- **Faster startup window**: startup piece floor raised to 3 (cap 6), steady-state forward target doubled to 20s, per-torrent connection fanout boosted to 48 during startup/seeks and restored to the configured cap once buffered.
+- **Tracker fallback**: the curated public tracker set is merged into every magnet instead of only trackerless ones.
+- **Lower startup overhead**: only error-class alerts are queued for Dart; torrent status polling sizes its buffer to the live torrent count.
+
 ## 2.0.0
 - **Android 16 Support (16 KB page sizes)**: Rebuilt Android prebuilt native libraries (`liblibtorrent_flutter.so`) with the `-Wl,-z,max-page-size=16384` linker flag to ensure compatibility with Android 16 (API 36+) devices and satisfy Google Play Console requirements.
 - **Fix Android "Failed to recognize file format"**: Fixed a critical bug in `parse_range` where suffix byte range requests (e.g., `Range: bytes=-500`) were incorrectly parsed as `start=0, end=500`. This caused the engine to serve the beginning of the file instead of the end, breaking metadata (moov atom / ID3) probing for media players like `media_kit` on Android.
