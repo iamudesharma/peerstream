@@ -31,6 +31,7 @@ class PlaybackDiagnostics {
   final int sessionId;
   DateTime? sessionClaimedAt;
   DateTime? engineAddAt;
+  DateTime? torrentAddedAt;
   DateTime? metadataAt;
   DateTime? streamCreatedAt;
   DateTime? firstFrameAt;
@@ -58,9 +59,62 @@ class PlaybackDiagnostics {
   int rebufferDurationMs = 0;
   DateTime? _rebufferStartedAt;
 
+  /// First time any peer connected (torrent-level, from stats polling).
+  DateTime? firstPeerAt;
+
+  /// First HTTP Range request the localhost server observed (native timing,
+  /// epoch ms converted on import).
+  DateTime? firstRangeRequestAt;
+
+  /// First required piece requested from the swarm for the active Range.
+  DateTime? firstPieceRequestedAt;
+
+  /// First required piece hash-verified and available to serve.
+  DateTime? firstPieceCompletedAt;
+
+  /// First payload byte written to the HTTP client.
+  DateTime? firstByteSentAt;
+
+  /// Player `open()` call time (media_kit), where observable.
+  DateTime? playerOpenAt;
+
+  /// Latest seek-request latency in ms (Range change → target piece
+  /// available), when the native layer reports it.
+  int? lastSeekResponseMs;
+
+  /// Rebuffer episodes detected after first frame (buffering edges while
+  /// playing).
+  int rebufferEvents = 0;
+
   Duration? get tapToFirstFrame {
     if (sessionClaimedAt == null || firstFrameAt == null) return null;
     return firstFrameAt!.difference(sessionClaimedAt!);
+  }
+
+  /// Torrent added → metadata (file list) available.
+  Duration? get torrentStartupLatency {
+    if (torrentAddedAt == null || metadataAt == null) return null;
+    return metadataAt!.difference(torrentAddedAt!);
+  }
+
+  /// Tap → first HTTP payload byte.
+  Duration? get timeToFirstHttpByte {
+    if (sessionClaimedAt == null || firstByteSentAt == null) return null;
+    return firstByteSentAt!.difference(sessionClaimedAt!);
+  }
+
+  /// Player Range request → required piece verified.
+  ///
+  /// A resumed/cached stream may have verified the piece before the first
+  /// Range arrived; that is an instant cache hit, reported as zero rather
+  /// than a negative duration.
+  Duration? get rangeToPieceLatency {
+    if (firstRangeRequestAt == null || firstPieceCompletedAt == null) {
+      return null;
+    }
+    final latency = firstPieceCompletedAt!.difference(firstRangeRequestAt!);
+    if (latency.isNegative) return Duration.zero;
+    return latency;
   }
 
   Map<String, dynamic> toMap() {
@@ -70,9 +124,13 @@ class PlaybackDiagnostics {
     return {
       'sessionId': sessionId,
       'tapToFirstFrameMs': tapToFirstFrame?.inMilliseconds,
+      'torrentStartupLatencyMs': torrentStartupLatency?.inMilliseconds,
+      'timeToFirstHttpByteMs': timeToFirstHttpByte?.inMilliseconds,
+      'rangeToPieceLatencyMs': rangeToPieceLatency?.inMilliseconds,
       'bufferingEvents': bufferingEvents,
       'stallEvents': stallEvents,
       'seekEvents': seekEvents,
+      'rebufferEvents': rebufferEvents,
       'nativeBuild': nativeBuild,
       'cacheCapacityBytes': cacheCapacityBytes,
       'cacheFilledBytes': cacheFilledBytes,
@@ -89,7 +147,19 @@ class PlaybackDiagnostics {
       'activePieceDeadlines': activePieceDeadlines,
       'rebufferDurationMs': rebufferDurationMs + activeRebufferMs,
       'seekLatencyMs': lastSeekLatencyMs,
+      'seekResponseMs': lastSeekResponseMs,
     };
+  }
+
+  /// One-line startup summary for log-based benchmarking.
+  String startupSummary() {
+    String ms(Duration? d) => d == null ? 'n/a' : '${d.inMilliseconds}ms';
+    return 'startup tapToFirstFrame=${ms(tapToFirstFrame)} '
+        'torrent=${ms(torrentStartupLatency)} '
+        'firstByte=${ms(timeToFirstHttpByte)} '
+        'rangeToPiece=${ms(rangeToPieceLatency)} '
+        'seek=${lastSeekLatencyMs ?? lastSeekResponseMs ?? -1}ms '
+        'rebuffers=$rebufferEvents';
   }
 
   void rebufferStarted(DateTime at) => _rebufferStartedAt ??= at;

@@ -16,7 +16,7 @@ import 'source_policy_loader.dart';
 /// `packages/libtorrent_flutter/src/torrent_bridge.cpp`. Bump both together
 /// so runtime diagnostics can confirm all platforms ship the same native
 /// implementation before comparing performance.
-const nativeBridgeVersion = 'bridge-1.8.1+lt2.0.11';
+const nativeBridgeVersion = 'bridge-1.9.1+lt2.0.11';
 
 class NativeTorrentEngine
     implements
@@ -24,7 +24,10 @@ class NativeTorrentEngine
         FileCompletenessChecker,
         EngineDiagnosticsProvider,
         TorrentAvailabilityProvider,
-        StreamPositionController {
+        StreamPositionController,
+        StreamTimingProvider,
+        WebSeedSupport,
+        TorrentStatePersistence {
   final _dio = Dio(
     BaseOptions(
       connectTimeout: const Duration(seconds: 10),
@@ -201,6 +204,48 @@ class NativeTorrentEngine
     }
   }
 
+  @override
+  TorrentStreamTimings? streamTimings(TorrentHandle handle) {
+    final streamId = _streamIds[_id(handle)];
+    if (streamId == null) return null;
+    try {
+      final info = _native.streamStatusNow(streamId);
+      if (info == null) return null;
+      DateTime? fromEpochMs(int ms) =>
+          ms > 0 ? DateTime.fromMillisecondsSinceEpoch(ms) : null;
+      return TorrentStreamTimings(
+        firstRangeRequestAt: fromEpochMs(info.firstHttpRangeAtMs),
+        firstPieceRequestedAt: fromEpochMs(info.firstPieceRequestedAtMs),
+        firstPieceCompletedAt: fromEpochMs(info.firstPieceCompletedAtMs),
+        firstByteSentAt: fromEpochMs(info.firstByteSentAtMs),
+        lastSeekResponseMs: info.lastSeekResponseMs >= 0
+            ? info.lastSeekResponseMs
+            : null,
+        activeDeadlines: info.activeDeadlines,
+        targetBufferSeconds: info.targetBufferSeconds,
+        cachedVerifiedBytes: info.cachedVerifiedBytes,
+        newlyDownloadedBytes: info.newlyDownloadedBytes,
+        localRereadBytes: info.localRereadBytes,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  void addWebSeed(TorrentHandle handle, String url) {
+    if (url.isEmpty) return;
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        !(uri.scheme == 'http' || uri.scheme == 'https')) {
+      return;
+    }
+    try {
+      final ok = _native.addWebSeed(_id(handle), url);
+      debugPrint('[Torrent] web seed ${ok ? 'attached' : 'failed'} id=${handle.id}');
+    } catch (_) {}
+  }
+
   /// Fast polling during startup/seeking, relaxed during steady playback.
   /// The native poll only emits on change so idle cost stays low.
   void useStartupPolling() {
@@ -346,6 +391,16 @@ class NativeTorrentEngine
         _saveTorrentState(id);
       }
     });
+  }
+
+  @override
+  Future<void> persistSessionState() async {
+    try {
+      if (_engine == null) return;
+      for (final id in _stateDirectories.keys.toList()) {
+        _saveTorrentState(id);
+      }
+    } catch (_) {}
   }
 
   int _id(TorrentHandle handle) => int.parse(handle.id);

@@ -20,7 +20,6 @@ import 'features/settings/subtitles_screen.dart';
 import 'features/sources/source_selection_screen.dart';
 import 'models/media_item.dart';
 import 'models/torrent_models.dart';
-import 'providers/app_providers.dart';
 
 const _genreNames = <int, String>{
   28: 'Action',
@@ -159,42 +158,48 @@ class PeerStreamApp extends ConsumerStatefulWidget {
   ConsumerState<PeerStreamApp> createState() => _PeerStreamAppState();
 }
 
+/// Ordered application-exit sequence: persist durable state, stop playback,
+/// then tear the torrent engine down.
+///
+/// The single owner is the app-lifetime listener created in main(), which is
+/// never disposed: exit dispatch awaits each observer in turn, so a
+/// State-owned listener can be disposed by tree teardown mid-dispatch,
+/// tripping the used-after-dispose assertion. Each step is independently
+/// guarded so one failure cannot skip the remaining teardown; the sequence
+/// always votes to exit.
+Future<AppExitResponse> performAppExit({
+  required Future<void> Function() persistState,
+  required Future<void> Function() stopPlayer,
+  required Future<void> Function() disposeServices,
+  Duration settleDelay = const Duration(milliseconds: 350),
+}) async {
+  try {
+    await persistState();
+    // Session state writes are synchronous, but fast-resume writes complete
+    // on the native alert thread; give them a brief grace period so the
+    // process does not exit mid-write.
+    await Future<void>.delayed(settleDelay);
+  } catch (_) {}
+  try {
+    await stopPlayer();
+  } catch (_) {}
+  try {
+    await disposeServices();
+  } catch (_) {}
+  return AppExitResponse.exit;
+}
+
+// NOTE: this widget deliberately owns no AppLifecycleListener. Exit requests
+// are dispatched sequentially with awaits between observers
+// (WidgetsBinding.handleRequestAppExit), so the engine can tear this State
+// down — running dispose() — while dispatch is still in flight. A State-owned
+// listener disposed at that point trips AppLifecycleListener's
+// used-after-dispose assertion in debug builds. All lifecycle handling lives
+// in the single app-lifetime listener created in main(), which is never
+// disposed. State-change dispatch (handleAppLifecycleStateChanged) is fully
+// synchronous and cannot race with dispose, but exit dispatch can, so exit
+// handling must not be State-owned.
 class _PeerStreamAppState extends ConsumerState<PeerStreamApp> {
-  late final AppLifecycleListener _lifecycle;
-
-  @override
-  void initState() {
-    super.initState();
-    // Durable playback state: hand the DHT routing table and fast-resume
-    // data to disk when the app backgrounds or exits. Desktop exit can be
-    // deferred briefly so the writes complete before the process dies.
-    _lifecycle = AppLifecycleListener(
-      onExitRequested: () async {
-        try {
-          await ref.read(streamingServiceProvider).persistState();
-          // Session state writes are synchronous, but fast-resume writes
-          // complete on the native alert thread; give them a brief grace
-          // period so the process does not exit mid-write.
-          await Future<void>.delayed(const Duration(milliseconds: 350));
-        } catch (_) {}
-        return AppExitResponse.exit;
-      },
-      onStateChange: (state) {
-        if (state == AppLifecycleState.paused ||
-            state == AppLifecycleState.hidden ||
-            state == AppLifecycleState.detached) {
-          unawaited(ref.read(streamingServiceProvider).persistState());
-        }
-      },
-    );
-  }
-
-  @override
-  void dispose() {
-    _lifecycle.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(

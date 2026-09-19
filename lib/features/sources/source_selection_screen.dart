@@ -914,15 +914,30 @@ class _ProviderSettingsState extends ConsumerState<_ProviderSettings> {
                       if (controller == null) {
                         throw StateError('Editor is not ready.');
                       }
+                      // Partition, don't reject wholesale: one bad pasted
+                      // line must not silently discard every valid addon.
+                      // Invalid lines are reported by name below.
+                      final split = splitAddonUrlLines(controller.text);
+                      if (split.valid.isEmpty) {
+                        throw const FormatException('No valid addon links.');
+                      }
                       await ref
                           .read(addonUrlsProvider.notifier)
-                          .save(
-                            controller.text
-                                .split('\n')
-                                .map((s) => s.trim())
-                                .where((s) => s.isNotEmpty)
-                                .toList(),
-                          );
+                          .save(split.valid);
+                      if (!context.mounted) return;
+                      // Keep the bad lines visible for fixing instead of
+                      // closing over them silently.
+                      if (split.invalid.isNotEmpty) {
+                        setState(() {
+                          _saving = false;
+                          _error =
+                              'Saved ${split.valid.length}, skipped '
+                              '${split.invalid.length} invalid: '
+                              '${split.invalid.take(2).join(', ')}'
+                              '${split.invalid.length > 2 ? ', …' : ''}';
+                        });
+                        return;
+                      }
                       if (context.mounted) Navigator.pop(context);
                     } catch (_) {
                       if (mounted) {

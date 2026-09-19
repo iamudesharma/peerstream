@@ -478,6 +478,8 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
         // never visibly play from zero.
         play: resumeStart == null,
       );
+      // Player-open timing for tap→open→first-frame diagnostics.
+      _service.reportPlayerOpen();
       if (resumeStart != null) {
         _pendingSeek = resumeStart;
         _seekAttempts = 0;

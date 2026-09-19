@@ -175,6 +175,10 @@ class StreamInfo {
   final int newlyDownloadedBytes;
   final int localRereadBytes;
   final int firstHttpRangeAtMs;
+  final int firstPieceRequestedAtMs;
+  final int firstPieceCompletedAtMs;
+  final int firstByteSentAtMs;
+  final int lastSeekResponseMs;
 
   const StreamInfo({
     required this.id, required this.torrentId, required this.fileIndex,
@@ -188,6 +192,10 @@ class StreamInfo {
     this.newlyDownloadedBytes = 0,
     this.localRereadBytes = 0,
     this.firstHttpRangeAtMs = 0,
+    this.firstPieceRequestedAtMs = 0,
+    this.firstPieceCompletedAtMs = 0,
+    this.firstByteSentAtMs = 0,
+    this.lastSeekResponseMs = -1,
   });
 
   bool get isReady => streamState == StreamState.ready;

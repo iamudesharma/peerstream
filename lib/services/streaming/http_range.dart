@@ -30,6 +30,55 @@ class HttpRangeRequest {
   final bool isSuffix;
 }
 
+/// Parses a raw HTTP `Range` header value (e.g. `bytes=0-1023`,
+/// `bytes=1024-`, `bytes=-500`) into an [HttpRangeRequest].
+///
+/// Returns `null` when no Range header is present (full-file 200). Returns a
+/// best-effort request for malformed values; [resolveHttpRange] still decides
+/// satisfiability (416) against the file size. Only the first range of a
+/// multipart value is honored — the localhost server serves a single range
+/// per connection like TorrServer.
+HttpRangeRequest? parseHttpRangeHeader(String? headerValue) {
+  if (headerValue == null) return null;
+  final value = headerValue.trim();
+  if (value.isEmpty) return null;
+  final lower = value.toLowerCase();
+  const prefix = 'bytes=';
+  final index = lower.indexOf(prefix);
+  if (index < 0) return null;
+  var spec = value.substring(index + prefix.length).trim();
+  final comma = spec.indexOf(',');
+  if (comma >= 0) spec = spec.substring(0, comma).trim();
+  if (spec.isEmpty) return null;
+  final dash = spec.indexOf('-');
+  if (dash < 0) return null;
+  final first = spec.substring(0, dash).trim();
+  final second = spec.substring(dash + 1).trim();
+  int? tryParse(String s) {
+    if (s.isEmpty) return null;
+    // Reject non-numeric junk instead of throwing.
+    if (!RegExp(r'^\d+$').hasMatch(s)) return null;
+    try {
+      return int.parse(s);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  if (first.isEmpty) {
+    // Suffix form: bytes=-N (N carried in `end`).
+    final suffix = tryParse(second);
+    if (suffix == null) return null;
+    return HttpRangeRequest(end: suffix, isSuffix: true);
+  }
+  final start = tryParse(first);
+  if (start == null) return null;
+  if (second.isEmpty) return HttpRangeRequest(start: start);
+  final end = tryParse(second);
+  if (end == null) return null;
+  return HttpRangeRequest(start: start, end: end);
+}
+
 /// Resolves [request] against a file of [fileSize] bytes.
 ///
 /// - `null` request (no Range header) → full file 200.

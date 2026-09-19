@@ -158,6 +158,19 @@ class StreamingService {
     } catch (_) {}
   }
 
+  /// Flushes durable torrent state (fast-resume files, DHT/session data
+  /// when the engine supports it) so backgrounding or exiting does not
+  /// lose verified pieces or peer routing. Safe to call repeatedly and
+  /// never throws; engines without [TorrentStatePersistence] are a no-op.
+  Future<void> persistState() async {
+    try {
+      final engine = _engine;
+      if (engine is TorrentStatePersistence) {
+        await (engine as TorrentStatePersistence).persistSessionState();
+      }
+    } catch (_) {}
+  }
+
   /// Claims a session synchronously and emits `resolving` immediately.
   ///
   /// Call this before the first `await` in the player so leaving during
@@ -404,7 +417,21 @@ class StreamingService {
     );
     try {
       _diagnostics?.engineAddAt = DateTime.now();
+      debugPrint(
+        '[Diag] torrent add requested session=$generation '
+        'key=${torrentCacheKey(source)}',
+      );
       final handle = await _engine.add(source);
+      if (stale()) {
+        await _engine.stop(handle, deleteFiles: false);
+        return generation;
+      }
+      _handle = handle;
+      _diagnostics?.torrentAddedAt = DateTime.now();
+      debugPrint(
+        '[Diag] torrent added session=$generation handle=${handle.id} '
+        'at=${_diagnostics?.torrentAddedAt?.toIso8601String()}',
+      );
       if (stale()) {
         await _engine.stop(handle, deleteFiles: false);
         return generation;
@@ -425,6 +452,24 @@ class StreamingService {
                   _state.phase == StreamingPhase.error) {
                 return;
               }
+              // First peer connected: torrent-level peer discovery latency.
+              if (_diagnostics?.firstPeerAt == null &&
+                  (stats.peers ?? 0) > 0) {
+                _diagnostics?.firstPeerAt = DateTime.now();
+                final addAt = _diagnostics?.engineAddAt;
+                if (addAt != null) {
+                  _diagnostics?.peerDiscoveryWaitMs = _diagnostics!
+                      .firstPeerAt!
+                      .difference(addAt)
+                      .inMilliseconds;
+                }
+                debugPrint(
+                  '[Diag] first peer session=$generation '
+                  'waitMs=${_diagnostics?.peerDiscoveryWaitMs}',
+                );
+              }
+              // Import native Range/piece/byte timings when available.
+              _importStreamTimings(handle);
               var phase = _state.phase;
               var detail = _state.detail;
               if (stats.phase == 'seeking') {
@@ -469,6 +514,16 @@ class StreamingService {
         return generation;
       }
       _diagnostics?.metadataAt = DateTime.now();
+      final engineAddAt = _diagnostics?.engineAddAt;
+      if (engineAddAt != null) {
+        _diagnostics?.metadataWaitMs = _diagnostics!.metadataAt!
+            .difference(engineAddAt)
+            .inMilliseconds;
+      }
+      debugPrint(
+        '[Diag] metadata available session=$generation '
+        'waitMs=${_diagnostics?.metadataWaitMs}',
+      );
       final selected = source.fileIndex == null
           ? selectVideoFile(files, hint: source.fileNameHint)
           : files
@@ -747,6 +802,110 @@ class StreamingService {
     } catch (_) {}
   }
 
+  /// Copies native Range/piece/byte timings into the session diagnostics.
+  ///
+  /// Called on every stats tick; each field latches once and logs once so
+  /// high-frequency polling cannot flood the console. Computes derived
+  /// latencies (Range→piece, tap→first-byte) as soon as both ends land.
+  void _importStreamTimings(TorrentHandle handle) {
+    final engine = _engine;
+    if (engine is! StreamTimingProvider) return;
+    final diag = _diagnostics;
+    if (diag == null) return;
+    TorrentStreamTimings? timings;
+    try {
+      timings = (engine as StreamTimingProvider).streamTimings(handle);
+    } catch (_) {
+      return;
+    }
+    if (timings == null) return;
+    var changed = false;
+    if (diag.firstRangeRequestAt == null &&
+        timings.firstRangeRequestAt != null) {
+      diag.firstRangeRequestAt = timings.firstRangeRequestAt;
+      diag.firstHttpRangeAtMs = timings.firstRangeRequestAt!
+          .difference(diag.sessionClaimedAt ?? timings.firstRangeRequestAt!)
+          .inMilliseconds;
+      changed = true;
+      debugPrint(
+        '[Diag] first Range request at '
+        '${timings.firstRangeRequestAt?.toIso8601String()}',
+      );
+    }
+    if (diag.firstPieceRequestedAt == null &&
+        timings.firstPieceRequestedAt != null) {
+      diag.firstPieceRequestedAt = timings.firstPieceRequestedAt;
+      changed = true;
+      debugPrint(
+        '[Diag] first required piece requested at '
+        '${timings.firstPieceRequestedAt?.toIso8601String()}',
+      );
+    }
+    if (diag.firstPieceCompletedAt == null &&
+        timings.firstPieceCompletedAt != null) {
+      diag.firstPieceCompletedAt = timings.firstPieceCompletedAt;
+      diag.firstVerifiedPieceAtMs = timings.firstPieceCompletedAt!
+          .difference(diag.sessionClaimedAt ?? timings.firstPieceCompletedAt!)
+          .inMilliseconds;
+      changed = true;
+      debugPrint(
+        '[Diag] first required piece completed at '
+        '${timings.firstPieceCompletedAt?.toIso8601String()} '
+        'rangeToPieceMs=${diag.rangeToPieceLatency?.inMilliseconds}',
+      );
+    }
+    if (diag.firstByteSentAt == null && timings.firstByteSentAt != null) {
+      diag.firstByteSentAt = timings.firstByteSentAt;
+      changed = true;
+      debugPrint(
+        '[Diag] first HTTP byte sent at '
+        '${timings.firstByteSentAt?.toIso8601String()} '
+        'timeToFirstByteMs=${diag.timeToFirstHttpByte?.inMilliseconds}',
+      );
+    }
+    if (timings.lastSeekResponseMs != null &&
+        timings.lastSeekResponseMs != diag.lastSeekResponseMs) {
+      diag.lastSeekResponseMs = timings.lastSeekResponseMs;
+      changed = true;
+      debugPrint(
+        '[Diag] seek response latency ${timings.lastSeekResponseMs}ms',
+      );
+    }
+    if (timings.activeDeadlines != diag.activePieceDeadlines ||
+        timings.targetBufferSeconds != diag.targetBufferSeconds ||
+        timings.cachedVerifiedBytes != diag.cachedVerifiedBytes ||
+        timings.newlyDownloadedBytes != diag.newlyDownloadedBytes ||
+        timings.localRereadBytes != diag.localRereadBytes) {
+      diag.activePieceDeadlines = timings.activeDeadlines;
+      diag.targetBufferSeconds = timings.targetBufferSeconds;
+      diag.cachedVerifiedBytes = timings.cachedVerifiedBytes;
+      diag.newlyDownloadedBytes = timings.newlyDownloadedBytes;
+      diag.localRereadBytes = timings.localRereadBytes;
+      changed = true;
+    }
+    if (changed) {
+      // Refresh the emitted state so diagnostics strips observe the timings
+      // without changing phase.
+      _emit(
+        _state.copyWith(
+          stats: _state.stats,
+          diagnostics: diag.toMap(),
+        ),
+      );
+    }
+  }
+
+  /// Records the player's `open()` time for tap→open→first-frame breakdowns.
+  /// Called by the player screen right after `open()` returns; idempotent.
+  void reportPlayerOpen() {
+    final diag = _diagnostics;
+    if (diag == null || diag.playerOpenAt != null) return;
+    diag.playerOpenAt = DateTime.now();
+    debugPrint(
+      '[Diag] player open at ${diag.playerOpenAt?.toIso8601String()}',
+    );
+  }
+
   /// Idempotent transition to playing. Repeated position updates must not
   /// emit extra states or cancel startup timers more than once.
   void markPlaying() {
@@ -757,7 +916,18 @@ class StreamingService {
     _stallTimer = null;
     _slowTimer?.cancel();
     _slowTimer = null;
+    final first = _diagnostics?.firstFrameAt == null;
     _diagnostics?.firstFrameAt ??= DateTime.now();
+    if (_diagnostics?.firstFramePresentedAtMs == null &&
+        _diagnostics?.sessionClaimedAt != null &&
+        _diagnostics?.firstFrameAt != null) {
+      _diagnostics?.firstFramePresentedAtMs = _diagnostics!.firstFrameAt!
+          .difference(_diagnostics!.sessionClaimedAt!)
+          .inMilliseconds;
+    }
+    if (first) {
+      debugPrint('[Diag] first frame ${_diagnostics?.startupSummary()}');
+    }
     _lastProgressAt = DateTime.now();
     _startPostPlayStallMonitor();
     _emit(
@@ -777,11 +947,32 @@ class StreamingService {
         bufferedPositionMs == _state.bufferedPositionMs) {
       return;
     }
+    final wasPlayingForRebuffer =
+        _state.phase == StreamingPhase.playing && !_state.isBuffering;
     // Starvation recovery: on a buffering edge, boost the immediate pieces
     // around the native read head (earliest deadlines, top priority) so the
     // player's blocked range request is satisfied before prefetch work.
     if (buffering && !_state.isBuffering) {
       _boostActiveStream();
+      _diagnostics?.rebufferStarted(DateTime.now());
+      // A buffering edge after first frame is a rebuffer episode, not just
+      // startup buffering.
+      if (_diagnostics?.firstFrameAt != null && wasPlayingForRebuffer) {
+        _diagnostics?.rebufferEvents =
+            (_diagnostics?.rebufferEvents ?? 0) + 1;
+        debugPrint(
+          '[Diag] rebuffer #${_diagnostics?.rebufferEvents} started',
+        );
+      }
+    }
+    if (!buffering && _state.isBuffering) {
+      final now = DateTime.now();
+      _diagnostics?.rebufferEnded(now);
+      if ((_diagnostics?.rebufferEvents ?? 0) > 0) {
+        debugPrint(
+          '[Diag] rebuffer ended rebufferMs=${_diagnostics?.rebufferDurationMs}',
+        );
+      }
     }
     _diagnostics?.lastBufferingAt = buffering
         ? DateTime.now()
@@ -810,7 +1001,9 @@ class StreamingService {
   }
 
   void reportSeekStarted({int? generation}) {
-    _diagnostics?.lastSeekAt = DateTime.now();
+    final now = DateTime.now();
+    _diagnostics?.lastSeekAt = now;
+    _diagnostics?.seekStarted(now);
     _diagnostics?.seekEvents = (_diagnostics?.seekEvents ?? 0) + 1;
     if (generation != null &&
         (_activeSeekGeneration == null ||
@@ -831,6 +1024,13 @@ class StreamingService {
     // Stale completions must never overwrite a newer seek.
     if (generation != null && generation != _activeSeekGeneration) return;
     if (generation != null) _settledSeekGeneration = generation;
+    final now = DateTime.now();
+    _diagnostics?.seekSettled(now);
+    if (_diagnostics?.lastSeekLatencyMs != null) {
+      debugPrint(
+        '[Diag] seek settled latencyMs=${_diagnostics?.lastSeekLatencyMs}',
+      );
+    }
     if (_state.phase != StreamingPhase.seeking) return;
     _emit(
       _state.copyWith(

@@ -282,13 +282,10 @@ List<ProviderResult> _splitAndRank(
     if (r.name != 'torrentio.strem.fun' || r.error != null) {
       return [ProviderResult(r.name, allowed, error: r.error)];
     }
-    final names = {...supportedIndexers.values, ...allowed.map((s) => s.providerName)};
-    return names.map(
-      (name) => ProviderResult(
-        name,
-        allowed.where((s) => s.providerName == name).toList(),
-      ),
-    );
+    return [
+      for (final lane in splitIndexerLanes(r.name, allowed))
+        ProviderResult(lane.name, lane.sources),
+    ];
   }).toList();
   // Rank sources within each lane for instant-start ordering.
   for (final lane in ranked) {
@@ -346,12 +343,30 @@ final sourceDiscoveryProvider =
       )) {
         final allowed = update.sources.where(policy.allows).toList();
         rankSources(allowed);
-        states[update.name] = IncrementalProviderState(
-          name: update.name,
-          status: update.status,
-          sources: allowed,
-          error: update.error,
-        );
+        if (update.name == 'torrentio.strem.fun' &&
+            update.status == ProviderStatus.ready &&
+            update.error == null &&
+            allowed.isNotEmpty) {
+          // Torrentio aggregates many indexers behind one host. Expand it
+          // into one tab per indexer so each source stays visible instead
+          // of collapsing into a single lane. Errors and empty results keep
+          // the single provider lane below so failures stay visible too.
+          states.remove(update.name);
+          for (final lane in splitIndexerLanes(update.name, allowed)) {
+            states[lane.name] = IncrementalProviderState(
+              name: lane.name,
+              status: update.status,
+              sources: lane.sources,
+            );
+          }
+        } else {
+          states[update.name] = IncrementalProviderState(
+            name: update.name,
+            status: update.status,
+            sources: allowed,
+            error: update.error,
+          );
+        }
         yield IncrementalDiscoveryState(
           providers: Map.of(states),
           isComplete: false,

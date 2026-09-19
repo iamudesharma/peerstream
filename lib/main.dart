@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -24,17 +23,27 @@ void main() {
   // callbacks the VM has already deleted ("Callback invoked after it has been
   // deleted"), aborting debug builds on quit. Disposing the streaming service
   // also records the final verified cache state.
-  // The binding retains the listener as an observer; no field needed.
+  // The binding retains the listener as an observer; no field needed. It is
+  // deliberately never disposed: exit dispatch awaits each observer in turn
+  // (WidgetsBinding.handleRequestAppExit), so disposing during teardown can
+  // invalidate a listener mid-dispatch and trip the used-after-dispose
+  // assertion. This is the sole exit-handling listener, so it stays valid
+  // for the full dispatch; state saving (persistState) runs before teardown.
   AppLifecycleListener(
-    onExitRequested: () async {
-      try {
-        await container.read(mediaKitPlayerProvider).stop();
-      } catch (_) {}
-      try {
-        await container.read(streamingServiceProvider).dispose();
-      } catch (_) {}
-      return AppExitResponse.exit;
+    onStateChange: (state) {
+      if (state == AppLifecycleState.paused ||
+          state == AppLifecycleState.hidden ||
+          state == AppLifecycleState.detached) {
+        unawaited(container.read(streamingServiceProvider).persistState());
+      }
     },
+    onExitRequested: () => performAppExit(
+      persistState: () =>
+          container.read(streamingServiceProvider).persistState(),
+      stopPlayer: () => container.read(mediaKitPlayerProvider).stop(),
+      disposeServices: () =>
+          container.read(streamingServiceProvider).dispose(),
+    ),
   );
   runApp(
     UncontrolledProviderScope(

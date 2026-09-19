@@ -146,6 +146,62 @@ void main() {
       isNull,
     );
   });
+  group('addon URL normalization and bulk input', () {
+    test('trailing slashes validate after normalization', () {
+      expect(
+        AddonTorrentProvider.validateUrl(
+          'https://comet.elfhosted.com/manifest.json/',
+        ).toString(),
+        'https://comet.elfhosted.com/manifest.json',
+      );
+      expect(
+        AddonTorrentProvider.validateUrl(
+          '  https://comet.elfhosted.com/manifest.json  ',
+        ).toString(),
+        'https://comet.elfhosted.com/manifest.json',
+      );
+    });
+
+    test('non-manifest shapes still rejected', () {
+      for (final bad in [
+        'https://example.com/manifest.json?token=abc',
+        'https://example.com/configure',
+        'stremio://example.com/manifest.json',
+        'https://example.com/MANIFEST.JSON',
+        'not a url',
+      ]) {
+        expect(
+          () => AddonTorrentProvider.validateUrl(bad),
+          throwsFormatException,
+          reason: bad,
+        );
+      }
+    });
+
+    test('bulk input keeps valid lines and names rejected ones', () {
+      final split = splitAddonUrlLines(
+        'https://torrentio.strem.fun/manifest.json\n'
+        'https://comet.elfhosted.com/manifest.json/\n'
+        '\n'
+        'https://example.com/configure\n'
+        'stremio://example.com/manifest.json\n',
+      );
+      expect(split.valid, [
+        'https://torrentio.strem.fun/manifest.json',
+        'https://comet.elfhosted.com/manifest.json',
+      ]);
+      expect(split.invalid, [
+        'https://example.com/configure',
+        'stremio://example.com/manifest.json',
+      ]);
+    });
+
+    test('bulk input with only blank lines yields nothing', () {
+      final split = splitAddonUrlLines('\n   \n');
+      expect(split.valid, isEmpty);
+      expect(split.invalid, isEmpty);
+    });
+  });
 }
 
 class FakeProvider implements TorrentProvider {

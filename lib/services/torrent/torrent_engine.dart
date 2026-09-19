@@ -92,6 +92,58 @@ abstract interface class EngineDiagnosticsProvider {
   Future<EngineDiagnostics> engineDiagnostics();
 }
 
+/// Optional capability: per-stream startup timings from the localhost HTTP
+/// scheduler.
+///
+/// The native Range server observes events Dart cannot see directly: the
+/// first Range request, the first required piece request/completion, and the
+/// first payload byte. Engines backed by libtorrent implement this so
+/// `StreamingService` can compute TTFF contributors (time to first HTTP
+/// byte, Range→piece latency, seek response latency) without polling hacks.
+class TorrentStreamTimings {
+  const TorrentStreamTimings({
+    this.firstRangeRequestAt,
+    this.firstPieceRequestedAt,
+    this.firstPieceCompletedAt,
+    this.firstByteSentAt,
+    this.lastSeekResponseMs,
+    this.activeDeadlines = 0,
+    this.targetBufferSeconds = 0,
+    this.cachedVerifiedBytes = 0,
+    this.newlyDownloadedBytes = 0,
+    this.localRereadBytes = 0,
+  });
+
+  final DateTime? firstRangeRequestAt;
+  final DateTime? firstPieceRequestedAt;
+  final DateTime? firstPieceCompletedAt;
+  final DateTime? firstByteSentAt;
+  final int? lastSeekResponseMs;
+  final int activeDeadlines;
+  final double targetBufferSeconds;
+  final int cachedVerifiedBytes;
+  final int newlyDownloadedBytes;
+  final int localRereadBytes;
+}
+
+abstract interface class StreamTimingProvider {
+  /// Latest native scheduler timings for the active stream, or null when
+  /// unavailable. Never throws; safe at stats-tick cadence.
+  TorrentStreamTimings? streamTimings(TorrentHandle handle);
+}
+
+/// Optional capability: standard BitTorrent web seeds (BEP 19 / BEP 17).
+///
+/// libtorrent exposes `add_url_seed` (BEP 19, getright-style `url-list`) and
+/// `add_http_seed` (BEP 17) directly. Engines implement this thin wrapper so
+/// sources carrying an HTTP(S) seed URL can use it without a custom protocol.
+/// No transcoding or HLS is involved: the seed simply provides pieces over
+/// plain HTTP like any other peer.
+abstract interface class WebSeedSupport {
+  /// Attaches a BEP-19 web seed URL to [handle]. Best effort, never throws.
+  void addWebSeed(TorrentHandle handle, String url);
+}
+
 /// Optional capability: durable DHT/session state across app launches.
 ///
 /// Implementations persist whatever they need (DHT routing table, fast-resume

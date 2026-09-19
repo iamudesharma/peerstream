@@ -36,7 +36,7 @@ class AddonTorrentProvider implements TorrentProvider {
   String get name => manifestUrl.host;
 
   static Uri validateUrl(String value) {
-    final uri = Uri.tryParse(value.trim());
+    final uri = Uri.tryParse(normalizeAddonUrlInput(value));
     if (uri == null ||
         !['http', 'https'].contains(uri.scheme) ||
         uri.host.isEmpty ||
@@ -48,6 +48,18 @@ class AddonTorrentProvider implements TorrentProvider {
       );
     }
     return uri;
+  }
+
+  /// Trims whitespace and strips trailing slashes so pasted links like
+  /// `https://example.com/manifest.json/` validate. Idempotent and safe:
+  /// only surrounding whitespace and `/` suffixes are removed, never path
+  /// or query content (addon configs can be case-sensitive).
+  static String normalizeAddonUrlInput(String value) {
+    var out = value.trim();
+    while (out.endsWith('/') && out.length > 1) {
+      out = out.substring(0, out.length - 1);
+    }
+    return out;
   }
 
   @override
@@ -225,6 +237,25 @@ class ProviderResult {
   final String name;
   final List<TorrentSource> sources;
   final String? error;
+}
+
+/// Splits bulk-pasted addon input into valid manifest URLs and rejected
+/// lines, one per line. Each line is normalized (trimmed, trailing slashes
+/// stripped) before validation, so a single bad line can be reported by the
+/// UI without discarding the valid ones. Pure for testability.
+({List<String> valid, List<String> invalid}) splitAddonUrlLines(String input) {
+  final valid = <String>[];
+  final invalid = <String>[];
+  for (final raw in input.split('\n')) {
+    final line = raw.trim();
+    if (line.isEmpty) continue;
+    try {
+      valid.add(AddonTorrentProvider.validateUrl(line).toString());
+    } catch (_) {
+      invalid.add(line);
+    }
+  }
+  return (valid: valid, invalid: invalid);
 }
 
 Future<List<ProviderResult>> searchAllProviders(
