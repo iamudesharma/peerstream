@@ -110,8 +110,16 @@ class StreamingService {
 
   PlaybackDiagnostics? _diagnostics;
   final SingleFlight _prefetchFlight = SingleFlight();
+  // Playback starts can race when a route rebuilds or the user reopens the
+  // same item before the first add finishes. Share the native add so one
+  // torrent handle owns each payload directory.
+  final SingleFlight _playbackAddFlight = SingleFlight();
   String? _lastPrefetchKey;
   TorrentHandle? _prefetchHandle;
+  // Teardown pauses a retained torrent after stopping its HTTP stream. Queue
+  // it ahead of the next start so an old asynchronous teardown cannot pause a
+  // newly reopened stream that reuses the same native handle.
+  Future<void> _cleanupTail = Future<void>.value();
 
   // ---- MediaForge player hooks (additive; default player untouched) ----
   //
@@ -188,7 +196,7 @@ class StreamingService {
     _lastPlayerPositionAt = null;
     // Best-effort cleanup of any previous session without awaiting — the
     // async portion of start() re-checks generation after every boundary.
-    unawaited(_clearSession(keepFiles: true));
+    unawaited(_queueSessionClear(keepFiles: true));
     _emit(
       StreamingState(
         phase: StreamingPhase.resolving,
@@ -206,7 +214,7 @@ class StreamingService {
   void cancelSession(int sessionId) {
     if (sessionId == _generation) {
       _generation++;
-      unawaited(_clearSession(keepFiles: true));
+      unawaited(_queueSessionClear(keepFiles: true));
       _emit(const StreamingState(phase: StreamingPhase.stopped));
     }
   }
@@ -261,6 +269,23 @@ class StreamingService {
   void _emit(StreamingState next) {
     _state = next;
     if (!_controller.isClosed) _controller.add(next);
+  }
+
+  Future<void> _queueSessionClear({bool keepFiles = true}) {
+    final queued = _cleanupTail.then<void>(
+      (_) => _clearSession(keepFiles: keepFiles),
+      onError: (Object error, StackTrace stackTrace) =>
+          _clearSession(keepFiles: keepFiles),
+    );
+    _cleanupTail = queued;
+    return queued;
+  }
+
+  bool _hasSameSourceSuccessor(int generation, TorrentSource source) {
+    final activeSource = _state.source;
+    return generation != _generation &&
+        activeSource != null &&
+        torrentCacheKey(activeSource) == torrentCacheKey(source);
   }
 
   /// Pre-prioritizes the resume region so those pieces download alongside the
@@ -339,6 +364,13 @@ class StreamingService {
 
     bool stale() =>
         generation != _generation || (claimed?.isCancelled ?? false);
+
+    // `beginSession` emitted resolving synchronously, while the old native
+    // stream may still be stopping. Wait for that exact queued cleanup before
+    // touching a retained torrent handle.
+    final priorCleanup = _cleanupTail;
+    await priorCleanup;
+    if (stale()) return generation;
 
     debugPrint(
       '[Streaming] start key=${torrentCacheKey(source)} '
@@ -421,9 +453,19 @@ class StreamingService {
         '[Diag] torrent add requested session=$generation '
         'key=${torrentCacheKey(source)}',
       );
-      final handle = await _engine.add(source);
+      final handle = await _playbackAddFlight.run<TorrentHandle>(
+        torrentCacheKey(source),
+        () => _engine.add(source),
+      );
       if (stale()) {
-        await _engine.stop(handle, deleteFiles: false);
+        if (_hasSameSourceSuccessor(generation, source)) {
+          debugPrint(
+            '[Streaming] retained in-flight handle ${handle.id} '
+            'for same-source successor',
+          );
+        } else {
+          await _engine.stop(handle, deleteFiles: false);
+        }
         return generation;
       }
       _handle = handle;
@@ -433,7 +475,9 @@ class StreamingService {
         'at=${_diagnostics?.torrentAddedAt?.toIso8601String()}',
       );
       if (stale()) {
-        await _engine.stop(handle, deleteFiles: false);
+        if (!_hasSameSourceSuccessor(generation, source)) {
+          await _engine.stop(handle, deleteFiles: false);
+        }
         return generation;
       }
       _handle = handle;
@@ -453,13 +497,11 @@ class StreamingService {
                 return;
               }
               // First peer connected: torrent-level peer discovery latency.
-              if (_diagnostics?.firstPeerAt == null &&
-                  (stats.peers ?? 0) > 0) {
+              if (_diagnostics?.firstPeerAt == null && (stats.peers ?? 0) > 0) {
                 _diagnostics?.firstPeerAt = DateTime.now();
                 final addAt = _diagnostics?.engineAddAt;
                 if (addAt != null) {
-                  _diagnostics?.peerDiscoveryWaitMs = _diagnostics!
-                      .firstPeerAt!
+                  _diagnostics?.peerDiscoveryWaitMs = _diagnostics!.firstPeerAt!
                       .difference(addAt)
                       .inMilliseconds;
                 }
@@ -589,7 +631,7 @@ class StreamingService {
       _startStallCheck(generation, _state.stats.downloadedBytes);
     } catch (error) {
       if (stale()) return generation;
-      await _clearSession();
+      await _queueSessionClear();
       if (stale()) return generation;
       _emit(
         _state.copyWith(
@@ -886,12 +928,7 @@ class StreamingService {
     if (changed) {
       // Refresh the emitted state so diagnostics strips observe the timings
       // without changing phase.
-      _emit(
-        _state.copyWith(
-          stats: _state.stats,
-          diagnostics: diag.toMap(),
-        ),
-      );
+      _emit(_state.copyWith(stats: _state.stats, diagnostics: diag.toMap()));
     }
   }
 
@@ -901,9 +938,7 @@ class StreamingService {
     final diag = _diagnostics;
     if (diag == null || diag.playerOpenAt != null) return;
     diag.playerOpenAt = DateTime.now();
-    debugPrint(
-      '[Diag] player open at ${diag.playerOpenAt?.toIso8601String()}',
-    );
+    debugPrint('[Diag] player open at ${diag.playerOpenAt?.toIso8601String()}');
   }
 
   /// Idempotent transition to playing. Repeated position updates must not
@@ -958,11 +993,8 @@ class StreamingService {
       // A buffering edge after first frame is a rebuffer episode, not just
       // startup buffering.
       if (_diagnostics?.firstFrameAt != null && wasPlayingForRebuffer) {
-        _diagnostics?.rebufferEvents =
-            (_diagnostics?.rebufferEvents ?? 0) + 1;
-        debugPrint(
-          '[Diag] rebuffer #${_diagnostics?.rebufferEvents} started',
-        );
+        _diagnostics?.rebufferEvents = (_diagnostics?.rebufferEvents ?? 0) + 1;
+        debugPrint('[Diag] rebuffer #${_diagnostics?.rebufferEvents} started');
       }
     }
     if (!buffering && _state.isBuffering) {
@@ -1077,7 +1109,7 @@ class StreamingService {
     final generation = ++_generation;
     _activeSeekGeneration = null;
     _settledSeekGeneration = null;
-    await _clearSession(keepFiles: true);
+    await _queueSessionClear(keepFiles: true);
     if (generation == _generation) {
       _emit(const StreamingState(phase: StreamingPhase.stopped));
     }

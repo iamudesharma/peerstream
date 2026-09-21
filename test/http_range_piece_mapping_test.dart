@@ -11,14 +11,8 @@ void main() {
     });
 
     test('parses closed, open-ended, and suffix forms', () {
-      expect(
-        parseHttpRangeHeader('bytes=0-1023')?.start,
-        0,
-      );
-      expect(
-        parseHttpRangeHeader('bytes=0-1023')?.end,
-        1023,
-      );
+      expect(parseHttpRangeHeader('bytes=0-1023')?.start, 0);
+      expect(parseHttpRangeHeader('bytes=0-1023')?.end, 1023);
       final open = parseHttpRangeHeader('bytes=1024-')!;
       expect(open.start, 1024);
       expect(open.end, isNull);
@@ -38,13 +32,13 @@ void main() {
       final r = resolveHttpRange(parseHttpRangeHeader('bytes=200-'), size);
       expect((r.start, r.end), (200, 999));
       expect(r.isPartial, isTrue);
-      final suffix = resolveHttpRange(
-        parseHttpRangeHeader('bytes=-100'),
-        size,
-      );
+      final suffix = resolveHttpRange(parseHttpRangeHeader('bytes=-100'), size);
       expect((suffix.start, suffix.end), (900, 999));
       expect(
-        resolveHttpRange(parseHttpRangeHeader('bytes=9999-'), size).isSatisfiable,
+        resolveHttpRange(
+          parseHttpRangeHeader('bytes=9999-'),
+          size,
+        ).isSatisfiable,
         isFalse,
       );
     });
@@ -97,9 +91,7 @@ void main() {
       expect(after.tierOf(5), PieceTier.background);
     });
 
-    test('cached target keeps old work: window still covers it', () {
-      // A backward seek into already-verified pieces must not look like a
-      // background region: the scheduler keeps tolerance behind the target.
+    test('cached target is critical without reviving old playback work', () {
       final w = schedulerTiers(
         targetPiece: 50,
         startPiece: 0,
@@ -107,8 +99,51 @@ void main() {
         pieceLength: pieceLen,
         bitrateBps: 800000,
       );
-      expect(w.startPiece, lessThan(50));
+      expect(w.startPiece, 50);
       expect(w.tierOf(50), PieceTier.critical);
+      expect(w.tierOf(49), PieceTier.background);
+    });
+
+    test('startup container probes preserve a pending resume window', () {
+      // media_kit asks for the head before it sends the real Range at the
+      // restored position. The head must be served without clearing the
+      // already-dispatched resume work.
+      expect(
+        shouldPreserveStartupResumeWindow(
+          hasPendingResume: true,
+          requestPiece: 0,
+          startPiece: 0,
+          resumeTargetPiece: 44,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldPreserveStartupResumeWindow(
+          hasPendingResume: true,
+          requestPiece: 44,
+          startPiece: 0,
+          resumeTargetPiece: 44,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldPreserveStartupResumeWindow(
+          hasPendingResume: true,
+          requestPiece: 20,
+          startPiece: 0,
+          resumeTargetPiece: 44,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldPreserveStartupResumeWindow(
+          hasPendingResume: false,
+          requestPiece: 0,
+          startPiece: 0,
+          resumeTargetPiece: 44,
+        ),
+        isFalse,
+      );
     });
   });
 }

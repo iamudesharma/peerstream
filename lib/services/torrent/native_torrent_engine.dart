@@ -16,7 +16,7 @@ import 'source_policy_loader.dart';
 /// `packages/libtorrent_flutter/src/torrent_bridge.cpp`. Bump both together
 /// so runtime diagnostics can confirm all platforms ship the same native
 /// implementation before comparing performance.
-const nativeBridgeVersion = 'bridge-1.9.1+lt2.0.11';
+const nativeBridgeVersion = 'bridge-1.9.4+lt2.0.11';
 
 class NativeTorrentEngine
     implements
@@ -36,6 +36,10 @@ class NativeTorrentEngine
   );
   final Map<int, int> _streamIds = {};
   final Map<String, int> _retainedTorrents = {};
+  // `StreamingService` can receive a second Play while the first async add is
+  // still resolving metadata/state. Keep the native session to one add per
+  // cache key so two libtorrent handles never write the same payload path.
+  final Map<String, Future<TorrentHandle>> _addFlights = {};
   final Map<int, String> _stateDirectories = {};
   final PlaybackCacheStore _cache = PlaybackCacheStore();
   Directory? _sessionDirectory;
@@ -236,13 +240,14 @@ class NativeTorrentEngine
   void addWebSeed(TorrentHandle handle, String url) {
     if (url.isEmpty) return;
     final uri = Uri.tryParse(url);
-    if (uri == null ||
-        !(uri.scheme == 'http' || uri.scheme == 'https')) {
+    if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https')) {
       return;
     }
     try {
       final ok = _native.addWebSeed(_id(handle), url);
-      debugPrint('[Torrent] web seed ${ok ? 'attached' : 'failed'} id=${handle.id}');
+      debugPrint(
+        '[Torrent] web seed ${ok ? 'attached' : 'failed'} id=${handle.id}',
+      );
     } catch (_) {}
   }
 
@@ -266,6 +271,26 @@ class NativeTorrentEngine
     final violation = (await loadSourcePolicy()).check(source);
     if (violation != null) throw violation;
     final cacheKey = torrentCacheKey(source);
+    final inFlight = _addFlights[cacheKey];
+    if (inFlight != null) {
+      debugPrint('[Torrent] joining in-flight add key=$cacheKey');
+      return inFlight;
+    }
+    final future = _addForKey(source, cacheKey);
+    _addFlights[cacheKey] = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_addFlights[cacheKey], future)) {
+        _addFlights.remove(cacheKey);
+      }
+    }
+  }
+
+  Future<TorrentHandle> _addForKey(
+    TorrentSource source,
+    String cacheKey,
+  ) async {
     final retainedId = _retainedTorrents[cacheKey];
     if (retainedId != null && _native.torrents.containsKey(retainedId)) {
       _native.resumeTorrent(retainedId);
@@ -534,6 +559,7 @@ class NativeTorrentEngine
     await _native.dispose();
     _engine = null;
     _retainedTorrents.clear();
+    _addFlights.clear();
     _stateDirectories.clear();
   }
 

@@ -61,10 +61,7 @@ void main() {
 
   group('estimateBitrateBps', () {
     test('uses duration when available', () {
-      expect(
-        estimateBitrateBps(fileSize: 1000000, durationMs: 100000),
-        10000,
-      );
+      expect(estimateBitrateBps(fileSize: 1000000, durationMs: 100000), 10000);
     });
 
     test('falls back to size-based guess', () {
@@ -148,6 +145,19 @@ void main() {
       expect(w.totalPieces, lessThanOrEqualTo(101));
     });
 
+    test('does not schedule missing pieces behind the requested range', () {
+      final w = schedulerTiers(
+        targetPiece: 50,
+        startPiece: 0,
+        endPiece: 199,
+        pieceLength: 512 * 1024,
+        bitrateBps: 800000,
+      );
+      expect(w.startPiece, 50);
+      expect(w.tierOf(49), PieceTier.background);
+      expect(w.tierOf(50), PieceTier.critical);
+    });
+
     test('clamps to [4, 64] pieces', () {
       final tiny = adaptiveLookaheadPieces(
         targetPiece: 0,
@@ -170,6 +180,30 @@ void main() {
       );
       expect(huge, lessThanOrEqualTo(64));
     });
+
+    test('widens a cold pipeline for very large torrent pieces', () {
+      expect(adaptivePipelineFloorPieces(pieceLength: 8 * 1024 * 1024), 16);
+      expect(
+        adaptiveLookaheadPieces(
+          targetPiece: 0,
+          startPiece: 0,
+          endPiece: 223,
+          pieceLength: 8 * 1024 * 1024,
+          bitrateBps: 292 * 1024,
+        ),
+        16,
+      );
+    });
+
+    test('returns to the normal floor once a large-piece stream flows', () {
+      expect(
+        adaptivePipelineFloorPieces(
+          pieceLength: 8 * 1024 * 1024,
+          downloadRateBps: 1024,
+        ),
+        4,
+      );
+    });
   });
 
   group('deadlines and startup', () {
@@ -189,10 +223,7 @@ void main() {
 
     test('critical startup stays within 1..5 pieces', () {
       expect(
-        criticalStartupPieces(
-          pieceLength: 256 * 1024,
-          bitrateBps: 500000,
-        ),
+        criticalStartupPieces(pieceLength: 256 * 1024, bitrateBps: 500000),
         inInclusiveRange(1, 5),
       );
       expect(
@@ -201,6 +232,53 @@ void main() {
           bitrateBps: 3000000,
         ),
         inInclusiveRange(1, 5),
+      );
+    });
+  });
+
+  group('playback window refreshes', () {
+    const active = PieceWindow(
+      startPiece: 10,
+      criticalEnd: 12,
+      urgentEnd: 18,
+      endPiece: 30,
+    );
+
+    test('first cached player Range still expands the startup pipeline', () {
+      expect(
+        shouldRefreshPlaybackWindow(targetPiece: 10, activeWindow: active),
+        isTrue,
+      );
+    });
+
+    test('rolls at the urgent boundary but not on every served piece', () {
+      expect(
+        shouldRefreshPlaybackWindow(
+          targetPiece: 12,
+          activeWindow: active,
+          lastPlaybackTargetPiece: 10,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldRefreshPlaybackWindow(
+          targetPiece: 18,
+          activeWindow: active,
+          lastPlaybackTargetPiece: 10,
+        ),
+        isTrue,
+      );
+    });
+
+    test('seek replaces stale work even when the target is cached', () {
+      expect(
+        shouldRefreshPlaybackWindow(
+          targetPiece: 11,
+          activeWindow: active,
+          lastPlaybackTargetPiece: 10,
+          isSeek: true,
+        ),
+        isTrue,
       );
     });
   });

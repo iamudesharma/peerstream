@@ -161,11 +161,33 @@ double adaptiveForwardSeconds({
   return seconds.clamp(10, 90);
 }
 
+/// Minimum parallel request depth for a cold or stalled playback window.
+///
+/// A large torrent piece has to be completely verified before libtorrent can
+/// expose it to the HTTP server. A fixed four-piece floor is therefore too
+/// shallow for, for example, 8 MiB pieces: one unavailable leading piece can
+/// leave every peer request focused on just a few large hashes. Scale the
+/// cold floor with piece size (4 for sub-2 MiB pieces, 8 for 4 MiB, 16 for
+/// 8 MiB), then return to the normal four-piece floor once data is flowing or
+/// a real buffer exists. This mirrors native `pipeline_floor_pieces`.
+int adaptivePipelineFloorPieces({
+  required int pieceLength,
+  int bufferedAheadMs = 0,
+  int downloadRateBps = 0,
+}) {
+  if (pieceLength <= 0 || bufferedAheadMs > 1000 || downloadRateBps > 0) {
+    return 4;
+  }
+  const mib = 1024 * 1024;
+  final mibPieces = (pieceLength + mib - 1) ~/ mib;
+  return (mibPieces * 2).clamp(4, 16);
+}
+
 /// Total adaptive lookahead in pieces for [targetPiece].
 ///
 /// Sized from [adaptiveForwardSeconds] converted through [bitrateBps] and
-/// [pieceLength], clamped to [4, 64] so slow swarms still build a pipeline
-/// and fast ones do not over-buffer. Never exceeds the file span.
+/// [pieceLength], with a piece-size-aware cold-start floor and a 64-piece
+/// ceiling. Never exceeds the file span.
 int adaptiveLookaheadPieces({
   required int targetPiece,
   required int startPiece,
@@ -185,7 +207,14 @@ int adaptiveLookaheadPieces({
   );
   final effectiveBitrate = bitrateBps > 0 ? bitrateBps : 625000;
   var pieces = ((effectiveBitrate * seconds) / pieceLength).round();
-  pieces = pieces.clamp(4, 64);
+  pieces = pieces.clamp(
+    adaptivePipelineFloorPieces(
+      pieceLength: pieceLength,
+      bufferedAheadMs: bufferedAheadMs,
+      downloadRateBps: downloadRateBps,
+    ),
+    64,
+  );
   final remaining = endPiece - targetPiece + 1;
   if (pieces > remaining) pieces = remaining;
   return pieces;
@@ -197,8 +226,10 @@ int adaptiveLookaheadPieces({
 ///   the player is blocked on right now.
 /// - URGENT covers the next ~8s of video (at least 2 pieces).
 /// - PREFETCH extends to the adaptive forward target.
-/// - A small [behindTolerance] (default 2 pieces) is kept behind the target
-///   for keyframe/VBR drift and small rewinds.
+/// - No missing pieces behind the target are requested speculatively. The
+///   native trailing cache covers small rewinds; an actual backwards Range is
+///   immediately promoted when the player asks for it. This prevents an old
+///   playback location from competing with a seek target.
 PieceWindow schedulerTiers({
   required int targetPiece,
   required int startPiece,
@@ -208,7 +239,6 @@ PieceWindow schedulerTiers({
   int bufferedAheadMs = 0,
   int downloadRateBps = 0,
   int peers = 0,
-  int behindTolerance = 2,
 }) {
   final clampedTarget = targetPiece.clamp(startPiece, endPiece);
   final effectiveBitrate = bitrateBps > 0 ? bitrateBps : 625000;
@@ -224,9 +254,10 @@ PieceWindow schedulerTiers({
     downloadRateBps: downloadRateBps,
     peers: peers,
   );
-  final behind = behindTolerance.clamp(0, 4);
-  var start = clampedTarget - behind;
-  if (start < startPiece) start = startPiece;
+  // Range requests are the source of truth. Keep already-read pieces in the
+  // trailing cache, but do not spend swarm bandwidth fetching bytes behind
+  // the cursor just in case a demuxer needs them.
+  final start = clampedTarget;
 
   // CRITICAL: ~2s of video from the target forward.
   var criticalCount = ((effectiveBitrate * 2) / safePieceLength).ceil();
@@ -239,8 +270,6 @@ PieceWindow schedulerTiers({
   var urgentEnd = clampedTarget + urgentCount - 1;
 
   var end = clampedTarget + total - 1;
-  // The behind tolerance consumes part of the budget; keep the forward reach.
-  end += (clampedTarget - start);
   if (end > endPiece) end = endPiece;
   if (criticalEnd > end) criticalEnd = end;
   if (urgentEnd > end) urgentEnd = end;
@@ -254,15 +283,53 @@ PieceWindow schedulerTiers({
   );
 }
 
+/// Whether an incoming playback Range should replace the active priority
+/// window.
+///
+/// The first player Range must expand the startup window even when its target
+/// piece is already verified locally. Afterwards the window rolls forward as
+/// the cursor reaches its urgent boundary. A seek always replaces the prior
+/// work immediately. This is deliberately independent of a player's request
+/// chunk size: a single open-ended request and many small 206 requests follow
+/// the same policy.
+bool shouldRefreshPlaybackWindow({
+  required int targetPiece,
+  required PieceWindow activeWindow,
+  int? lastPlaybackTargetPiece,
+  bool isSeek = false,
+}) {
+  if (isSeek || lastPlaybackTargetPiece == null) return true;
+  return targetPiece < activeWindow.startPiece ||
+      targetPiece >= activeWindow.urgentEnd ||
+      targetPiece > activeWindow.endPiece;
+}
+
+/// Whether a startup Range belongs to media_kit's container inspection while
+/// a pre-open resume window is pending.
+///
+/// Players commonly request bytes at the file head (and then the tail) before
+/// issuing the real Range at the restored position. Those head reads need
+/// priority, but they must not cancel the already-dispatched resume pieces.
+/// A request within the first two file pieces or at the pending target is a
+/// bootstrap read; other Range changes remain real seeks. Mirrors native
+/// `is_startup_resume_bootstrap_range`.
+bool shouldPreserveStartupResumeWindow({
+  required bool hasPendingResume,
+  required int requestPiece,
+  required int startPiece,
+  required int resumeTargetPiece,
+}) {
+  if (!hasPendingResume) return false;
+  return requestPiece <= startPiece + 1 ||
+      (requestPiece - resumeTargetPiece).abs() <= 1;
+}
+
 /// Deadline stagger step in ms derived from the estimated piece playback
 /// duration. Pieces should arrive before their playback time with the first
 /// pieces urgent and later ones progressively later. Clamped so a slow swarm
 /// still gets an aggressive early gradient and a fast one does not
 /// over-stagger. Mirrors native `piece_deadline_step_ms`.
-int pieceDeadlineStepMs({
-  required int pieceLength,
-  required int bitrateBps,
-}) {
+int pieceDeadlineStepMs({required int pieceLength, required int bitrateBps}) {
   final effectiveBitrate = bitrateBps > 1000 ? bitrateBps : 625000;
   final safePieceLength = pieceLength > 0 ? pieceLength : 256 * 1024;
   final pieceSeconds = safePieceLength / effectiveBitrate;
@@ -274,10 +341,7 @@ int pieceDeadlineStepMs({
 ///
 /// Kept small and adaptive: ~2s of video, at least 1 piece, at most 5.
 /// Mirrors the native `critical_startup_pieces` computation.
-int criticalStartupPieces({
-  required int pieceLength,
-  required int bitrateBps,
-}) {
+int criticalStartupPieces({required int pieceLength, required int bitrateBps}) {
   if (pieceLength <= 0) return 2;
   final effectiveBitrate = bitrateBps > 0 ? bitrateBps : 625000;
   var bytes = (effectiveBitrate * 2).round();
