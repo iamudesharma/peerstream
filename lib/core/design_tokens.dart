@@ -28,5 +28,7 @@ abstract final class DesignTokens {
   static const contentMaxWidth = 1100.0;
   static const cardWidth = 132.0;
   static const cardAspect = 2 / 3;
+  static const continueCardWidth = 280.0;
+  static const continueCardAspect = 16 / 9;
   static const gridMaxExtent = 170.0;
 }

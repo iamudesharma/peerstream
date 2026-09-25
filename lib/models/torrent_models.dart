@@ -88,6 +88,12 @@ class TorrentStats {
     this.seeds,
     this.downloadedBytes = 0,
     this.totalBytes = 0,
+    this.activePieceDeadlines = 0,
+    this.targetBufferSeconds = 0,
+    this.cachedVerifiedBytes = 0,
+    this.newlyDownloadedBytes = 0,
+    this.localRereadBytes = 0,
+    this.firstHttpRangeAtMs = 0,
   });
   final String? name;
   final String phase;
@@ -99,6 +105,12 @@ class TorrentStats {
   final int? seeds;
   final int downloadedBytes;
   final int totalBytes;
+  final int activePieceDeadlines;
+  final double targetBufferSeconds;
+  final int cachedVerifiedBytes;
+  final int newlyDownloadedBytes;
+  final int localRereadBytes;
+  final int firstHttpRangeAtMs;
 }
 
 /// Verified download/cache availability for one torrent file.

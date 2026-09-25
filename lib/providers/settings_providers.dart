@@ -1,4 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:media_forge_player/media_forge_player.dart'
+    show VideoEnhancementCapabilities, VideoEnhancementMode;
 
 import '../core/config.dart';
 import '../providers/app_providers.dart';
@@ -43,6 +45,14 @@ class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
     await _save(updated);
   }
 
+  Future<void> setMediaForgeVideoEnhancementMode(
+    VideoEnhancementMode value,
+  ) async {
+    final current = state.value ?? await readAppSettings();
+    final updated = current.copyWith(mediaForgeVideoEnhancementMode: value);
+    await _save(updated);
+  }
+
   Future<void> setPlayerVolume(double volume) async {
     final current = state.value ?? await readAppSettings();
     final updated = current.copyWith(playerVolume: volume);
@@ -72,6 +82,24 @@ final appSettingsProvider =
     AsyncNotifierProvider<AppSettingsNotifier, AppSettings>(
       AppSettingsNotifier.new,
     );
+
+/// Capabilities observed from the active MediaForge session. Keeping this
+/// session-scoped avoids starting MediaForge merely to render Settings.
+class MediaForgeVideoEnhancementCapabilitiesNotifier
+    extends Notifier<VideoEnhancementCapabilities?> {
+  @override
+  VideoEnhancementCapabilities? build() => null;
+
+  void setCapabilities(VideoEnhancementCapabilities? capabilities) {
+    state = capabilities;
+  }
+}
+
+final mediaForgeVideoEnhancementCapabilitiesProvider =
+    NotifierProvider<
+      MediaForgeVideoEnhancementCapabilitiesNotifier,
+      VideoEnhancementCapabilities?
+    >(MediaForgeVideoEnhancementCapabilitiesNotifier.new);
 
 class AppInfo {
   const AppInfo({

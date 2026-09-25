@@ -58,7 +58,7 @@ class ContinueWatchingRow extends ConsumerWidget {
             ),
             const SizedBox(height: DesignTokens.space3),
             SizedBox(
-              height: 236,
+              height: 250,
               child: ListView.separated(
                 padding: const EdgeInsets.symmetric(
                   horizontal: DesignTokens.pageGutter,
@@ -150,7 +150,7 @@ class _ContinueCard extends ConsumerWidget {
         ? 'S${entry.season} E${entry.episode}'
         : null;
     return SizedBox(
-      width: 280,
+      width: DesignTokens.continueCardWidth,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -158,72 +158,83 @@ class _ContinueCard extends ConsumerWidget {
           InkWell(
             borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
             onTap: () => _resume(context, ref),
-            child: Container(
-              decoration: BoxDecoration(
-                color: DesignTokens.surface,
-                borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
-                border: Border.all(color: DesignTokens.line),
-              ),
-              clipBehavior: Clip.antiAlias,
-              child: AspectRatio(
-                aspectRatio: 16 / 9,
-                child: Stack(
-                  fit: StackFit.expand,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: DesignTokens.surface,
+                  border: Border.all(color: DesignTokens.line),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    _Backdrop(entry: entry),
-                    const DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Colors.transparent, Colors.black54],
-                        ),
-                      ),
-                    ),
-                    Center(
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: const BoxDecoration(
-                          color: Colors.black54,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.play_arrow,
-                          size: 28,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      left: 8,
-                      right: 8,
-                      bottom: 8,
-                      child: Row(
+                    AspectRatio(
+                      aspectRatio: DesignTokens.continueCardAspect,
+                      child: Stack(
+                        fit: StackFit.expand,
                         children: [
-                          Expanded(
-                            child: Text(
-                              entry.remainingLabel(),
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
+                          _Backdrop(entry: entry),
+                          const DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.transparent,
+                                  Colors.black87,
+                                ],
+                                stops: [0.4, 1.0],
                               ),
                             ),
                           ),
-                          if (episodeLabel != null)
-                            Badge(label: episodeLabel, tone: BadgeTone.neutral),
+                          Center(
+                            child: Container(
+                              padding: const EdgeInsets.all(
+                                DesignTokens.space2,
+                              ),
+                              decoration: const BoxDecoration(
+                                color: Colors.black54,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.play_arrow,
+                                size: 28,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            left: DesignTokens.space2,
+                            right: DesignTokens.space2,
+                            bottom: DesignTokens.space2,
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    entry.remainingLabel(),
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                if (episodeLabel != null)
+                                  Badge(
+                                    label: episodeLabel,
+                                    tone: BadgeTone.neutral,
+                                  ),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: LinearProgressIndicator(
-                        value: entry.progress.clamp(0.0, 1.0),
-                        minHeight: 3,
-                        backgroundColor: Colors.white24,
-                        color: DesignTokens.accent,
-                      ),
+                    LinearProgressIndicator(
+                      value: entry.progress.clamp(0.0, 1.0),
+                      minHeight: 3,
+                      backgroundColor: Colors.white24,
+                      color: DesignTokens.accent,
                     ),
                   ],
                 ),
@@ -241,13 +252,13 @@ class _ContinueCard extends ConsumerWidget {
                   children: [
                     Text(
                       entry.title,
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: DesignTokens.space2),
                     Text(
                       entry.providerName.isEmpty
                           ? 'Resume from ${formatWatchTimestamp(entry.position)}'
@@ -261,19 +272,18 @@ class _ContinueCard extends ConsumerWidget {
                   ],
                 ),
               ),
-              InkWell(
-                borderRadius: BorderRadius.circular(999),
-                onTap: () =>
-                    ref.read(watchHistoryProvider.notifier).remove(entry.key),
-                child: const Padding(
-                  padding: EdgeInsets.all(4),
-                  child: Tooltip(
-                    message: 'Remove',
-                    child: Icon(
-                      Icons.close,
-                      size: 16,
-                      color: DesignTokens.textTertiary,
-                    ),
+              SizedBox(
+                width: 48,
+                height: 48,
+                child: IconButton(
+                  tooltip: 'Remove',
+                  onPressed: () => ref
+                      .read(watchHistoryProvider.notifier)
+                      .remove(entry.key),
+                  icon: const Icon(
+                    Icons.close,
+                    size: 16,
+                    color: DesignTokens.textTertiary,
                   ),
                 ),
               ),
@@ -329,23 +339,22 @@ class _BackdropFallback extends StatelessWidget {
       color: DesignTokens.surface2,
       alignment: Alignment.center,
       padding: const EdgeInsets.all(DesignTokens.space3),
-      child: Row(
+      child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           const Icon(
             Icons.movie_outlined,
-            size: 28,
+            size: 32,
             color: DesignTokens.textTertiary,
           ),
-          const SizedBox(width: DesignTokens.space2),
-          Flexible(
-            child: Text(
-              entry.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(color: DesignTokens.textSecondary),
-            ),
+          const SizedBox(height: DesignTokens.space2),
+          Text(
+            entry.title,
+            textAlign: TextAlign.center,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: DesignTokens.textSecondary),
           ),
         ],
       ),

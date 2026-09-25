@@ -81,6 +81,12 @@ typedef struct {
     int32_t       readahead_window;  /* current adaptive readahead size */
     int32_t       active_peers;
     int32_t       download_rate;     /* bytes/s for this stream */
+    int32_t       active_deadlines;  /* currently scheduled urgent pieces */
+    float         target_buffer_seconds; /* adaptive forward target */
+    int64_t       cached_verified_bytes; /* verified before this stream */
+    int64_t       newly_downloaded_bytes; /* verified after this stream began */
+    int64_t       local_reread_bytes; /* served from already verified storage */
+    int64_t       first_http_range_at_ms; /* epoch ms, 0 until first request */
 } lt_stream_status;
 
 /* ── port of settings/btsets.go BTSets struct ── */
@@ -114,10 +120,17 @@ typedef void (*lt_alert_callback)(int alert_type, lt_torrent_id id,
 /* session */
 /* Android/OpenSSL trust-store setup. Call before lt_create_session(). */
 TORRENT_API void lt_set_ssl_cert_path(const char* path);
+/* Optional DHT/session state restore: path must be set before
+   lt_create_session(). A missing/corrupt file is ignored. */
+TORRENT_API void lt_set_session_state_path(const char* path);
 TORRENT_API lt_session_t lt_create_session(const char* listen_interface,
                                            int download_limit,
                                            int upload_limit);
 TORRENT_API void         lt_destroy_session(lt_session_t session);
+/* Persist DHT routing state so the next launch joins the DHT immediately
+   instead of bootstrapping from the root nodes again. */
+TORRENT_API int          lt_save_session_state(lt_session_t session,
+                                               const char* path);
 
 /* engine config — port of settings/btsets.go + btserver.go configure() */
 TORRENT_API void lt_configure_session(lt_session_t session,
@@ -139,6 +152,17 @@ TORRENT_API lt_torrent_id lt_add_torrent_file(lt_session_t session,
                                               const char* file_path,
                                               const char* save_path,
                                               int stream_only);
+/* Add from cached fast-resume data (contains the info-dict, verified piece
+   map, and last-known peers). Skips metadata exchange and disk rechecks. */
+TORRENT_API lt_torrent_id lt_add_torrent_resume(lt_session_t session,
+                                                const char* resume_path,
+                                                const char* save_path,
+                                                int stream_only);
+/* Asynchronous fast-resume save: results land in a save_resume_data_alert
+   handled on the native alert thread, so this never blocks the caller. */
+TORRENT_API int lt_save_resume_data(lt_session_t session,
+                                    lt_torrent_id id,
+                                    const char* path);
 TORRENT_API void lt_remove_torrent(lt_session_t session,
                                    lt_torrent_id id, int delete_files);
 TORRENT_API void lt_pause_torrent(lt_session_t session, lt_torrent_id id);

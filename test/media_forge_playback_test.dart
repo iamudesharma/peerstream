@@ -7,21 +7,41 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('AppSettings useMediaForgePlayer', () {
-    test('defaults to false', () {
+  group('AppSettings MediaForge preferences', () {
+    test('defaults to the standard player with enhancement off', () {
       expect(const AppSettings().useMediaForgePlayer, isFalse);
+      expect(
+        const AppSettings().mediaForgeVideoEnhancementMode,
+        VideoEnhancementMode.off,
+      );
     });
 
     test('persists across restarts', () async {
       SharedPreferences.setMockInitialValues({});
       await writeAppSettings(
-        const AppSettings().copyWith(useMediaForgePlayer: true),
+        const AppSettings().copyWith(
+          useMediaForgePlayer: true,
+          mediaForgeVideoEnhancementMode: VideoEnhancementMode.highQuality,
+        ),
       );
-      expect((await readAppSettings()).useMediaForgePlayer, isTrue);
+      final enabled = await readAppSettings();
+      expect(enabled.useMediaForgePlayer, isTrue);
+      expect(
+        enabled.mediaForgeVideoEnhancementMode,
+        VideoEnhancementMode.highQuality,
+      );
       await writeAppSettings(
-        const AppSettings().copyWith(useMediaForgePlayer: false),
+        const AppSettings().copyWith(
+          useMediaForgePlayer: false,
+          mediaForgeVideoEnhancementMode: VideoEnhancementMode.sharp,
+        ),
       );
-      expect((await readAppSettings()).useMediaForgePlayer, isFalse);
+      final disabled = await readAppSettings();
+      expect(disabled.useMediaForgePlayer, isFalse);
+      expect(
+        disabled.mediaForgeVideoEnhancementMode,
+        VideoEnhancementMode.sharp,
+      );
     });
 
     test('generic settings still persist (no regression)', () async {
@@ -37,6 +57,7 @@ void main() {
       expect(settings.streamingCatalogsEnabled, isFalse);
       // New flag keeps its default when unrelated fields change.
       expect(settings.useMediaForgePlayer, isFalse);
+      expect(settings.mediaForgeVideoEnhancementMode, VideoEnhancementMode.off);
     });
   });
 
@@ -56,8 +77,161 @@ void main() {
     });
 
     test('enum uses readable defaultPlayer name', () {
-      expect(PlayerBackend.values.map((e) => e.name), contains('defaultPlayer'));
+      expect(
+        PlayerBackend.values.map((e) => e.name),
+        contains('defaultPlayer'),
+      );
     });
+
+    test('default player ignores the MediaForge enhancement preference', () {
+      const settings = AppSettings(
+        useMediaForgePlayer: false,
+        mediaForgeVideoEnhancementMode: VideoEnhancementMode.highQuality,
+      );
+
+      expect(resolveBackend(settings), PlayerBackend.defaultPlayer);
+    });
+  });
+
+  group('MediaForge opening preview', () {
+    test('waits for a confirmed first presented frame', () {
+      expect(
+        shouldShowMediaForgeOpeningPreview(
+          firstFramePresented: false,
+          hasError: false,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldShowMediaForgeOpeningPreview(
+          firstFramePresented: true,
+          hasError: false,
+        ),
+        isFalse,
+      );
+    });
+
+    test('does not cover a player error', () {
+      expect(
+        shouldShowMediaForgeOpeningPreview(
+          firstFramePresented: false,
+          hasError: true,
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('MediaForge video enhancement integration', () {
+    test('passes the persisted mode to the public MediaForge setter', () async {
+      final received = <VideoEnhancementMode>[];
+
+      final accepted = await applyMediaForgeVideoEnhancementMode(
+        mode: VideoEnhancementMode.highQuality,
+        setMode: (mode) async {
+          received.add(mode);
+          return true;
+        },
+      );
+
+      expect(accepted, isTrue);
+      expect(received, [VideoEnhancementMode.highQuality]);
+    });
+
+    test(
+      'runtime change keeps the same controller and source generation',
+      () async {
+        final controller = MediaForgePlayerController();
+        addTearDown(controller.dispose);
+        final controllerIdentity = controller;
+        final sourceGeneration = controller.sourceGeneration;
+
+        await applyMediaForgeVideoEnhancementMode(
+          mode: VideoEnhancementMode.sharp,
+          setMode: controller.setVideoEnhancementMode,
+        );
+        await applyMediaForgeVideoEnhancementMode(
+          mode: VideoEnhancementMode.enhanced,
+          setMode: controller.setVideoEnhancementMode,
+        );
+
+        expect(identical(controller, controllerIdentity), isTrue);
+        expect(controller.sourceGeneration, sourceGeneration);
+        expect(
+          controller.value.videoEnhancementMode,
+          VideoEnhancementMode.enhanced,
+        );
+      },
+    );
+
+    test('unsupported capability keeps normal rendering available', () async {
+      const capabilities = VideoEnhancementCapabilities.unsupported;
+
+      expect(
+        isMediaForgeVideoEnhancementModeSupported(
+          mode: VideoEnhancementMode.off,
+          capabilities: capabilities,
+        ),
+        isTrue,
+      );
+      expect(
+        isMediaForgeVideoEnhancementModeSupported(
+          mode: VideoEnhancementMode.enhanced,
+          capabilities: capabilities,
+        ),
+        isFalse,
+      );
+      expect(
+        mediaForgeVideoEnhancementCapabilityDescription(capabilities),
+        contains('normal rendering'),
+      );
+      expect(
+        await applyMediaForgeVideoEnhancementMode(
+          mode: VideoEnhancementMode.enhanced,
+          setMode: (_) async => false,
+        ),
+        isFalse,
+      );
+    });
+
+    test(
+      'enhancement failure leaves the experimental flag unchanged',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        await writeAppSettings(
+          const AppSettings(
+            useMediaForgePlayer: true,
+            mediaForgeVideoEnhancementMode: VideoEnhancementMode.enhanced,
+          ),
+        );
+
+        final accepted = await applyMediaForgeVideoEnhancementMode(
+          mode: VideoEnhancementMode.enhanced,
+          setMode: (_) async => throw StateError('GPU pass failed'),
+        );
+
+        expect(accepted, isFalse);
+        expect((await readAppSettings()).useMediaForgePlayer, isTrue);
+      },
+    );
+
+    test(
+      'enhancement failure does not select the default-player fallback',
+      () async {
+        const settings = AppSettings(
+          useMediaForgePlayer: true,
+          mediaForgeVideoEnhancementMode: VideoEnhancementMode.highQuality,
+        );
+
+        final accepted = await applyMediaForgeVideoEnhancementMode(
+          mode: settings.mediaForgeVideoEnhancementMode,
+          setMode: (_) async => throw StateError('GPU unavailable'),
+        );
+
+        expect(accepted, isFalse);
+        expect(resolveBackend(settings), PlayerBackend.mediaForge);
+      },
+    );
   });
 
   group('buildMediaForgeMedia', () {
@@ -75,9 +249,7 @@ void main() {
     });
 
     test('file URI opens as a local file', () {
-      final media = buildMediaForgeMedia(
-        uri: Uri.file('/tmp/video.mp4'),
-      );
+      final media = buildMediaForgeMedia(uri: Uri.file('/tmp/video.mp4'));
       expect(media, isA<MediaForgeFile>());
     });
   });
@@ -104,10 +276,7 @@ void main() {
         61000,
       );
       expect(
-        resolveFallbackResumeMs(
-          controllerPositionMs: 0,
-          widgetResumeMs: 45000,
-        ),
+        resolveFallbackResumeMs(controllerPositionMs: 0, widgetResumeMs: 45000),
         45000,
       );
     });

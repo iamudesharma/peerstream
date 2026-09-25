@@ -6,3 +6,7 @@
 - Prefers Netflix/YouTube-style Continue Watching row that resumes the same source from saved timestamp with progress bar and remaining-time label. Confidence: 0.85
 - Prefers persistent My List bookmark row for quick access to saved titles alongside Continue Watching. Confidence: 0.85
 - Prefers hiding empty sections entirely rather than showing empty placeholders — e.g., My List row should only appear once it has data. Confidence: 0.85
+- Wants selection menus (audio tracks, subtitles) to clearly separate real discovered items from synthetic controls like "Auto" or "Off" — never confuse the two in the UI. Confidence: 0.85
+- Prefers explicit "On / Off" toggles for features like subtitles rather than relying on "Auto" behavior that obscures what is actually active. Confidence: 0.85
+- Wants real-time, granular status indicators during async operations (e.g., "Connecting", "Restoring saved video", "Buffering", "Playing from cache") so users always know what is happening. Confidence: 0.8
+- Expects a dedicated settings area for storage and playback with visible cache usage, adjustable limits, per-title removal, and clear-cache controls. Confidence: 0.8

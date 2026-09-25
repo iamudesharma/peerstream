@@ -363,28 +363,32 @@ final sourceDiscoveryProvider =
       );
     });
 
-final sourceResultsProvider =
-    FutureProvider.autoDispose.family<List<ProviderResult>, SourceRequest>((
-      ref,
-      request,
-    ) async {
-      final urls = await ref.watch(addonUrlsProvider.future);
-      final policy = await ref.watch(sourcePolicyProvider.future);
+final sourceResultsProvider = FutureProvider.autoDispose
+    .family<List<ProviderResult>, SourceRequest>((ref, request) async {
+      // Capture every dependency before the first asynchronous gap. A resume
+      // can briefly be the sole listener of this auto-disposed provider; if
+      // it is invalidated while an add-on policy is resolving, calling
+      // `ref.watch` afterwards throws instead of returning sources.
+      final urlsFuture = ref.watch(addonUrlsProvider.future);
+      final policyFuture = ref.watch(sourcePolicyProvider.future);
       final repository = ref.watch(mediaRepositoryProvider);
       final bundled = ref.watch(torrentProvider);
-      final key = '${urls.join(',')}|${_sourceCacheKey(request)}';
       // Keep the future alive briefly for back-navigation without pinning
       // every query forever.
       final keepAlive = ref.keepAlive();
-      Timer(const Duration(minutes: 2), keepAlive.close);
+      final expiry = Timer(const Duration(minutes: 2), keepAlive.close);
       final cancelTokens = <CancelToken?>[];
       ref.onDispose(() {
+        expiry.cancel();
         for (final t in cancelTokens) {
           try {
             t?.cancel('disposed');
           } catch (_) {}
         }
       });
+      final urls = await urlsFuture;
+      final policy = await policyFuture;
+      final key = '${urls.join(',')}|${_sourceCacheKey(request)}';
       return _sourceSearchCache.get(key, () async {
         Future<String>? imdb;
         final providers = <TorrentProvider>[

@@ -86,7 +86,7 @@ class MediaRow extends StatelessWidget {
           ),
         const SizedBox(height: DesignTokens.space3),
         SizedBox(
-          height: 252,
+          height: 272,
           child: items.when(
             loading: () => const MediaRowSkeleton(),
             error: (error, _) => Padding(

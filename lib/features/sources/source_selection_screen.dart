@@ -70,6 +70,7 @@ class _SourceSelectionScreenState
   final _savedSourceIds = <String>{};
   bool _directOnly = false;
   String _quality = 'All';
+  String? _prefetchedSourceId;
 
   SourceRequest get _request => (
         media: widget.mediaRef,
@@ -88,24 +89,45 @@ class _SourceSelectionScreenState
 
   @override
   Widget build(BuildContext context) {
-    final results = ref.watch(sourceResultsProvider(_request));
-    // Incremental discovery: fast providers appear immediately while slow
-    // ones still load. The banner below surfaces per-provider progress.
+    // Single search pass: the incremental discovery stream is the only
+    // provider query. It becomes the full grouped result set once complete,
+    // so addons are never queried twice for one screen open.
     final discovery = ref.watch(sourceDiscoveryProvider(_request));
+    final results = discovery.hasError
+        ? AsyncError<List<ProviderResult>>(
+            discovery.error!,
+            discovery.stackTrace ?? StackTrace.current,
+          )
+        : (discovery.value?.isComplete == true
+              ? AsyncData(
+                  discovery.value!.providers.values
+                      .map(
+                        (p) => ProviderResult(
+                          p.name,
+                          p.sources,
+                          error: p.error,
+                        ),
+                      )
+                      .toList(),
+                )
+              : const AsyncLoading<List<ProviderResult>>());
     // Warm the torrent session while addons resolve, and prefetch the single
-    // best torrent candidate once results arrive so metadata is ready by tap
-    // time. Deduplication and unused-candidate release live in the service.
-    ref.listen(sourceResultsProvider(_request), (_, next) {
-      next.whenData((providers) {
+    // best torrent candidate so metadata is ready by tap time. The first
+    // usable candidate warms immediately; once discovery completes a better
+    // ranked candidate may replace it. Deduplication and unused-candidate
+    // release live in the service.
+    ref.listen(sourceDiscoveryProvider(_request), (_, next) {
+      next.whenData((state) {
         final service = ref.read(streamingServiceProvider);
         // ignore: discarded_futures
         service.warmUp();
-        final candidates = providers.expand((p) => p.sources).toList();
-        final best = _bestPrefetchCandidate(candidates);
-        if (best != null) {
-          // ignore: discarded_futures
-          service.prefetchSource(best);
-        }
+        final best = _bestPrefetchCandidate(state.allSources);
+        if (best == null) return;
+        if (!state.isComplete && _prefetchedSourceId != null) return;
+        if (best.id == _prefetchedSourceId) return;
+        _prefetchedSourceId = best.id;
+        // ignore: discarded_futures
+        service.prefetchSource(best);
       });
     });
     final details = ref.watch(detailsProvider(widget.mediaRef));
@@ -130,6 +152,7 @@ class _SourceSelectionScreenState
                 context: context,
                 builder: (_) => const _ProviderSettings(),
               );
+              _prefetchedSourceId = null;
               ref.invalidate(sourceResultsProvider(_request));
               ref.invalidate(sourceDiscoveryProvider(_request));
             },
@@ -138,6 +161,7 @@ class _SourceSelectionScreenState
             tooltip: 'Search again',
             icon: const Icon(Icons.refresh),
             onPressed: () {
+              _prefetchedSourceId = null;
               ref.invalidate(sourceResultsProvider(_request));
               ref.invalidate(sourceDiscoveryProvider(_request));
             },

@@ -6,6 +6,7 @@ import '../../core/design_tokens.dart';
 import '../../core/widgets/app_scaffold.dart';
 import '../../core/widgets/settings_widgets.dart';
 import '../../providers/app_providers.dart';
+import 'http_server_section.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -36,6 +37,7 @@ class SettingsScreen extends ConsumerWidget {
                 ),
           ),
           const SizedBox(height: 16),
+          const HttpServerSection(),
           SettingsSection(
             title: 'Addons',
             subtitle: 'Manage torrent source addons',
