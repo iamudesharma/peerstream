@@ -3,10 +3,10 @@ import 'provider_catalog.dart';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:path_provider/path_provider.dart';
+import 'package:dartnative_path_provider/dartnative_path_provider.dart';
 
 Future<File> _file() async {
-  final directory = await getApplicationSupportDirectory();
+  final directory = Directory(getApplicationSupportDirectory());
   await directory.create(recursive: true);
   return File('${directory.path}/peerstream-addons.json');
 }

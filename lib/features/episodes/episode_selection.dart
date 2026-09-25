@@ -1,7 +1,8 @@
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:peerstream/core/navigation.dart';
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:dartnative/flutter_compat.dart' hide Badge;
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/image_url.dart';
 import '../../core/design_tokens.dart';
@@ -10,9 +11,9 @@ import '../../core/widgets/app_empty.dart';
 import '../../core/widgets/app_error.dart';
 import '../../core/widgets/skeletons.dart';
 import '../../models/season.dart';
-import '../../providers/app_providers.dart';
+import '../../providers/app_store.dart';
 
-class EpisodeSelection extends ConsumerStatefulWidget {
+class EpisodeSelection extends StatefulWidget {
   const EpisodeSelection({
     required this.seriesId,
     required this.seasons,
@@ -22,10 +23,10 @@ class EpisodeSelection extends ConsumerStatefulWidget {
   final List<SeasonSummary> seasons;
 
   @override
-  ConsumerState<EpisodeSelection> createState() => _EpisodeSelectionState();
+  State<EpisodeSelection> createState() => _EpisodeSelectionState();
 }
 
-class _EpisodeSelectionState extends ConsumerState<EpisodeSelection> {
+class _EpisodeSelectionState extends State<EpisodeSelection> {
   late final List<SeasonSummary> _regularSeasons =
       widget.seasons.where((s) => s.number > 0).toList();
   late final List<SeasonSummary> _specialSeasons =
@@ -59,11 +60,10 @@ class _EpisodeSelectionState extends ConsumerState<EpisodeSelection> {
         hint: 'TMDB has no season data for this series yet.',
       );
     }
-    final episodes = ref.watch(
-      episodeListProvider(
-        (seriesId: widget.seriesId, seasonNumber: seasonValue),
-      ),
-    );
+    final episodes = AppStore.instance.episodes((
+      seriesId: widget.seriesId,
+      seasonNumber: seasonValue,
+    ))..watch(context);
     final activeSeason = widget.seasons
         .where((s) => s.number == seasonValue)
         .firstOrNull;
@@ -97,20 +97,26 @@ class _EpisodeSelectionState extends ConsumerState<EpisodeSelection> {
             ),
           ),
         const SizedBox(height: 12),
-        DropdownMenu<int>(
-          initialSelection: seasonValue,
-          label: const Text('Season'),
-          onSelected: (value) {
-            if (value != null) setState(() => _season = value);
-          },
-          dropdownMenuEntries: _visibleSeasons
-              .map(
-                (season) => DropdownMenuEntry(
-                  value: season.number,
-                  label: season.name,
-                ),
-              )
-              .toList(),
+        PopupMenuButton<int>(
+          initialValue: seasonValue,
+          onSelected: (value) => setState(() => _season = value),
+          itemBuilder: (context) => [
+            for (final season in _visibleSeasons)
+              PopupMenuItem<int>(
+                value: season.number,
+                child: Text(season.name),
+              ),
+          ],
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Text(
+              _visibleSeasons
+                      .where((season) => season.number == seasonValue)
+                      .firstOrNull
+                      ?.name ??
+                  'Season',
+            ),
+          ),
         ),
         const SizedBox(height: 8),
         episodes.when(
@@ -120,11 +126,12 @@ class _EpisodeSelectionState extends ConsumerState<EpisodeSelection> {
             child: AppError(
               title: 'Could not load episodes',
               detail: friendlyError(error),
-              onRetry: () => ref.invalidate(
-                episodeListProvider(
-                  (seriesId: widget.seriesId, seasonNumber: seasonValue),
-                ),
-              ),
+              onRetry: () => AppStore.instance
+                  .episodes((
+                    seriesId: widget.seriesId,
+                    seasonNumber: seasonValue,
+                  ))
+                  .reload(),
               retryLabel: 'Retry',
             ),
           ),
@@ -186,21 +193,19 @@ class _EpisodeRow extends StatelessWidget {
                 borderRadius: BorderRadius.circular(6),
                 border: Border.all(color: DesignTokens.line),
               ),
-              clipBehavior: Clip.antiAlias,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
                   if (still != null)
-                    CachedNetworkImage(
-                      imageUrl: still,
+                    Image.network(
+                      still,
                       fit: BoxFit.cover,
-                      memCacheWidth: 342,
-                      maxWidthDiskCache: 342,
+                      cacheWidth: 342,
                       fadeInDuration: const Duration(milliseconds: 150),
-                      placeholder: (_, _) => const ColoredBox(
+                      placeholder: const ColoredBox(
                         color: DesignTokens.surface2,
                       ),
-                      errorWidget: (_, _, _) => const Icon(
+                      errorWidget: const Icon(
                         Icons.image_not_supported_outlined,
                         color: DesignTokens.textTertiary,
                       ),

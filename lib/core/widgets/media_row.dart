@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/design_tokens.dart';
 import '../../core/format.dart';
@@ -8,6 +9,7 @@ import '../../core/widgets/app_error.dart';
 import '../../core/widgets/section_header.dart';
 import '../../core/widgets/skeletons.dart';
 import '../../models/media_item.dart';
+import '../../providers/loadable.dart';
 import 'media_card.dart';
 
 class MediaRow extends StatelessWidget {
@@ -21,7 +23,7 @@ class MediaRow extends StatelessWidget {
   });
 
   final String title;
-  final AsyncValue<List<MediaItem>> items;
+  final Loadable<List<MediaItem>> items;
   final VoidCallback? onSeeAll;
   final String seeAllLabel;
   final bool demoBadge;
@@ -111,7 +113,7 @@ class MediaRow extends StatelessWidget {
                     title: 'Nothing here yet',
                     hint: 'Check back later for new titles.',
                   )
-                : ListView.separated(
+                : separatedListView(
                     padding: const EdgeInsets.symmetric(
                       horizontal: DesignTokens.pageGutter,
                     ),

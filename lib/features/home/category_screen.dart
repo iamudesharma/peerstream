@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:dartnative/flutter_compat.dart' hide Badge;
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/design_tokens.dart';
 import '../../core/format.dart';
@@ -8,9 +10,9 @@ import '../../core/widgets/app_error.dart';
 import '../../core/widgets/media_card.dart';
 import '../../core/widgets/skeletons.dart';
 import '../../models/media_item.dart';
-import '../../providers/app_providers.dart';
+import '../../providers/app_store.dart';
 
-class CategoryScreen extends ConsumerStatefulWidget {
+class CategoryScreen extends StatefulWidget {
   const CategoryScreen({
     required this.type,
     required this.genreId,
@@ -22,10 +24,10 @@ class CategoryScreen extends ConsumerStatefulWidget {
   final String title;
 
   @override
-  ConsumerState<CategoryScreen> createState() => _CategoryScreenState();
+  State<CategoryScreen> createState() => _CategoryScreenState();
 }
 
-class _CategoryScreenState extends ConsumerState<CategoryScreen> {
+class _CategoryScreenState extends State<CategoryScreen> {
   int _page = 1;
   final _items = <MediaItem>[];
   bool _loadingMore = false;
@@ -49,7 +51,7 @@ class _CategoryScreenState extends ConsumerState<CategoryScreen> {
       _pageError = null;
     });
     try {
-      final first = await ref.read(categoryProvider(_request).future);
+      final first = await AppStore.instance.category(_request).future;
       if (!mounted) return;
       setState(() {
         _items.addAll(first);
@@ -66,7 +68,9 @@ class _CategoryScreenState extends ConsumerState<CategoryScreen> {
     setState(() => _loadingMore = true);
     try {
       final next =
-          await ref.read(categoryProvider(_request.copyWithPage(_page + 1)).future);
+          await AppStore.instance
+              .category(_request.copyWithPage(_page + 1))
+              .future;
       if (!mounted) return;
       setState(() {
         _page += 1;
@@ -82,7 +86,11 @@ class _CategoryScreenState extends ConsumerState<CategoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final firstPage = ref.watch(categoryProvider((type: widget.type, genreId: widget.genreId, page: 1)));
+    final firstPage = AppStore.instance.category((
+      type: widget.type,
+      genreId: widget.genreId,
+      page: 1,
+    ))..watch(context);
     return Scaffold(
       appBar: AppBar(
         title: firstPage.when(
@@ -98,7 +106,7 @@ class _CategoryScreenState extends ConsumerState<CategoryScreen> {
         error: (error, _) => _CategoryError(
           error: error,
           onRetry: () {
-            ref.invalidate(categoryProvider);
+            AppStore.instance.clearCategories();
             _loadFirstPage();
           },
         ),
@@ -107,7 +115,7 @@ class _CategoryScreenState extends ConsumerState<CategoryScreen> {
             return _CategoryError(
               error: _pageError!,
               onRetry: () {
-                ref.invalidate(categoryProvider);
+                AppStore.instance.clearCategories();
                 _loadFirstPage();
               },
             );
@@ -121,22 +129,14 @@ class _CategoryScreenState extends ConsumerState<CategoryScreen> {
           }
           return RefreshIndicator(
             onRefresh: () async {
-              ref.invalidate(categoryProvider);
+              AppStore.instance.clearCategories();
               await _loadFirstPage();
             },
-            child: NotificationListener<ScrollNotification>(
-              onNotification: (notification) {
-                if (notification.metrics.pixels >=
-                    notification.metrics.maxScrollExtent - 400) {
-                  _loadMore();
-                }
-                return false;
-              },
-              child: GridView.builder(
+            child: GridView.builder(
                 padding: const EdgeInsets.all(DesignTokens.pageGutter),
                 gridDelegate:
-                    const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: DesignTokens.gridMaxExtent,
+                    const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
                   // 170 * 1.5 (poster) + ~46 (title + meta + spacing) = 301.
                   // 278 overflowed by 16px at 165.5w; 300 fits max extent and
                   // keeps aspect intact. Expanded poster in MediaCard also
@@ -148,18 +148,25 @@ class _CategoryScreenState extends ConsumerState<CategoryScreen> {
                 itemCount: _items.length + (_loadingMore || _hasMore ? 1 : 0),
                 itemBuilder: (_, index) {
                   if (index >= _items.length) {
-                    return const Center(
-                      child: SizedBox(
-                        width: 28,
-                        height: 28,
-                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                    if (_loadingMore) {
+                      return const Center(
+                        child: SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(strokeWidth: 2.5),
+                        ),
+                      );
+                    }
+                    return Center(
+                      child: TextButton(
+                        onPressed: _loadMore,
+                        child: const Text('Load more'),
                       ),
                     );
                   }
                   return MediaCard(item: _items[index]);
                 },
               ),
-            ),
           );
         },
       ),

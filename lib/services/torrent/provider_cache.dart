@@ -15,6 +15,17 @@ class ExpiringCache<K, V> {
   final LinkedHashMap<K, _Entry<V>> _entries = LinkedHashMap();
   final Map<K, Future<V>> _inflight = {};
 
+  void invalidateWhere(bool Function(K key) test) {
+    final stale = _entries.keys.where(test).toList();
+    for (final key in stale) {
+      _entries.remove(key);
+    }
+    final inflight = _inflight.keys.where(test).toList();
+    for (final key in inflight) {
+      _inflight.remove(key);
+    }
+  }
+
   Future<V> get(K key, Future<V> Function() loader) {
     final now = DateTime.now();
     final existing = _entries[key];

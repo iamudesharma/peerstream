@@ -48,6 +48,12 @@ key.properties
 # Public Mozilla CA bundle vendored with libtorrent_flutter; required at build
 # time even though it is only loaded at runtime on Android.
 !packages/libtorrent_flutter/assets/cacert.pem
+!assets/cacert.pem
+
+# Prebuilt libtorrent binaries fetched by tool/fetch_libtorrent_*.sh
+/android/app/src/main/jniLibs/
+/packages/libtorrent_flutter/ios/libtorrent_flutter.xcframework/
+/packages/libtorrent_flutter/prebuilt/
 local.properties
 google-services.json
 GoogleService-Info.plist

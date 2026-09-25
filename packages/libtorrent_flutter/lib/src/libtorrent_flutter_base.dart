@@ -7,12 +7,35 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
-import 'package:flutter/services.dart' show rootBundle;
 
 import 'ffi_bindings.dart';
 import 'models.dart';
+
+/// Supplies the Mozilla CA bundle used on Android before the session starts.
+///
+/// The app sets this from its bundled `assets/cacert.pem`. When it is unset,
+/// the package reads `packages/libtorrent_flutter/assets/cacert.pem` from the
+/// process working directory (source checkouts and tests).
+typedef CaBundleLoader = Future<List<int>?> Function();
+
+CaBundleLoader? loadCaBundle;
+
+Future<Uint8List> _readCaBundleFromDisk() async {
+  const candidates = [
+    'assets/cacert.pem',
+    'packages/libtorrent_flutter/assets/cacert.pem',
+  ];
+  for (final path in candidates) {
+    final file = File(path);
+    if (await file.exists()) return file.readAsBytes();
+  }
+  throw const FileSystemException(
+    'cacert.pem was not bundled. Set loadCaBundle or ship assets/cacert.pem.',
+  );
+}
 
 // ─── Tracker Management ─────────────────────────────────────────────────────
 
@@ -184,13 +207,10 @@ class LibtorrentFlutter {
         await certDir.create(recursive: true);
 
         final certFile = File('${certDir.path}/cacert.pem');
-        final byteData = await rootBundle.load(
-          'packages/libtorrent_flutter/assets/cacert.pem',
-        );
-        final certBytes = byteData.buffer.asUint8List(
-          byteData.offsetInBytes,
-          byteData.lengthInBytes,
-        );
+        final loaded = await loadCaBundle?.call();
+        final certBytes = loaded != null
+            ? Uint8List.fromList(loaded)
+            : await _readCaBundleFromDisk();
 
         // A normal Mozilla CA bundle is well over 100 KB.
         final certText = ascii.decode(certBytes, allowInvalid: true);

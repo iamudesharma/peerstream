@@ -1,5 +1,5 @@
 import 'package:dio/dio.dart';
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart';
 import 'package:peerstream/core/image_url.dart';
 import 'package:peerstream/models/media_item.dart';
 import 'package:peerstream/services/stremio/stremio_catalog_service.dart';

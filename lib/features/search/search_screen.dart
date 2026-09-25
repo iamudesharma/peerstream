@@ -1,8 +1,11 @@
+import 'package:peerstream/providers/app_store.dart';
+import 'package:peerstream/core/navigation.dart';
+import 'package:dartnative/flutter_compat.dart' hide Badge;
+import 'package:peerstream/core/gap_widgets.dart';
 import 'dart:async';
 
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/config.dart';
 import '../../core/design_tokens.dart';
@@ -12,15 +15,13 @@ import '../../core/widgets/app_error.dart';
 import '../../core/widgets/app_scaffold.dart';
 import '../../core/widgets/media_card.dart';
 import '../../core/widgets/skeletons.dart';
-import '../../providers/app_providers.dart';
-
-class SearchScreen extends ConsumerStatefulWidget {
+class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
   @override
-  ConsumerState<SearchScreen> createState() => _SearchScreenState();
+  State<SearchScreen> createState() => _SearchScreenState();
 }
 
-class _SearchScreenState extends ConsumerState<SearchScreen> {
+class _SearchScreenState extends State<SearchScreen> {
   final _controller = TextEditingController();
   Timer? _debounce;
   String _query = '';
@@ -51,7 +52,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final enabled = tmdb || AppConfig.hasStreamingCatalogs;
     final results = (_query.isEmpty || !enabled)
         ? null
-        : ref.watch(searchResultsProvider(_query));
+        : (AppStore.instance.search(_query)..watch(context));
     return AppScaffold(
       selectedIndex: 1,
       title: 'Search',
@@ -77,7 +78,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   suffixIcon: _query.isEmpty
                       ? null
                       : IconButton(
-                          tooltip: 'Clear search',
                           icon: const Icon(Icons.clear),
                           onPressed: _clear,
                         ),
@@ -92,7 +92,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 title: 'Search needs a TMDB token',
                 hint:
                     'Relaunch with --dart-define=TMDB_READ_TOKEN=your_token. The open movies on Home still play.',
-                action: FilledButton.icon(
+                action: filledIconButton(
                   onPressed: () => context.go('/'),
                   icon: const Icon(Icons.home_outlined),
                   label: const Text('Back to Home'),
@@ -152,7 +152,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   title: 'Search failed',
                   detail: friendlyError(error),
                   onRetry: () =>
-                      ref.invalidate(searchResultsProvider(_query)),
+                      AppStore.instance.search(_query).reload(),
                   retryLabel: 'Retry search',
                 ),
               ),
@@ -165,14 +165,16 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                             'Check the spelling or try a different title.',
                       ),
                     )
-                  : SliverPadding(
-                      padding: const EdgeInsets.all(
-                        DesignTokens.pageGutter,
-                      ),
-                      sliver: SliverGrid.builder(
+                  : SliverToBoxAdapter(
+                      child: GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        padding: const EdgeInsets.all(
+                          DesignTokens.pageGutter,
+                        ),
                         gridDelegate:
-                            const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: DesignTokens.gridMaxExtent,
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
                           mainAxisExtent: 300,
                           crossAxisSpacing: 12,
                           mainAxisSpacing: 16,

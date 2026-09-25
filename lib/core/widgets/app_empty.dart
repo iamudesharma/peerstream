@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:dartnative/dartnative.dart';
 
 import '../design_tokens.dart';
 

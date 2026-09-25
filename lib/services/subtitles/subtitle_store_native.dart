@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:dio/dio.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:dartnative_path_provider/dartnative_path_provider.dart';
 
 class SubtitleFileStore {
   final Dio _dio = Dio(
@@ -31,9 +31,8 @@ class SubtitleFileStore {
   }
 
   Future<File> _target(String name) async {
-    final support = await getApplicationSupportDirectory();
     final directory = Directory(
-      '${support.path}${Platform.pathSeparator}subtitles',
+      '${getApplicationSupportDirectory()}${Platform.pathSeparator}subtitles',
     );
     await directory.create(recursive: true);
     final safe = name.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');

@@ -1,4 +1,7 @@
-import 'package:flutter/material.dart';
+import 'package:dartnative/flutter_compat.dart' hide Badge;
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../design_tokens.dart';
 
@@ -68,7 +71,7 @@ class AppError extends StatelessWidget {
                 children: [
                   // ignore: use_null_aware_elements
                   if (secondaryWidget != null) secondaryWidget,
-                  FilledButton.icon(
+                  filledIconButton(
                     onPressed: onRetry,
                     icon: const Icon(Icons.refresh),
                     label: Text(retryLabel),

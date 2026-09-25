@@ -1,17 +1,18 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:peerstream/providers/app_store.dart';
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:dartnative/flutter_compat.dart' hide Badge;
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/config.dart';
 import '../../core/design_tokens.dart';
 import '../../core/widgets/settings_widgets.dart';
-import '../../providers/settings_providers.dart';
-
-class AboutScreen extends ConsumerWidget {
+class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final appInfo = ref.watch(appInfoProvider);
+  Widget build(BuildContext context) {
+    final appInfo = (AppStore.instance.appInfo..watch(context));
 
     return Scaffold(
       appBar: AppBar(title: const Text('About')),
@@ -135,10 +136,20 @@ class AboutScreen extends ConsumerWidget {
                 title: 'Third-party notices',
                 icon: Icons.description_outlined,
                 onTap: () {
-                  showLicensePage(
+                  showDialog<void>(
                     context: context,
-                    applicationName: 'PeerStream',
-                    applicationVersion: '1.0.0',
+                    builder: (context) => AlertDialog(
+                      title: const Text('Third-party notices'),
+                      content: const Text(
+                        'PeerStream bundles the WebTorrent demo catalog and libtorrent. See THIRD_PARTY_NOTICES.md in the project.',
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Close'),
+                        ),
+                      ],
+                    ),
                   );
                 },
               ),

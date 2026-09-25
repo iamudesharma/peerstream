@@ -1,16 +1,8 @@
-import Flutter
 import UIKit
+import dartnative_ios
 
 @main
-@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
-  override func application(
-    _ application: UIApplication,
-    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
-  ) -> Bool {
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
-  }
-
-  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
-    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
-  }
+@objc class AppDelegate: DartNativeAppDelegate {
+  // Your app starts in lib/main.dart. Add native customizations here if
+  // needed — see DartNativeAppDelegate for the overridable hooks.
 }

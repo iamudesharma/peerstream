@@ -1,9 +1,9 @@
+import '../../core/foundation.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:dartnative_path_provider/dartnative_path_provider.dart';
 
 import '../../models/torrent_models.dart';
 import '../../models/media_item.dart';
@@ -286,7 +286,7 @@ class PlaybackCacheStore {
   }
 
   Future<Directory> _root() async {
-    final support = await getApplicationSupportDirectory();
+    final support = Directory(getApplicationSupportDirectory());
     final target = Directory(
       '${support.path}${Platform.pathSeparator}$_directoryName',
     );
@@ -310,8 +310,8 @@ class PlaybackCacheStore {
   /// Old cache location: `.../Library/Caches/<app>/<directoryName>`.
   Future<String?> _legacyRootPath() async {
     try {
-      final cache = await getApplicationCacheDirectory();
-      return '${cache.path}${Platform.pathSeparator}$_directoryName';
+      final cache = getApplicationCacheDirectory();
+      return '$cache${Platform.pathSeparator}$_directoryName';
     } catch (_) {
       return null;
     }
@@ -355,7 +355,7 @@ class PlaybackCacheStore {
   }
 
   Future<File> _indexFile() async {
-    final support = await getApplicationSupportDirectory();
+    final support = Directory(getApplicationSupportDirectory());
     await support.create(recursive: true);
     return File('${support.path}${Platform.pathSeparator}$_indexName');
   }

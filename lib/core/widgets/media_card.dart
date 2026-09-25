@@ -1,6 +1,6 @@
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
+import 'package:peerstream/core/navigation.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/design_tokens.dart';
 import '../../core/image_url.dart';
@@ -24,24 +24,21 @@ class MediaCard extends StatelessWidget {
           ),
           border: Border.all(color: DesignTokens.line),
         ),
-        clipBehavior: Clip.antiAlias,
-        child: poster == null
-            ? _PosterFallback(title: item.title)
-            : CachedNetworkImage(
-                imageUrl: poster,
-                width: double.infinity,
-                height: double.infinity,
-                fit: BoxFit.cover,
-                // Downscale in memory + on disk to poster width to cut
-                // memory and decode cost on low-end devices.
-                memCacheWidth: 342,
-                maxWidthDiskCache: 342,
-                fadeInDuration: const Duration(milliseconds: 150),
-                placeholder: (_, _) => const ColoredBox(
-                  color: DesignTokens.surface2,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
+          child: poster == null
+              ? _PosterFallback(title: item.title)
+              : Image.network(
+                  poster,
+                  width: double.infinity,
+                  height: double.infinity,
+                  fit: BoxFit.cover,
+                  cacheWidth: 342,
+                  fadeInDuration: const Duration(milliseconds: 150),
+                  placeholder: const ColoredBox(color: DesignTokens.surface2),
+                  errorWidget: _PosterFallback(title: item.title),
                 ),
-                errorWidget: (_, _, _) => _PosterFallback(title: item.title),
-              ),
+        ),
       );
     }
 

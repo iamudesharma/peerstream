@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../design_tokens.dart';
 import '../format.dart';
@@ -40,7 +41,6 @@ class MediaMeta extends StatelessWidget {
                 Icons.star,
                 size: 14,
                 color: DesignTokens.warn,
-                semanticLabel: 'Rating',
               ),
               const SizedBox(width: 4),
               Text(ratingText, style: style),

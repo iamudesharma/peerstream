@@ -1,7 +1,9 @@
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/material.dart' hide Badge;
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
+import 'package:peerstream/providers/app_store.dart';
+import 'package:peerstream/core/navigation.dart';
+import 'package:dartnative/flutter_compat.dart' hide Badge;
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:dartnative/dartnative.dart' hide Badge;
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/image_url.dart';
 import '../../core/design_tokens.dart';
@@ -10,14 +12,13 @@ import '../../core/widgets/badges.dart';
 import '../../core/widgets/section_header.dart';
 import '../../models/media_item.dart';
 import '../../models/watch_progress.dart';
-import '../../providers/app_providers.dart';
 
-class ContinueWatchingRow extends ConsumerWidget {
+class ContinueWatchingRow extends StatelessWidget {
   const ContinueWatchingRow({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final history = ref.watch(watchHistoryProvider);
+  Widget build(BuildContext context) {
+    final history = (AppStore.instance.history..watch(context));
     return history.when(
       loading: () => const SizedBox.shrink(),
       error: (_, _) => const SizedBox.shrink(),
@@ -52,14 +53,14 @@ class ContinueWatchingRow extends ConsumerWidget {
                   ),
                 );
                 if (confirmed == true) {
-                  await ref.read(watchHistoryProvider.notifier).clear();
+                  await AppStore.instance.history.clear();
                 }
               },
             ),
             const SizedBox(height: DesignTokens.space3),
             SizedBox(
               height: 250,
-              child: ListView.separated(
+              child: separatedListView(
                 padding: const EdgeInsets.symmetric(
                   horizontal: DesignTokens.pageGutter,
                 ),
@@ -77,7 +78,7 @@ class ContinueWatchingRow extends ConsumerWidget {
   }
 }
 
-class _ContinueCard extends ConsumerWidget {
+class _ContinueCard extends StatelessWidget {
   const _ContinueCard({required this.entry});
   final WatchEntry entry;
 
@@ -103,21 +104,19 @@ class _ContinueCard extends ConsumerWidget {
     ).toString();
   }
 
-  Future<void> _resume(BuildContext context, WidgetRef ref) async {
-    final cached = await ref.read(playbackCacheProvider).lookupWatch(entry);
+  Future<void> _resume(BuildContext context) async {
+    final cached = await AppStore.instance.cache.lookupWatch(entry);
     if (cached != null) {
       if (!context.mounted) return;
       context.push(_playerRoute());
       return;
     }
     try {
-      final results = await ref.read(
-        sourceResultsProvider((
-          media: entry.media,
-          season: entry.season,
-          episode: entry.episode,
-        )).future,
-      );
+      final results = await AppStore.instance.sourceResults((
+        media: entry.media,
+        season: entry.season,
+        episode: entry.episode,
+      ));
       final available = results
           .expand((result) => result.sources)
           .any((source) => source.id == entry.sourceId);
@@ -126,7 +125,6 @@ class _ContinueCard extends ConsumerWidget {
         context.push(_playerRoute());
       } else {
         ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
           ..showSnackBar(
             const SnackBar(
               content: Text('That source expired — pick a fresh one.'),
@@ -141,7 +139,7 @@ class _ContinueCard extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final episodeLabel =
         entry.media.type == MediaType.tv &&
@@ -157,7 +155,7 @@ class _ContinueCard extends ConsumerWidget {
         children: [
           InkWell(
             borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
-            onTap: () => _resume(context, ref),
+            onTap: () => _resume(context),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
               child: Container(
@@ -165,7 +163,6 @@ class _ContinueCard extends ConsumerWidget {
                   color: DesignTokens.surface,
                   border: Border.all(color: DesignTokens.line),
                 ),
-                clipBehavior: Clip.antiAlias,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -176,6 +173,7 @@ class _ContinueCard extends ConsumerWidget {
                         children: [
                           _Backdrop(entry: entry),
                           const DecoratedBox(
+                            child: SizedBox.expand(),
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
                                 begin: Alignment.topCenter,
@@ -276,10 +274,8 @@ class _ContinueCard extends ConsumerWidget {
                 width: 48,
                 height: 48,
                 child: IconButton(
-                  tooltip: 'Remove',
-                  onPressed: () => ref
-                      .read(watchHistoryProvider.notifier)
-                      .remove(entry.key),
+                  onPressed: () =>
+                      AppStore.instance.history.remove(entry.key),
                   icon: const Icon(
                     Icons.close,
                     size: 16,
@@ -303,26 +299,24 @@ class _Backdrop extends StatelessWidget {
   Widget build(BuildContext context) {
     final backdrop = resolveImageUrl(entry.backdropPath, tmdbSize: 'w780');
     if (backdrop != null) {
-      return CachedNetworkImage(
-        imageUrl: backdrop,
+      return Image.network(
+        backdrop,
         fit: BoxFit.cover,
-        memCacheWidth: 780,
-        maxWidthDiskCache: 780,
+        cacheWidth: 780,
         fadeInDuration: const Duration(milliseconds: 150),
-        placeholder: (_, _) => const ColoredBox(color: DesignTokens.surface2),
-        errorWidget: (_, _, _) => _BackdropFallback(entry: entry),
+        placeholder: const ColoredBox(color: DesignTokens.surface2),
+        errorWidget: _BackdropFallback(entry: entry),
       );
     }
     final poster = resolveImageUrl(entry.posterPath, tmdbSize: 'w342');
     if (poster != null) {
-      return CachedNetworkImage(
-        imageUrl: poster,
+      return Image.network(
+        poster,
         fit: BoxFit.cover,
-        memCacheWidth: 342,
-        maxWidthDiskCache: 342,
+        cacheWidth: 342,
         fadeInDuration: const Duration(milliseconds: 150),
-        placeholder: (_, _) => const ColoredBox(color: DesignTokens.surface2),
-        errorWidget: (_, _, _) => _BackdropFallback(entry: entry),
+        placeholder: const ColoredBox(color: DesignTokens.surface2),
+        errorWidget: _BackdropFallback(entry: entry),
       );
     }
     return _BackdropFallback(entry: entry);

@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
+import 'package:peerstream/core/navigation.dart';
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../design_tokens.dart';
 

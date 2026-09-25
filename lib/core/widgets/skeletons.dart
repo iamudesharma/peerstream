@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/gap_widgets.dart';
 
 import '../design_tokens.dart';
 
@@ -78,12 +79,11 @@ class MediaRowSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       height: 252,
-      child: ListView.separated(
+      child: separatedListView(
         padding: const EdgeInsets.symmetric(
           horizontal: DesignTokens.pageGutter,
         ),
         scrollDirection: Axis.horizontal,
-        physics: const NeverScrollableScrollPhysics(),
         itemCount: count,
         separatorBuilder: (_, _) =>
             const SizedBox(width: DesignTokens.space3),
@@ -124,8 +124,8 @@ class SkeletonGrid extends StatelessWidget {
       padding: const EdgeInsets.all(DesignTokens.pageGutter),
       physics: const NeverScrollableScrollPhysics(),
       shrinkWrap: true,
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: DesignTokens.gridMaxExtent,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
         mainAxisExtent: 300,
         crossAxisSpacing: 12,
         mainAxisSpacing: 16,
@@ -145,15 +145,8 @@ class SliverSkeletonGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return SliverPadding(
       padding: const EdgeInsets.all(DesignTokens.pageGutter),
-      sliver: SliverGrid.builder(
-        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-          maxCrossAxisExtent: DesignTokens.gridMaxExtent,
-          mainAxisExtent: 300,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 16,
-        ),
-        itemCount: count,
-        itemBuilder: (_, _) => const _GridCellSkeleton(),
+      sliver: SliverToBoxAdapter(
+        child: SkeletonGrid(count: count),
       ),
     );
   }

@@ -1,40 +1,33 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
+import 'package:peerstream/providers/app_store.dart';
+import 'package:peerstream/providers/loadable.dart';
+import 'package:peerstream/core/navigation.dart';
+import 'package:dartnative/flutter_compat.dart' hide Badge;
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/config.dart';
 import '../../core/design_tokens.dart';
 import '../../core/widgets/app_scaffold.dart';
 import '../../core/widgets/media_row.dart';
 import '../../core/widgets/section_header.dart';
-import '../../providers/app_providers.dart';
 import '../../services/tmdb/tmdb_service.dart';
 import 'continue_watching_row.dart';
 
-class HomeScreen extends ConsumerWidget {
+class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final hasHistory =
-        ref.watch(watchHistoryProvider).value?.isNotEmpty ?? false;
+        (AppStore.instance.history..watch(context)).value?.isNotEmpty ?? false;
     final hasMyList =
-        ref.watch(myListProvider).value?.isNotEmpty ?? false;
+        (AppStore.instance.myList..watch(context)).value?.isNotEmpty ?? false;
     final hasToken = AppConfig.hasTmdbToken;
     return AppScaffold(
       selectedIndex: 0,
       body: RefreshIndicator(
-        onRefresh: () async {
-          ref.invalidate(trendingMoviesProvider);
-          ref.invalidate(trendingSeriesProvider);
-          ref.invalidate(popularMoviesProvider);
-          ref.invalidate(streamingCatalogsProvider);
-          ref.invalidate(streamingCatalogProvider);
-          ref.invalidate(searchResultsProvider);
-          ref.invalidate(categoryProvider);
-          ref.invalidate(watchHistoryProvider);
-          ref.invalidate(myListProvider);
-        },
+        onRefresh: () => AppStore.instance.reloadHome(),
         child: CustomScrollView(
           slivers: [
             _HomeSearchBar(onSearch: () => context.go('/search')),
@@ -56,7 +49,7 @@ class HomeScreen extends ConsumerWidget {
             SliverToBoxAdapter(
               child: MediaRow(
                 title: 'Trending movies',
-                items: ref.watch(trendingMoviesProvider),
+                items: (AppStore.instance.trendingMovies..watch(context)),
                 onSeeAll: hasToken
                     ? () => context.push(
                           '/category/movie/0?title=${Uri.encodeComponent('Trending movies')}',
@@ -70,7 +63,7 @@ class HomeScreen extends ConsumerWidget {
             SliverToBoxAdapter(
               child: MediaRow(
                 title: 'Trending series',
-                items: ref.watch(trendingSeriesProvider),
+                items: (AppStore.instance.trendingSeries..watch(context)),
                 onSeeAll: hasToken
                     ? () => context.push(
                           '/category/tv/0?title=${Uri.encodeComponent('Trending series')}',
@@ -84,7 +77,7 @@ class HomeScreen extends ConsumerWidget {
             SliverToBoxAdapter(
               child: MediaRow(
                 title: 'Popular movies',
-                items: ref.watch(popularMoviesProvider),
+                items: (AppStore.instance.popularMovies..watch(context)),
                 onSeeAll: hasToken
                     ? () => context.push(
                           '/category/movie/0?title=${Uri.encodeComponent('Popular movies')}',
@@ -104,10 +97,10 @@ class HomeScreen extends ConsumerWidget {
               child: SizedBox(height: DesignTokens.space6),
             ),
             if (!hasToken)
-              const SliverToBoxAdapter(
+              SliverToBoxAdapter(
                 child: MediaRow(
                   title: 'Open movies',
-                  items: AsyncData(demoItems),
+                  items: Loadable.seed(demoItems),
                   demoBadge: true,
                 ),
               ),
@@ -135,7 +128,6 @@ class _HomeSearchBar extends StatelessWidget {
       snap: false,
       automaticallyImplyLeading: false,
       backgroundColor: DesignTokens.surface,
-      surfaceTintColor: Colors.transparent,
       toolbarHeight: 68,
       flexibleSpace: SafeArea(
         bottom: false,
@@ -161,7 +153,6 @@ class _HomeSearchBar extends StatelessWidget {
                           decoration: const InputDecoration(
                             hintText: 'Search movies and series',
                             prefixIcon: Icon(Icons.search),
-                            isDense: true,
                             contentPadding: EdgeInsets.symmetric(
                               horizontal: DesignTokens.space3,
                               vertical: DesignTokens.space2,
@@ -178,8 +169,7 @@ class _HomeSearchBar extends StatelessWidget {
                         const SizedBox(width: DesignTokens.space2),
                         field,
                         const SizedBox(width: DesignTokens.space2),
-                        IconButton.filled(
-                          tooltip: 'Search',
+                        IconButton(
                           onPressed: onSearch,
                           icon: const Icon(Icons.search),
                         ),
@@ -192,7 +182,7 @@ class _HomeSearchBar extends StatelessWidget {
                       const SizedBox(width: DesignTokens.space3),
                       field,
                       const SizedBox(width: DesignTokens.space3),
-                      FilledButton.icon(
+                      filledIconButton(
                         onPressed: onSearch,
                         icon: const Icon(Icons.search),
                         label: const Text('Search'),
@@ -243,18 +233,18 @@ class StatusPill extends StatelessWidget {
   }
 }
 
-class _MyListSliver extends ConsumerWidget {
+class _MyListSliver extends StatelessWidget {
   const _MyListSliver();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final myList = ref.watch(myListProvider);
+  Widget build(BuildContext context) {
+    final myList = (AppStore.instance.myList..watch(context));
     return myList.when(
       loading: () => const SliverToBoxAdapter(child: SizedBox.shrink()),
       error: (_, _) => const SliverToBoxAdapter(child: SizedBox.shrink()),
       data: (list) {
         if (list.isEmpty) return const SliverToBoxAdapter(child: SizedBox.shrink());
-        final items = AsyncData(
+        final items = Loadable.seed(
           list.map((entry) => entry.toMediaItem()).toList(),
         );
         return SliverToBoxAdapter(
@@ -283,7 +273,7 @@ class _MyListSliver extends ConsumerWidget {
                     ),
                   );
                   if (confirmed == true) {
-                    await ref.read(myListProvider.notifier).clear();
+                    await AppStore.instance.myList.clear();
                   }
                 },
           ),
@@ -332,15 +322,15 @@ class _ConfigurationNotice extends StatelessWidget {
   }
 }
 
-class _StreamingCatalogs extends ConsumerWidget {
+class _StreamingCatalogs extends StatelessWidget {
   const _StreamingCatalogs();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     if (!AppConfig.hasStreamingCatalogs) {
       return const SizedBox.shrink();
     }
-    final catalogs = ref.watch(streamingCatalogsProvider);
+    final catalogs = (AppStore.instance.streamingCatalogs..watch(context));
     return catalogs.when(
       loading: () => const SizedBox.shrink(),
       error: (_, _) => const SizedBox.shrink(),
@@ -366,12 +356,10 @@ class _StreamingCatalogs extends ConsumerWidget {
             for (var i = 0; i < rows.length; i++) ...[
               MediaRow(
                 title: rows[i].title,
-                items: ref.watch(
-                  streamingCatalogProvider((
-                    type: rows[i].type,
-                    catalogId: rows[i].id,
-                  )),
-                ),
+                items: (AppStore.instance.catalogItems((
+                  type: rows[i].type,
+                  catalogId: rows[i].id,
+                ))..watch(context)),
               ),
               if (i != rows.length - 1)
                 const SizedBox(height: DesignTokens.space6),
@@ -444,7 +432,6 @@ class _Categories extends StatelessWidget {
                         ? 'Show ${genre.$1} movies'
                         : 'Add a TMDB token to browse ${genre.$1}',
                     child: ActionChip(
-                      avatar: Icon(genre.$3, size: 16),
                       label: Text(genre.$1),
                       onPressed: enabled
                           ? () => context.push(

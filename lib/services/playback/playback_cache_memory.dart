@@ -1,5 +1,5 @@
-import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../../core/foundation.dart';
+import 'package:dartnative_shared_preferences/dartnative_shared_preferences.dart';
 
 import '../../models/torrent_models.dart';
 import '../../models/media_item.dart';

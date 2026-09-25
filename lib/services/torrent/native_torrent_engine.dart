@@ -1,10 +1,10 @@
+import '../../core/foundation.dart';
 import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
 import 'package:libtorrent_flutter/libtorrent_flutter.dart' as lt;
-import 'package:path_provider/path_provider.dart';
+import 'package:dartnative_path_provider/dartnative_path_provider.dart';
 
 import '../../models/torrent_models.dart';
 import '../playback/playback_cache.dart';
@@ -51,9 +51,9 @@ class NativeTorrentEngine
   @override
   Future<void> initialize() async {
     if (_engine != null) return;
-    final cache = await getApplicationCacheDirectory();
+    final cache = getApplicationCacheDirectory();
     _sessionDirectory = await Directory(
-      '${cache.path}${Platform.pathSeparator}peerstream-session',
+      '$cache${Platform.pathSeparator}peerstream-session',
     ).create(recursive: true);
     await lt.LibtorrentFlutter.init(
       defaultSavePath: _sessionDirectory!.path,
