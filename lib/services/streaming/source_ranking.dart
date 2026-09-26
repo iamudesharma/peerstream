@@ -48,10 +48,7 @@ List<TorrentSource> rankSources(List<TorrentSource> sources) {
 /// Prefers the same source id (stable across re-query), then the same
 /// provider with compatible quality, then the globally best ranked source.
 /// Returns null when no playable alternative exists.
-TorrentSource? refreshSource(
-  TorrentSource old,
-  List<TorrentSource> fresh,
-) {
+TorrentSource? refreshSource(TorrentSource old, List<TorrentSource> fresh) {
   if (fresh.isEmpty) return null;
   for (final s in fresh) {
     if (s.id == old.id) return s;

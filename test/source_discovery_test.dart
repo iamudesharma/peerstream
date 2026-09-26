@@ -11,21 +11,25 @@ import 'package:test/test.dart';
 
 const _movie = MediaRef(id: 7, type: MediaType.movie);
 
-TorrentSource _src(String id, {TorrentInputType type = TorrentInputType.magnet, int? seeds, String name = 'Video 1080p'}) =>
-    TorrentSource(
-      id: id,
-      content: _movie,
-      name: name,
-      uri: type == TorrentInputType.directUrl
-          ? Uri.parse('https://cdn.example/$id.mp4')
-          : Uri.parse('magnet:?xt=urn:btih:$id'),
-      inputType: type,
-      providerName: 'P',
-      attribution: '',
-      license: '',
-      provenanceUrl: Uri.parse('https://example.com'),
-      seeds: seeds,
-    );
+TorrentSource _src(
+  String id, {
+  TorrentInputType type = TorrentInputType.magnet,
+  int? seeds,
+  String name = 'Video 1080p',
+}) => TorrentSource(
+  id: id,
+  content: _movie,
+  name: name,
+  uri: type == TorrentInputType.directUrl
+      ? Uri.parse('https://cdn.example/$id.mp4')
+      : Uri.parse('magnet:?xt=urn:btih:$id'),
+  inputType: type,
+  providerName: 'P',
+  attribution: '',
+  license: '',
+  provenanceUrl: Uri.parse('https://example.com'),
+  seeds: seeds,
+);
 
 void main() {
   test('fast provider emits before slow one hangs (incremental)', () async {
@@ -41,7 +45,10 @@ void main() {
       events.add(e);
       if (events.any((x) => x.name == 'Fast')) break;
     }
-    expect(events.any((x) => x.name == 'Fast' && x.status == ProviderStatus.ready), isTrue);
+    expect(
+      events.any((x) => x.name == 'Fast' && x.status == ProviderStatus.ready),
+      isTrue,
+    );
   });
 
   test('cancel tokens abort obsolete discovery requests', () async {
@@ -64,7 +71,12 @@ void main() {
   });
 
   test('ranking prefers direct, exact, compatible, seeds, quality', () {
-    final direct = _src('d1', type: TorrentInputType.directUrl, seeds: 0, name: 'Movie 480p');
+    final direct = _src(
+      'd1',
+      type: TorrentInputType.directUrl,
+      seeds: 0,
+      name: 'Movie 480p',
+    );
     final exact = TorrentSource(
       id: 'e1',
       content: _movie,
@@ -105,7 +117,10 @@ void main() {
   });
 
   test('expiring cache bounds entries, expires, and deduplicates', () async {
-    final cache = ExpiringCache<String, int>(maxEntries: 2, ttl: const Duration(milliseconds: 30));
+    final cache = ExpiringCache<String, int>(
+      maxEntries: 2,
+      ttl: const Duration(milliseconds: 30),
+    );
     var loads = 0;
     Future<int> loader() async {
       loads++;
@@ -113,7 +128,10 @@ void main() {
       return loads;
     }
 
-    final results = await Future.wait([cache.get('k', loader), cache.get('k', loader)]);
+    final results = await Future.wait([
+      cache.get('k', loader),
+      cache.get('k', loader),
+    ]);
     expect(results[0], results[1]);
     expect(loads, 1);
     await cache.get('a', () async => 1);
@@ -135,7 +153,10 @@ void main() {
       return 42;
     }
 
-    final results = await Future.wait([flight.run('k', work), flight.run('k', work)]);
+    final results = await Future.wait([
+      flight.run('k', work),
+      flight.run('k', work),
+    ]);
     expect(results, [42, 42]);
     expect(runs, 1);
   });
@@ -147,7 +168,12 @@ class _Fake implements TorrentProvider {
   final String name;
   final List<TorrentSource>? result;
   @override
-  Future<List<TorrentSource>> findSources(MediaRef c, {int? seasonNumber, int? episodeNumber, CancelToken? cancelToken}) {
+  Future<List<TorrentSource>> findSources(
+    MediaRef c, {
+    int? seasonNumber,
+    int? episodeNumber,
+    CancelToken? cancelToken,
+  }) {
     if (result == null) return Completer<List<TorrentSource>>().future;
     return Future.value(result);
   }
@@ -160,10 +186,18 @@ class _Cancellable implements TorrentProvider {
   @override
   String get name => 'Cancellable';
   @override
-  Future<List<TorrentSource>> findSources(MediaRef c, {int? seasonNumber, int? episodeNumber, CancelToken? cancelToken}) async {
+  Future<List<TorrentSource>> findSources(
+    MediaRef c, {
+    int? seasonNumber,
+    int? episodeNumber,
+    CancelToken? cancelToken,
+  }) async {
     final result = await gate.future;
     if (cancelToken?.isCancelled == true) {
-      throw DioException(requestOptions: RequestOptions(), type: DioExceptionType.cancel);
+      throw DioException(
+        requestOptions: RequestOptions(),
+        type: DioExceptionType.cancel,
+      );
     }
     return result;
   }

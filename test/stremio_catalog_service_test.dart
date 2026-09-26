@@ -28,7 +28,8 @@ void main() {
       'name': 'Practical Magic',
       'description': 'Two witch sisters...',
       'poster': 'https://images.justwatch.com/poster/11005490/s332/img',
-      'background': 'https://images.metahub.space/background/medium/tt0120791/img',
+      'background':
+          'https://images.metahub.space/background/medium/tt0120791/img',
       'released': '1998-10-16T00:00:00.000Z',
       'imdbRating': '6.4',
     }, MediaType.movie);
@@ -120,8 +121,7 @@ void main() {
                         'description': 'Overview',
                         'poster':
                             'https://images.justwatch.com/poster/1/s332/img',
-                        'background':
-                            'https://images.metahub.space/background/medium/tt0120791/img',
+                        'background': 'https://images.metahub.space/background/medium/tt0120791/img',
                         'released': '1998-10-16T00:00:00.000Z',
                         'imdbRating': '6.4',
                         'genres': ['Comedy'],
@@ -134,7 +134,10 @@ void main() {
               return;
             }
             handler.reject(
-              DioException(requestOptions: options, message: 'unexpected $path'),
+              DioException(
+                requestOptions: options,
+                message: 'unexpected $path',
+              ),
             );
           },
         ),
@@ -177,9 +180,6 @@ void main() {
     }, MediaType.tv);
     expect(seasons.map((s) => s.number), [1, 2]);
     expect(seasons.first.episodeCount, 2);
-    expect(
-      StremioCatalogService.seasonsOf({}, MediaType.movie),
-      isEmpty,
-    );
+    expect(StremioCatalogService.seasonsOf({}, MediaType.movie), isEmpty);
   });
 }

@@ -157,8 +157,10 @@ class _DetailsBodyState extends State<_DetailsBody> {
     final wide = MediaQuery.sizeOf(context).width >= 900;
     return ListView(
       children: [
-        AspectRatio(
-          aspectRatio: wide ? 21 / 9 : 16 / 7,
+        SizedBox(
+          height: wide
+              ? 480
+              : 350 + (MediaQuery.textScalerOf(context).scale(30) - 30) * 3,
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -274,7 +276,9 @@ class _DetailsBodyState extends State<_DetailsBody> {
                           .toList(),
                     ),
                   ],
-                  const SizedBox(height: DesignTokens.space4),
+                  const SizedBox(height: DesignTokens.space6),
+                  Text('The story', style: theme.textTheme.titleLarge),
+                  const SizedBox(height: DesignTokens.space3),
                   if (item.overview.isEmpty)
                     Text(
                       'No overview is available for this title yet.',
@@ -303,9 +307,7 @@ class _DetailsBodyState extends State<_DetailsBody> {
                           style: TextButton.styleFrom(
                             padding: EdgeInsets.zero,
                           ),
-                          child: Text(
-                            _expanded ? 'Show less' : 'Show more',
-                          ),
+                          child: Text(_expanded ? 'Show less' : 'Show more'),
                         ),
                       ],
                     ),

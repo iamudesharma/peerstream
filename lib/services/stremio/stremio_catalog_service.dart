@@ -49,17 +49,13 @@ class StremioCatalogService {
   Uri get _manifestUri => Uri.parse(AppConfig.streamingCatalogsManifestUrl);
   Uri get _catalogBase => _manifestUri.replace(
     pathSegments: [
-      ..._manifestUri.pathSegments.take(
-        _manifestUri.pathSegments.length - 1,
-      ),
+      ..._manifestUri.pathSegments.take(_manifestUri.pathSegments.length - 1),
     ],
   );
 
   Uri _cinemetaUri(List<String> segments) {
     final base = Uri.parse(AppConfig.cinemetaBaseUrl);
-    return base.replace(
-      pathSegments: [...base.pathSegments, ...segments],
-    );
+    return base.replace(pathSegments: [...base.pathSegments, ...segments]);
   }
 
   Future<Map<String, dynamic>> manifest() async {
@@ -148,11 +144,8 @@ class StremioCatalogService {
     String query,
   ) async {
     final stremioType = type == MediaType.movie ? 'movie' : 'series';
-    final uri = _cinemetaUri([
-      'catalog',
-      stremioType,
-      'top.json',
-    ]).replace(queryParameters: {'search': query});
+    final uri = _cinemetaUri(['catalog', stremioType, 'top.json'])
+        .replace(queryParameters: {'search': query});
     try {
       final response = await _dio.getUri<Map<String, dynamic>>(uri);
       final metas = response.data?['metas'];
@@ -195,11 +188,7 @@ class StremioCatalogService {
   /// Fetches full Cinemeta meta (seasons/videos included for series).
   Future<MediaDetails> meta(String imdbId, MediaType type) async {
     final stremioType = type == MediaType.movie ? 'movie' : 'series';
-    final uri = _cinemetaUri([
-      'meta',
-      stremioType,
-      '$imdbId.json',
-    ]);
+    final uri = _cinemetaUri(['meta', stremioType, '$imdbId.json']);
     final response = await _dio.getUri<Map<String, dynamic>>(uri);
     final meta = response.data?['meta'];
     if (meta is! Map<String, dynamic>) {

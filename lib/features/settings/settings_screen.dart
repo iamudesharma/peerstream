@@ -24,27 +24,25 @@ class SettingsScreen extends StatelessWidget {
         children: [
           Text(
             'Settings',
-            style: Theme.of(context)
-                .textTheme
-                .headlineSmall
+            style: Theme.of(context).textTheme.headlineLarge
                 ?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 4),
           Text(
-            'Configure PeerStream to your preferences.',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: DesignTokens.textSecondary,
-                ),
+            'Make yourself at home. Set up your perfect watch.',
+            style: Theme.of(context).textTheme.bodyMedium
+                ?.copyWith(color: DesignTokens.textSecondary),
           ),
           const SizedBox(height: 16),
-          const HttpServerSection(),
+
           SettingsSection(
             title: 'Addons',
             subtitle: 'Manage torrent source addons',
             children: [
               SettingsAction(
                 title: 'Manage addons',
-                subtitle: '$addonCount addon${addonCount == 1 ? '' : 's'} configured',
+                subtitle:
+                    '$addonCount addon${addonCount == 1 ? '' : 's'} configured',
                 icon: Icons.extension_outlined,
                 onTap: () => context.push('/settings/addons'),
               ),
@@ -74,6 +72,8 @@ class SettingsScreen extends StatelessWidget {
               ),
             ],
           ),
+          const SizedBox(height: 8),
+          const HttpServerSection(),
           SettingsSection(
             title: 'About',
             subtitle: 'App information and diagnostics',

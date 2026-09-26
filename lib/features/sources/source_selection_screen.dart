@@ -76,11 +76,8 @@ class _SourceSelectionScreenState
   int _lane = 0;
   Loadable<IncrementalDiscoveryState>? _discovery;
 
-  SourceRequest get _request => (
-        media: widget.mediaRef,
-        season: widget.season,
-        episode: widget.episode,
-      );
+  SourceRequest get _request =>
+      (media: widget.mediaRef, season: widget.season, episode: widget.episode);
 
   @override
   void initState() {
@@ -139,11 +136,7 @@ class _SourceSelectionScreenState
     );
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
             icon: const Icon(Icons.tune),
@@ -182,9 +175,7 @@ class _SourceSelectionScreenState
                 final incremental = discovery.value;
                 final fast = incremental?.allSources ?? const [];
                 if (fast.isNotEmpty) {
-                  final lane = [
-                    ProviderResult('Fast results', List.of(fast)),
-                  ];
+                  final lane = [ProviderResult('Fast results', List.of(fast))];
                   return Column(
                     children: [
                       _IncrementalBanner(discovery: incremental),
@@ -458,8 +449,7 @@ class _SearchingBanner extends StatelessWidget {
       padding: const EdgeInsets.all(DesignTokens.space3),
       decoration: BoxDecoration(
         color: DesignTokens.surface,
-        borderRadius:
-            BorderRadius.circular(DesignTokens.radiusCard),
+        borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
         border: Border.all(color: DesignTokens.line),
       ),
       child: Row(
@@ -525,9 +515,8 @@ class _IncrementalBanner extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: DesignTokens.textSecondary,
-              ),
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: DesignTokens.textSecondary),
             ),
           ),
         ],
@@ -563,9 +552,7 @@ class _Results extends StatelessWidget {
           .toList();
     }
     if (quality != 'All') {
-      sources = sources
-          .where((s) => formatQuality(s.name) == quality)
-          .toList();
+      sources = sources.where((s) => formatQuality(s.name) == quality).toList();
     }
     sources.sort((a, b) => _compareSources(a, b, sort));
     final itemCount = errors.length + (sources.isEmpty ? 1 : sources.length);
@@ -579,8 +566,7 @@ class _Results extends StatelessWidget {
             margin: const EdgeInsets.only(bottom: DesignTokens.space3),
             decoration: BoxDecoration(
               color: DesignTokens.surface,
-              borderRadius:
-                  BorderRadius.circular(DesignTokens.radiusCard),
+              borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
               border: Border.all(
                 color: DesignTokens.danger.withValues(alpha: 0.4),
               ),
@@ -649,8 +635,7 @@ class _SourceCard extends StatelessWidget {
         path: '/player/${source.content.routeKey}',
         queryParameters: {
           'source': source.id,
-          if (source.seasonNumber != null)
-            'season': '${source.seasonNumber}',
+          if (source.seasonNumber != null) 'season': '${source.seasonNumber}',
           if (source.episodeNumber != null)
             'episode': '${source.episodeNumber}',
           if (resumeMs != null) 'resume': '$resumeMs',
@@ -668,8 +653,7 @@ class _SourceCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: DesignTokens.space3),
       decoration: BoxDecoration(
         color: DesignTokens.surface,
-        borderRadius:
-            BorderRadius.circular(DesignTokens.radiusCard),
+        borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
         border: Border.all(color: DesignTokens.line),
       ),
       padding: const EdgeInsets.all(DesignTokens.space4),
@@ -683,8 +667,9 @@ class _SourceCard extends StatelessWidget {
                 child: Text(
                   source.name,
                   maxLines: 2,
-                  style: theme.textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w600),
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
               IconButton(
@@ -730,16 +715,10 @@ class _SourceCard extends StatelessWidget {
                     : Icons.hub_outlined,
               ),
               if (quality != null)
-                Badge(
-                  label: quality,
-                  icon: Icons.high_quality_outlined,
-                ),
+                Badge(label: quality, icon: Icons.high_quality_outlined),
               if (source.inputType != TorrentInputType.directUrl &&
                   source.seeds != null)
-                Badge(
-                  label: 'Seeds ${source.seeds}',
-                  icon: Icons.arrow_upward,
-                ),
+                Badge(label: 'Seeds ${source.seeds}', icon: Icons.arrow_upward),
               if (source.peers != null)
                 Badge(
                   label: 'Peers ${source.peers}',
@@ -825,8 +804,7 @@ class _ProviderSettingsState extends State<_ProviderSettings> {
                 child: urls.when(
                   loading: () => const Padding(
                     padding: EdgeInsets.symmetric(vertical: 24),
-                    child:
-                        Center(child: CircularProgressIndicator()),
+                    child: Center(child: CircularProgressIndicator()),
                   ),
                   error: (error, _) => AppError(
                     title: 'Could not load providers',
@@ -836,21 +814,15 @@ class _ProviderSettingsState extends State<_ProviderSettings> {
                     retryLabel: 'Retry',
                   ),
                   data: (value) {
-                    _text ??= TextEditingController(
-                      text: value.join('\n'),
-                    );
+                    _text ??= TextEditingController(text: value.join('\n'));
                     return Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           'All saved catalogs are searched together. Put one catalog link per line. Changes stay on this device.',
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodyMedium
-                              ?.copyWith(
-                                color: DesignTokens.textSecondary,
-                              ),
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(color: DesignTokens.textSecondary),
                         ),
                         const SizedBox(height: 12),
                         TextField(
@@ -897,13 +869,28 @@ class _ProviderSettingsState extends State<_ProviderSettings> {
                       if (controller == null) {
                         throw StateError('Editor is not ready.');
                       }
-                      await AppStore.instance.addonUrls.save(
-                            controller.text
-                                .split('\n')
-                                .map((s) => s.trim())
-                                .where((s) => s.isNotEmpty)
-                                .toList(),
-                          );
+                      // Partition, don't reject wholesale: one bad pasted
+                      // line must not silently discard every valid addon.
+                      // Invalid lines are reported by name below.
+                      final split = splitAddonUrlLines(controller.text);
+                      if (split.valid.isEmpty) {
+                        throw const FormatException('No valid addon links.');
+                      }
+                      await AppStore.instance.addonUrls.save(split.valid);
+                      if (!context.mounted) return;
+                      // Keep the bad lines visible for fixing instead of
+                      // closing over them silently.
+                      if (split.invalid.isNotEmpty) {
+                        setState(() {
+                          _saving = false;
+                          _error =
+                              'Saved ${split.valid.length}, skipped '
+                              '${split.invalid.length} invalid: '
+                              '${split.invalid.take(2).join(', ')}'
+                              '${split.invalid.length > 2 ? ', …' : ''}';
+                        });
+                        return;
+                      }
                       if (context.mounted) Navigator.pop(context);
                     } catch (_) {
                       if (mounted) {

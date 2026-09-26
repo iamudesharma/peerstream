@@ -78,7 +78,7 @@ class MediaRowSkeleton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 252,
+      height: 310,
       child: separatedListView(
         padding: const EdgeInsets.symmetric(
           horizontal: DesignTokens.pageGutter,

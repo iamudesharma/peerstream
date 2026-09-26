@@ -8,7 +8,12 @@ import '../format.dart';
 enum BadgeTone { neutral, accent, warn, danger }
 
 class Badge extends StatelessWidget {
-  const Badge({required this.label, this.tone = BadgeTone.neutral, this.icon, super.key});
+  const Badge({
+    required this.label,
+    this.tone = BadgeTone.neutral,
+    this.icon,
+    super.key,
+  });
 
   final String label;
   final BadgeTone tone;
@@ -18,25 +23,25 @@ class Badge extends StatelessWidget {
   Widget build(BuildContext context) {
     final (background, border, foreground) = switch (tone) {
       BadgeTone.neutral => (
-          DesignTokens.surface2,
-          DesignTokens.lineStrong,
-          DesignTokens.textSecondary
-        ),
+        DesignTokens.surface2,
+        DesignTokens.lineStrong,
+        DesignTokens.textSecondary,
+      ),
       BadgeTone.accent => (
-          DesignTokens.accentDim,
-          DesignTokens.accent.withValues(alpha: 0.5),
-          DesignTokens.accent
-        ),
+        DesignTokens.accentDim,
+        DesignTokens.accent.withValues(alpha: 0.5),
+        DesignTokens.accent,
+      ),
       BadgeTone.warn => (
-          DesignTokens.warn.withValues(alpha: 0.14),
-          DesignTokens.warn.withValues(alpha: 0.4),
-          DesignTokens.warn
-        ),
+        DesignTokens.warn.withValues(alpha: 0.14),
+        DesignTokens.warn.withValues(alpha: 0.4),
+        DesignTokens.warn,
+      ),
       BadgeTone.danger => (
-          DesignTokens.danger.withValues(alpha: 0.14),
-          DesignTokens.danger.withValues(alpha: 0.4),
-          DesignTokens.danger
-        ),
+        DesignTokens.danger.withValues(alpha: 0.14),
+        DesignTokens.danger.withValues(alpha: 0.4),
+        DesignTokens.danger,
+      ),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),

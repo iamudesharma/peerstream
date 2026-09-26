@@ -23,16 +23,10 @@ class SectionHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: DesignTokens.pageGutter,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: DesignTokens.pageGutter),
       child: Row(
         children: [
-          Text(
-            title,
-            style: theme.textTheme.titleLarge
-                ?.copyWith(fontWeight: FontWeight.w700),
-          ),
+          Expanded(child: Text(title, style: theme.textTheme.titleLarge)),
           if (count != null) ...[
             const SizedBox(width: DesignTokens.space2),
             Text(
@@ -42,7 +36,7 @@ class SectionHeader extends StatelessWidget {
               ),
             ),
           ],
-          const Spacer(),
+
           if (onSeeAll != null)
             textIconButton(
               onPressed: onSeeAll,

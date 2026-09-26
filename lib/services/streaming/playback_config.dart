@@ -3,12 +3,7 @@
 /// A sparse or partially downloaded file can report a full file length on
 /// disk while missing verified pieces for the selected video. Only
 /// [verified] qualifies as complete offline playback.
-enum FileVerificationStatus {
-  unknown,
-  verified,
-  partial,
-  missing,
-}
+enum FileVerificationStatus { unknown, verified, partial, missing }
 
 /// Coordinated timeout budget for one playback request.
 ///

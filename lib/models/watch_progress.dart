@@ -75,8 +75,7 @@ class WatchEntry {
         progress < watchTrivialProgress;
   }
 
-  bool get isResumable =>
-      positionMs > 0 && !isFinished && !isTrivial;
+  bool get isResumable => positionMs > 0 && !isFinished && !isTrivial;
 
   String remainingLabel() {
     final left = remaining;

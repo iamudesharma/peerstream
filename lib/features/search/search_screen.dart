@@ -64,6 +64,30 @@ class _SearchScreenState extends State<SearchScreen> {
                 DesignTokens.pageGutter,
                 24,
                 DesignTokens.pageGutter,
+                0,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Search',
+                    style: Theme.of(context).textTheme.headlineLarge,
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'A world of stories. Find yours.',
+                    style: TextStyle(color: DesignTokens.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                DesignTokens.pageGutter,
+                24,
+                DesignTokens.pageGutter,
                 DesignTokens.space4,
               ),
               child: TextField(
@@ -109,7 +133,7 @@ class _SearchScreenState extends State<SearchScreen> {
                   DesignTokens.space2,
                 ),
                 child: Text(
-                  'Keyless search via Cinemeta \u00b7 No API key',
+                  'Movies and series from Cinemeta',
                   style: TextStyle(
                     color: DesignTokens.textTertiary,
                     fontSize: 12,
@@ -122,7 +146,8 @@ class _SearchScreenState extends State<SearchScreen> {
               child: AppEmpty(
                 icon: Icons.search,
                 title: 'Search the catalogue',
-                hint: 'Type at least two characters. Results appear as you type.',
+                hint:
+                    'Type at least two characters. Results appear as you type.',
                 action: Wrap(
                   spacing: 8,
                   runSpacing: 8,
@@ -161,8 +186,7 @@ class _SearchScreenState extends State<SearchScreen> {
                       child: AppEmpty(
                         icon: Icons.search_off_outlined,
                         title: 'No results found',
-                        hint:
-                            'Check the spelling or try a different title.',
+                        hint: 'Check the spelling or try a different title.',
                       ),
                     )
                   : SliverToBoxAdapter(
@@ -175,7 +199,7 @@ class _SearchScreenState extends State<SearchScreen> {
                         gridDelegate:
                             const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 2,
-                          mainAxisExtent: 300,
+                          mainAxisExtent: 350,
                           crossAxisSpacing: 12,
                           mainAxisSpacing: 16,
                         ),

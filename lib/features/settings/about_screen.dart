@@ -21,17 +21,14 @@ class AboutScreen extends StatelessWidget {
         children: [
           Text(
             'About',
-            style: Theme.of(context)
-                .textTheme
-                .headlineSmall
+            style: Theme.of(context).textTheme.headlineSmall
                 ?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 4),
           Text(
             'App information and diagnostics.',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: DesignTokens.textSecondary,
-                ),
+            style: Theme.of(context).textTheme.bodyMedium
+                ?.copyWith(color: DesignTokens.textSecondary),
           ),
           const SizedBox(height: 16),
           SettingsSection(
@@ -43,11 +40,7 @@ class AboutScreen extends StatelessWidget {
                 icon: Icons.play_circle_fill,
               ),
               const Divider(height: 1),
-              SettingsInfo(
-                title: 'Version',
-                value: '1.0.0',
-                icon: Icons.tag,
-              ),
+              SettingsInfo(title: 'Version', value: '1.0.0', icon: Icons.tag),
               const Divider(height: 1),
               const SettingsInfo(
                 title: 'Description',
@@ -80,9 +73,7 @@ class AboutScreen extends StatelessWidget {
                     const Divider(height: 1),
                     SettingsInfo(
                       title: 'Engine status',
-                      value: info.engineSupported
-                          ? 'Supported'
-                          : 'Unsupported',
+                      value: info.engineSupported ? 'Supported' : 'Unsupported',
                       icon: info.engineSupported
                           ? Icons.check_circle_outline
                           : Icons.error_outline,

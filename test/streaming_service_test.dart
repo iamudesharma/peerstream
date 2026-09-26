@@ -21,6 +21,26 @@ final source = TorrentSource(
 );
 
 void main() {
+  test(
+    'slow diagnostics cannot delay the playable URL or revive a session',
+    () async {
+      final engine = _DelayedDiagnosticsEngine();
+      final service = StreamingService(engine, _EmptyCacheStore());
+      await service.start(source).timeout(const Duration(seconds: 1));
+      expect(engine.result.isCompleted, isFalse);
+      expect(service.state.playback?.uri.host, '127.0.0.1');
+      await engine.started.future.timeout(const Duration(seconds: 1));
+      await service.stop();
+      engine.result.complete(
+        const EngineDiagnostics(bridgeVersion: 'test', cacheCapacityBytes: 999),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(service.state.phase, StreamingPhase.stopped);
+      expect(service.state.playback, isNull);
+      await service.dispose();
+    },
+  );
+
   test('slow startup warns early then fails after three minutes', () async {
     final service = StreamingService(FakeTorrentEngine(), _EmptyCacheStore());
     final delays = <Duration>[];
@@ -73,6 +93,30 @@ void main() {
     expect(engine.stopped, isTrue);
     await service.dispose();
   });
+
+  test(
+    'overlapping opens of one source share the add and retain its handle',
+    () async {
+      final engine = _DelayedAddTorrentEngine();
+      final service = StreamingService(engine, _EmptyCacheStore());
+
+      final first = service.start(source);
+      await engine.addStarted.future;
+      final second = service.start(source);
+      // Let the successor join the in-flight add before completing it.
+      await Future<void>.delayed(Duration.zero);
+      expect(engine.addCalls, 1);
+
+      engine.completeAdd();
+      await Future.wait([first, second]);
+
+      // The superseded start must not pause the shared native handle after the
+      // successor has adopted it.
+      expect(engine.stopCalls, 0);
+      expect(service.state.playback?.uri.host, '127.0.0.1');
+      await service.dispose();
+    },
+  );
 
   test('reports unsupported platforms without adding a torrent', () async {
     final engine = FakeTorrentEngine(supported: false);
@@ -381,4 +425,39 @@ class FakeTorrentEngine implements TorrentEngine, StreamPositionController {
 
   @override
   Future<void> dispose() async {}
+}
+
+class _DelayedDiagnosticsEngine extends FakeTorrentEngine
+    implements EngineDiagnosticsProvider {
+  final started = Completer<void>();
+  final result = Completer<EngineDiagnostics>();
+  @override
+  String get bridgeVersion => 'test';
+  @override
+  Future<EngineDiagnostics> engineDiagnostics() {
+    started.complete();
+    return result.future;
+  }
+}
+
+class _DelayedAddTorrentEngine extends FakeTorrentEngine {
+  final addStarted = Completer<void>();
+  final _addResult = Completer<TorrentHandle>();
+  int addCalls = 0;
+  int stopCalls = 0;
+
+  @override
+  Future<TorrentHandle> add(TorrentSource source) {
+    addCalls++;
+    if (!addStarted.isCompleted) addStarted.complete();
+    return _addResult.future;
+  }
+
+  void completeAdd() => _addResult.complete(const TorrentHandle('1'));
+
+  @override
+  Future<void> stop(TorrentHandle handle, {bool deleteFiles = true}) async {
+    stopCalls++;
+    await super.stop(handle, deleteFiles: deleteFiles);
+  }
 }
