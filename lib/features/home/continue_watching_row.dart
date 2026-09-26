@@ -153,8 +153,7 @@ class _ContinueCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          InkWell(
-            borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
+          GestureDetector(
             onTap: () => _resume(context),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(DesignTokens.radiusCard),

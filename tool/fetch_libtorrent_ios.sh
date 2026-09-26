@@ -5,7 +5,9 @@
 # the first iOS build.
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-VERSION=$(sed -n 's/^version:[[:space:]]*//p' "$ROOT/packages/libtorrent_flutter/pubspec.yaml" | head -n 1)
+# Strip CR as well as spaces: the vendored pubspec.yaml has CRLF endings, and a
+# trailing \r makes curl reject the whole URL as malformed.
+VERSION=$(sed -n 's/^version:[[:space:]]*//p' "$ROOT/packages/libtorrent_flutter/pubspec.yaml" | head -n 1 | tr -d '\r')
 BASE="https://github.com/ayman708-UX/libtorrent_flutter/releases/download/v${VERSION}"
 DEST="$ROOT/packages/libtorrent_flutter/ios/libtorrent_flutter.xcframework"
 if [ -d "$DEST/ios-arm64" ]; then

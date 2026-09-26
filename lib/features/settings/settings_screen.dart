@@ -86,6 +86,8 @@ class SettingsScreen extends StatelessWidget {
               ),
             ],
           ),
+          // Clears the Scaffold's tab bar; see home_screen.dart.
+          const SizedBox(height: bottomBarHeight),
         ],
       ),
     );

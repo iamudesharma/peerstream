@@ -5,6 +5,10 @@ import 'package:peerstream/core/icons.dart';
 
 import '../design_tokens.dart';
 
+/// Height the Scaffold's own bottom navigation bar occupies on a narrow
+/// layout. The bar is not a system inset, so the body has to reserve it.
+const double bottomBarHeight = 56;
+
 class AppScaffold extends StatelessWidget {
   const AppScaffold({
     required this.body,
@@ -24,15 +28,10 @@ class AppScaffold extends StatelessWidget {
     final width = MediaQuery.sizeOf(context).width;
     final wide = width >= 900;
     final extended = width >= 1200;
-    final content = Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: DesignTokens.contentMaxWidth,
-        ),
-        child: body,
-      ),
-    );
     return Scaffold(
+      // Scaffold does not read the theme here: with backgroundColor null the
+      // route reports the white default and the page reads as a light screen.
+      backgroundColor: DesignTokens.background,
       appBar: wide
           ? null
           : AppBar(
@@ -46,12 +45,14 @@ class AppScaffold extends StatelessWidget {
                 const SizedBox(width: 8),
               ],
             ),
-      body: SafeArea(
-        top: wide,
-        bottom: false,
-        child: wide
-            ? Row(
-                children: [
+      // No wrapper around [body] on a narrow layout: the Scaffold body has to
+      // BE the scrollable. Padding/Center/ConstrainedBox around it leave it
+      // without a bounded height and the whole subtree collapses. Screens
+      // reserve the tab bar's height as trailing content instead
+      // (see [bottomBarHeight]).
+      body: wide
+          ? Row(
+              children: [
                   SizedBox(
                     width: extended ? 224 : 88,
                     child: Column(
@@ -116,11 +117,19 @@ class AppScaffold extends StatelessWidget {
                     ),
                   ),
                   const VerticalDivider(width: 1),
-                  Expanded(child: content),
-                ],
-              )
-            : content,
-      ),
+                  Expanded(
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: DesignTokens.contentMaxWidth,
+                        ),
+                        child: body,
+                      ),
+                    ),
+                  ),
+              ],
+            )
+          : body,
       bottomNavigationBar: wide
           ? null
           : NavigationBar(
@@ -208,9 +217,10 @@ class _NavigationItem extends StatelessWidget {
         color: selected ? DesignTokens.surface2 : Colors.transparent,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: InkWell(
+      // GestureDetector, not InkWell: InkWell has no native counterpart and
+      // its subtree is dropped, which blanked the whole navigation rail.
+      child: GestureDetector(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           child: Row(

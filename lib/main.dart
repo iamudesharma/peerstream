@@ -30,7 +30,7 @@ Future<void> main() async {
   unawaited(AppStore.instance.history.reload());
   unawaited(AppStore.instance.addonUrls.reload());
   WidgetsBinding.instance.addObserver(_QuitObserver(store));
-  runApp(const PeerStreamApp());
+  runApp(PeerStreamApp());
 }
 
 class _QuitObserver with WidgetsBindingObserver {

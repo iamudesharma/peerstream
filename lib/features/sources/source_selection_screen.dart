@@ -135,6 +135,9 @@ class _SourceSelectionScreenState
       error: (_, _) => 'Sources',
     );
     return Scaffold(
+      // The screen colour belongs on the Scaffold: with no backgroundColor the
+      // route reports the white default and dark screens flash white.
+      backgroundColor: DesignTokens.background,
       appBar: AppBar(
         title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [

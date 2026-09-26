@@ -115,6 +115,12 @@ class AddonsScreen extends StatelessWidget {
     final addonUrls = (AppStore.instance.addonUrls..watch(context));
 
     return Scaffold(
+
+      // The screen colour belongs on the Scaffold: with no backgroundColor the
+
+      // route reports the white default and dark screens flash white.
+
+      backgroundColor: DesignTokens.background,
       appBar: AppBar(
         title: const Text('Addons'),
         actions: [

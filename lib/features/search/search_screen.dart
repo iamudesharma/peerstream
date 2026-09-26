@@ -209,6 +209,8 @@ class _SearchScreenState extends State<SearchScreen> {
                       ),
                     ),
             ),
+          // Clears the Scaffold's tab bar; see home_screen.dart.
+          const SliverToBoxAdapter(child: SizedBox(height: bottomBarHeight)),
         ],
       ),
     );

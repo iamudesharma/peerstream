@@ -177,9 +177,8 @@ class _EpisodeRow extends StatelessWidget {
     final theme = Theme.of(context);
     final still = resolveImageUrl(episode.stillPath, tmdbSize: 'w342');
     final runtime = formatRuntime(episode.runtimeMinutes);
-    return InkWell(
+    return GestureDetector(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(DesignTokens.radiusInput),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 10),
         child: Row(

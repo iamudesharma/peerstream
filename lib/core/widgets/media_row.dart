@@ -114,15 +114,23 @@ class MediaRow extends StatelessWidget {
                     title: 'Nothing here yet',
                     hint: 'Check back later for new titles.',
                   )
-                : separatedListView(
+                // FastList, not ListView.builder: the rows are image-heavy and
+                // ListView.builder builds every card eagerly as a live view.
+                // keepAliveCount windows the content so only the visible cards
+                // (plus a small overscan) hold bitmaps and views.
+                : FastList(
                     padding: const EdgeInsets.symmetric(
                       horizontal: DesignTokens.pageGutter,
                     ),
                     scrollDirection: Axis.horizontal,
                     itemCount: media.length,
-                    separatorBuilder: (_, _) =>
-                        const SizedBox(width: DesignTokens.space3),
-                    itemBuilder: (_, index) => MediaCard(item: media[index]),
+                    keepAliveCount: 6,
+                    itemBuilder: (_, index) => Padding(
+                      padding: const EdgeInsets.only(
+                        right: DesignTokens.space3,
+                      ),
+                      child: MediaCard(item: media[index]),
+                    ),
                   ),
           ),
         ),

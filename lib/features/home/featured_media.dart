@@ -25,9 +25,12 @@ class FeaturedMedia extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final narrow = constraints.maxWidth < 600;
+        // MediaQuery, not LayoutBuilder: a LayoutBuilder inside a scrolling
+        // body is not given resolved constraints here, so the hero collapsed
+        // to nothing.
+        child: Builder(
+          builder: (context) {
+            final narrow = MediaQuery.sizeOf(context).width < 600;
             return Stack(
               children: [
                 Positioned.fill(
@@ -39,7 +42,8 @@ class FeaturedMedia extends StatelessWidget {
                             image,
                             fit: BoxFit.cover,
                             alignment: Alignment.centerRight,
-                            cacheWidth: 1280,
+                            cacheWidth: narrow ? 780 : 1280,
+                            cacheHeight: narrow ? 440 : 720,
                             errorWidget: const SizedBox.shrink(),
                           ),
                   ),
@@ -66,7 +70,7 @@ class FeaturedMedia extends StatelessWidget {
                     child: SizedBox(
                       width: narrow
                           ? double.infinity
-                          : constraints.maxWidth * 0.6,
+                          : MediaQuery.sizeOf(context).width * 0.6,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisAlignment: MainAxisAlignment.center,

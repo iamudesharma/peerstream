@@ -397,17 +397,68 @@ class _StatefulBuilderState extends State<StatefulBuilder> {
   Widget build(BuildContext context) => widget.builder(context, setState);
 }
 
+/// Tappable row of [icon] + [label].
+///
+/// Built from GestureDetector + Container rather than FilledButton: the
+/// native Button renders only Text, Icon or imageAsset children and silently
+/// drops a Row, so `FilledButton(child: Row(...))` produced a blank control.
+Widget _iconLabelButton({
+  required VoidCallback? onPressed,
+  required Widget icon,
+  required Widget label,
+  required Color background,
+  required Color foreground,
+  Color? border,
+}) {
+  if (onPressed == null) {
+    background = background.withValues(alpha: 0.4);
+    foreground = foreground.withValues(alpha: 0.4);
+  }
+  return GestureDetector(
+    onTap: onPressed,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(12),
+        border: border == null ? null : Border.all(color: border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          // DartNative has no IconTheme, so recolour the icon by rebuilding it
+          // with the button's foreground instead of inheriting one.
+          if (icon is Icon)
+            Icon(icon.icon, size: icon.size, color: foreground)
+          else
+            icon,
+          const SizedBox(width: 8),
+          DefaultTextStyle(
+            style: TextStyle(
+              color: foreground,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+            ),
+            child: label,
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 Widget filledIconButton({
   required VoidCallback? onPressed,
   required Widget icon,
   required Widget label,
 }) {
-  return FilledButton(
+  return _iconLabelButton(
     onPressed: onPressed,
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [icon, const SizedBox(width: 8), label],
-    ),
+    icon: icon,
+    label: label,
+    background: const Color(0xFF1E7F5C),
+    foreground: Colors.white,
   );
 }
 
@@ -416,12 +467,13 @@ Widget outlinedIconButton({
   required Widget icon,
   required Widget label,
 }) {
-  return OutlinedButton(
+  return _iconLabelButton(
     onPressed: onPressed,
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [icon, const SizedBox(width: 8), label],
-    ),
+    icon: icon,
+    label: label,
+    background: Colors.transparent,
+    foreground: const Color(0xFFEDEFF2),
+    border: const Color(0xFF2C3542),
   );
 }
 
@@ -430,12 +482,12 @@ Widget textIconButton({
   required Widget icon,
   required Widget label,
 }) {
-  return TextButton(
+  return _iconLabelButton(
     onPressed: onPressed,
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [icon, const SizedBox(width: 8), label],
-    ),
+    icon: icon,
+    label: label,
+    background: Colors.transparent,
+    foreground: const Color(0xFF1E7F5C),
   );
 }
 

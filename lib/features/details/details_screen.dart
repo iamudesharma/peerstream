@@ -48,6 +48,9 @@ class _DetailsScreenState extends State<DetailsScreen> {
         false;
     final loadedItem = details.value?.item;
     return Scaffold(
+      // The screen colour belongs on the Scaffold: with no backgroundColor the
+      // route reports the white default and dark screens flash white.
+      backgroundColor: DesignTokens.background,
       appBar: AppBar(
         title: details.when(
           data: (value) => Text(
@@ -166,7 +169,11 @@ class _DetailsBodyState extends State<_DetailsBody> {
                 Image.network(
                   backdrop,
                   fit: BoxFit.cover,
-                  cacheWidth: 1280,
+                  // The hero is a full-bleed 350dp band; decoding the 1280px
+                  // source on both axes is what pushed this screen into the
+                  // image-cache thrash.
+                  cacheWidth: wide ? 1280 : 780,
+                  cacheHeight: wide ? 720 : 420,
                   fadeInDuration: const Duration(milliseconds: 150),
                   placeholder: const ColoredBox(color: DesignTokens.surface2),
                   errorWidget: const _BackdropFallback(),
@@ -192,12 +199,10 @@ class _DetailsBodyState extends State<_DetailsBody> {
                 left: 0,
                 right: 0,
                 bottom: 0,
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      maxWidth: DesignTokens.contentMaxWidth,
-                    ),
-                    child: Padding(
+                // No Center/ConstrainedBox in here: an unconstrained
+                // centering wrapper collapses on this runtime and dragged the
+                // whole overlay onto the bottom edge.
+                child: Padding(
                       padding: const EdgeInsets.fromLTRB(
                         DesignTokens.pageGutter,
                         0,
@@ -235,8 +240,6 @@ class _DetailsBodyState extends State<_DetailsBody> {
                           ),
                         ],
                       ),
-                    ),
-                  ),
                 ),
               ),
             ],

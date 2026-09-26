@@ -1,5 +1,6 @@
 import 'package:dartnative/dartnative.dart';
 
+import '../core/design_tokens.dart';
 import '../features/details/details_screen.dart';
 import '../features/home/category_screen.dart';
 import '../features/home/home_screen.dart';
@@ -167,6 +168,9 @@ class _RouteNeedsArguments extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // The screen colour belongs on the Scaffold: with no backgroundColor the
+      // route reports the white default and dark screens flash white.
+      backgroundColor: DesignTokens.background,
       appBar: AppBar(title: Text(name)),
       body: const Center(
         child: Text('Open this screen from the catalogue.'),

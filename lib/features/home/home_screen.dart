@@ -30,90 +30,66 @@ class HomeScreen extends StatelessWidget {
         demoItems.first;
     return AppScaffold(
       selectedIndex: 0,
-      body: RefreshIndicator(
-        onRefresh: () => AppStore.instance.reloadHome(),
-        child: CustomScrollView(
-          slivers: [
-            _HomeSearchBar(onSearch: () => context.go('/search')),
-            SliverToBoxAdapter(child: FeaturedMedia(item: featured)),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: DesignTokens.space6),
+      // A plain ListView, not CustomScrollView + slivers. The sliver form
+      // measured its content wrong on this runtime: everything after the
+      // streaming-catalogs section got zero height, so the scroll range ended
+      // there and the lower half of the page was unreachable.
+      body: ListView(
+        children: [
+          _HomeSearchBar(onSearch: () => context.go('/search')),
+          FeaturedMedia(item: featured),
+          const SizedBox(height: DesignTokens.space6),
+          const ContinueWatchingRow(),
+          if (hasHistory) const SizedBox(height: DesignTokens.space6),
+          const _MyListSliver(),
+          if (hasMyList) const SizedBox(height: DesignTokens.space6),
+          MediaRow(
+            title: 'Trending movies',
+            items: (AppStore.instance.trendingMovies..watch(context)),
+            onSeeAll: hasToken
+                ? () => context.push(
+                    '/category/movie/0?title=${Uri.encodeComponent('Trending movies')}',
+                  )
+                : null,
+          ),
+          const SizedBox(height: DesignTokens.space6),
+          MediaRow(
+            title: 'Trending series',
+            items: (AppStore.instance.trendingSeries..watch(context)),
+            onSeeAll: hasToken
+                ? () => context.push(
+                    '/category/tv/0?title=${Uri.encodeComponent('Trending series')}',
+                  )
+                : null,
+          ),
+          const SizedBox(height: DesignTokens.space6),
+          MediaRow(
+            title: 'Popular movies',
+            items: (AppStore.instance.popularMovies..watch(context)),
+            onSeeAll: hasToken
+                ? () => context.push(
+                    '/category/movie/0?title=${Uri.encodeComponent('Popular movies')}',
+                  )
+                : null,
+          ),
+          const SizedBox(height: DesignTokens.space6),
+          const _StreamingCatalogs(),
+          const SizedBox(height: DesignTokens.space6),
+          const _Categories(),
+          const SizedBox(height: DesignTokens.space6),
+          if (!hasToken) ...[
+            MediaRow(
+              title: 'Open movies',
+              items: Loadable.seed(demoItems),
+              demoBadge: true,
             ),
-            const SliverToBoxAdapter(child: ContinueWatchingRow()),
-            if (hasHistory)
-              const SliverToBoxAdapter(
-                child: SizedBox(height: DesignTokens.space6),
-              ),
-            const _MyListSliver(),
-            if (hasMyList)
-              const SliverToBoxAdapter(
-                child: SizedBox(height: DesignTokens.space6),
-              ),
-            SliverToBoxAdapter(
-              child: MediaRow(
-                title: 'Trending movies',
-                items: (AppStore.instance.trendingMovies..watch(context)),
-                onSeeAll: hasToken
-                    ? () => context.push(
-                        '/category/movie/0?title=${Uri.encodeComponent('Trending movies')}',
-                      )
-                    : null,
-              ),
-            ),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: DesignTokens.space6),
-            ),
-            SliverToBoxAdapter(
-              child: MediaRow(
-                title: 'Trending series',
-                items: (AppStore.instance.trendingSeries..watch(context)),
-                onSeeAll: hasToken
-                    ? () => context.push(
-                        '/category/tv/0?title=${Uri.encodeComponent('Trending series')}',
-                      )
-                    : null,
-              ),
-            ),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: DesignTokens.space6),
-            ),
-            SliverToBoxAdapter(
-              child: MediaRow(
-                title: 'Popular movies',
-                items: (AppStore.instance.popularMovies..watch(context)),
-                onSeeAll: hasToken
-                    ? () => context.push(
-                        '/category/movie/0?title=${Uri.encodeComponent('Popular movies')}',
-                      )
-                    : null,
-              ),
-            ),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: DesignTokens.space6),
-            ),
-            const SliverToBoxAdapter(child: _StreamingCatalogs()),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: DesignTokens.space6),
-            ),
-            const SliverToBoxAdapter(child: _Categories()),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: DesignTokens.space6),
-            ),
-            if (!hasToken)
-              SliverToBoxAdapter(
-                child: MediaRow(
-                  title: 'Open movies',
-                  items: Loadable.seed(demoItems),
-                  demoBadge: true,
-                ),
-              ),
-            if (!hasToken)
-              const SliverToBoxAdapter(
-                child: SizedBox(height: DesignTokens.space6),
-              ),
-            const SliverToBoxAdapter(child: _TmdbCredit()),
+            const SizedBox(height: DesignTokens.space6),
           ],
-        ),
+          const _TmdbCredit(),
+          // Clears the Scaffold's tab bar: the body is not inset for it, so
+          // without this the last row sits under the bar.
+          const SizedBox(height: bottomBarHeight),
+        ],
       ),
     );
   }
@@ -124,42 +100,45 @@ class _HomeSearchBar extends StatelessWidget {
   final VoidCallback onSearch;
 
   @override
-  Widget build(BuildContext context) => SliverToBoxAdapter(
-    child: Padding(
+  Widget build(BuildContext context) {
+    // MediaQuery, not LayoutBuilder: inside a scrolling body the builder's
+    // constraints are not resolved and the row collapses, which also left the
+    // whole list without a scroll range.
+    final wide = MediaQuery.sizeOf(context).width >= 600;
+    return Padding(
       padding: const EdgeInsets.all(DesignTokens.pageGutter),
-      child: LayoutBuilder(
-        builder: (context, constraints) => Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Discover',
-                    style: Theme.of(context).textTheme.headlineLarge,
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Find your next great watch.',
-                    style: TextStyle(color: DesignTokens.textSecondary),
-                  ),
-                ],
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Discover',
+                  style: Theme.of(context).textTheme.headlineLarge,
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Find your next great watch.',
+                  style: TextStyle(color: DesignTokens.textSecondary),
+                ),
+              ],
+            ),
+          ),
+          if (wide)
+            SizedBox(
+              width: 300,
+              child: outlinedIconButton(
+                onPressed: onSearch,
+                icon: const Icon(Icons.search, size: 20),
+                label: const Text('Search movies and series'),
               ),
             ),
-            if (constraints.maxWidth >= 600)
-              SizedBox(
-                width: 300,
-                child: outlinedIconButton(
-                  onPressed: onSearch,
-                  icon: const Icon(Icons.search, size: 20),
-                  label: const Text('Search movies and series'),
-                ),
-              ),
-          ],
-        ),
+        ],
       ),
-    ),
-  );
+    );
+  }
 }
 
 class StatusPill extends StatelessWidget {
