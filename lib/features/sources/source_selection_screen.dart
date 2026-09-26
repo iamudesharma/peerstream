@@ -1,7 +1,10 @@
-import 'package:flutter/material.dart' hide Badge;
-import 'package:flutter/services.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
+import 'package:peerstream/providers/app_store.dart';
+import 'package:peerstream/providers/loadable.dart';
+import 'package:peerstream/core/navigation.dart';
+import 'package:dartnative/flutter_compat.dart' hide Badge;
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:dartnative/dartnative.dart' hide Badge;
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/design_tokens.dart';
 import '../../core/format.dart';
@@ -11,11 +14,11 @@ import '../../core/widgets/badges.dart';
 import '../../core/widgets/skeletons.dart';
 import '../../models/media_item.dart';
 import '../../models/torrent_models.dart';
-import '../../providers/app_providers.dart';
 import '../../services/streaming/source_ranking.dart';
 import '../../services/torrent/addon_provider.dart';
+import '../../services/torrent/provider_catalog.dart';
 import '../../services/torrent/source_discovery.dart';
-import '../player/player_backend.dart';
+import '../player/resume.dart';
 
 enum _SortMode { seeds, size }
 
@@ -48,7 +51,7 @@ int _compareSources(TorrentSource a, TorrentSource b, _SortMode sort) {
   return compareRankedSources(a, b);
 }
 
-class SourceSelectionScreen extends ConsumerStatefulWidget {
+class SourceSelectionScreen extends StatefulWidget {
   const SourceSelectionScreen({
     required this.mediaRef,
     this.season,
@@ -60,19 +63,56 @@ class SourceSelectionScreen extends ConsumerStatefulWidget {
   final int? episode;
 
   @override
-  ConsumerState<SourceSelectionScreen> createState() =>
+  State<SourceSelectionScreen> createState() =>
       _SourceSelectionScreenState();
 }
 
-class _SourceSelectionScreenState extends ConsumerState<SourceSelectionScreen> {
+class _SourceSelectionScreenState
+    extends State<SourceSelectionScreen> {
   _SortMode _sort = _SortMode.seeds;
   final _savedSourceIds = <String>{};
   bool _directOnly = false;
   String _quality = 'All';
   String? _prefetchedSourceId;
+  int _lane = 0;
+  Loadable<IncrementalDiscoveryState>? _discovery;
 
   SourceRequest get _request =>
       (media: widget.mediaRef, season: widget.season, episode: widget.episode);
+
+  @override
+  void initState() {
+    super.initState();
+    _bindDiscovery();
+  }
+
+  @override
+  void dispose() {
+    _discovery?.removeListener(_onDiscovery);
+    super.dispose();
+  }
+
+  void _bindDiscovery() {
+    _discovery?.removeListener(_onDiscovery);
+    _discovery = AppStore.instance.discovery(_request)..addListener(_onDiscovery);
+  }
+
+  void _onDiscovery() {
+    final state = _discovery?.value;
+    if (state == null || !mounted) return;
+    AppStore.instance.streaming.warmUp();
+    final best = _bestPrefetchCandidate(state.allSources);
+    if (best == null) return;
+    if (!state.isComplete && _prefetchedSourceId != null) return;
+    if (best.id == _prefetchedSourceId) return;
+    _prefetchedSourceId = best.id;
+    AppStore.instance.streaming.prefetchSource(best);
+  }
+
+  void _refreshDiscovery() {
+    _prefetchedSourceId = null;
+    AppStore.instance.refreshDiscovery(_request);
+  }
 
   String _contextLabel() {
     if (widget.mediaRef.type == MediaType.tv &&
@@ -88,72 +128,33 @@ class _SourceSelectionScreenState extends ConsumerState<SourceSelectionScreen> {
     // Single search pass: the incremental discovery stream is the only
     // provider query. It becomes the full grouped result set once complete,
     // so addons are never queried twice for one screen open.
-    final discovery = ref.watch(sourceDiscoveryProvider(_request));
-    final results = discovery.hasError
-        ? AsyncError<List<ProviderResult>>(
-            discovery.error!,
-            discovery.stackTrace ?? StackTrace.current,
-          )
-        : (discovery.value?.isComplete == true
-              ? AsyncData(
-                  discovery.value!.providers.values
-                      .map(
-                        (p) =>
-                            ProviderResult(p.name, p.sources, error: p.error),
-                      )
-                      .toList(),
-                )
-              : const AsyncLoading<List<ProviderResult>>());
-    // Warm the torrent session while addons resolve, and prefetch the single
-    // best torrent candidate so metadata is ready by tap time. The first
-    // usable candidate warms immediately; once discovery completes a better
-    // ranked candidate may replace it. Deduplication and unused-candidate
-    // release live in the service.
-    ref.listen(sourceDiscoveryProvider(_request), (_, next) {
-      next.whenData((state) {
-        final service = ref.read(streamingServiceProvider);
-        // ignore: discarded_futures
-        service.warmUp();
-        final best = _bestPrefetchCandidate(state.allSources);
-        if (best == null) return;
-        if (!state.isComplete && _prefetchedSourceId != null) return;
-        if (best.id == _prefetchedSourceId) return;
-        _prefetchedSourceId = best.id;
-        // ignore: discarded_futures
-        service.prefetchSource(best);
-      });
-    });
-    final details = ref.watch(detailsProvider(widget.mediaRef));
+    final discovery = (AppStore.instance.discovery(_request)..watch(context));
+    final details = (AppStore.instance.detailsFor(widget.mediaRef)..watch(context));
     final title = details.when(
       data: (value) => value.item.title,
       loading: () => 'Sources',
       error: (_, _) => 'Sources',
     );
     return Scaffold(
+      // The screen colour belongs on the Scaffold: with no backgroundColor the
+      // route reports the white default and dark screens flash white.
+      backgroundColor: DesignTokens.background,
       appBar: AppBar(
         title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
-            tooltip: 'Providers',
             icon: const Icon(Icons.tune),
             onPressed: () async {
               await showDialog<void>(
                 context: context,
                 builder: (_) => const _ProviderSettings(),
               );
-              _prefetchedSourceId = null;
-              ref.invalidate(sourceResultsProvider(_request));
-              ref.invalidate(sourceDiscoveryProvider(_request));
+              _refreshDiscovery();
             },
           ),
           IconButton(
-            tooltip: 'Search again',
             icon: const Icon(Icons.refresh),
-            onPressed: () {
-              _prefetchedSourceId = null;
-              ref.invalidate(sourceResultsProvider(_request));
-              ref.invalidate(sourceDiscoveryProvider(_request));
-            },
+            onPressed: _refreshDiscovery,
           ),
         ],
       ),
@@ -171,7 +172,7 @@ class _SourceSelectionScreenState extends ConsumerState<SourceSelectionScreen> {
             onQualityChanged: (q) => setState(() => _quality = q),
           ),
           Expanded(
-            child: results.when(
+            child: discovery.when(
               loading: () {
                 // Show fast incremental results immediately instead of
                 // holding everything behind the slowest provider.
@@ -214,12 +215,9 @@ class _SourceSelectionScreenState extends ConsumerState<SourceSelectionScreen> {
               error: (error, _) => AppError(
                 title: 'Could not load sources',
                 detail: friendlyError(error),
-                onRetry: () {
-                  ref.invalidate(sourceResultsProvider(_request));
-                  ref.invalidate(sourceDiscoveryProvider(_request));
-                },
+                onRetry: _refreshDiscovery,
                 retryLabel: 'Retry search',
-                secondary: OutlinedButton.icon(
+                secondary: outlinedIconButton(
                   onPressed: () => showDialog<void>(
                     context: context,
                     builder: (_) => const _ProviderSettings(),
@@ -228,14 +226,75 @@ class _SourceSelectionScreenState extends ConsumerState<SourceSelectionScreen> {
                   label: const Text('Edit providers'),
                 ),
               ),
-              data: (providers) {
-                final total = providers.expand((p) => p.sources).length;
+              data: (state) {
+                // Split each provider's sources into per-indexer lanes. Without
+                // this a single aggregating addon (torrentio) hides every
+                // individual indexer behind one tab, so the sources the user
+                // added stay invisible.
+                final providers = [
+                  for (final provider in state.providers.values)
+                    for (final lane in splitIndexerLanes(
+                      provider.name,
+                      provider.sources,
+                    ))
+                      ProviderResult(lane.name, lane.sources, error: provider.error),
+                ];
+                final total =
+                    providers.expand((p) => p.sources).length;
+                if (!state.isComplete) {
+                  final fast = state.allSources;
+                  if (fast.isEmpty) {
+                    return ListView(
+                      padding: const EdgeInsets.all(DesignTokens.pageGutter),
+                      children: [
+                        const _SearchingBanner(),
+                        _IncrementalBanner(discovery: state),
+                        const SizedBox(height: DesignTokens.space4),
+                        const SourceListSkeleton(),
+                      ],
+                    );
+                  }
+                  return Column(
+                    children: [
+                      _IncrementalBanner(discovery: state),
+                      Expanded(
+                        child: _Results(
+                          providers: [
+                            for (final lane in splitIndexerLanes(
+                              state.providers.keys.firstWhere(
+                                (name) => state
+                                    .providers[name]!
+                                    .sources
+                                    .isNotEmpty,
+                                orElse: () => 'Fast results',
+                              ),
+                              List.of(fast),
+                            ))
+                              ProviderResult(lane.name, List.of(lane.sources)),
+                          ],
+                          sort: _sort,
+                          savedIds: _savedSourceIds,
+                          directOnly: _directOnly,
+                          quality: _quality,
+                          onToggleSaved: (id) => setState(() {
+                            if (_savedSourceIds.contains(id)) {
+                              _savedSourceIds.remove(id);
+                            } else {
+                              _savedSourceIds.add(id);
+                            }
+                          }),
+                        ),
+                      ),
+                    ],
+                  );
+                }
                 if (total == 0 && providers.every((p) => p.error == null)) {
                   return AppEmpty(
                     icon: Icons.video_library_outlined,
                     title: 'No playable sources found',
-                    hint: 'Try another provider or search again. For a series, choose an episode first.',
-                    action: FilledButton.icon(
+                    hint:
+                        'Try another provider or search again. For a series, choose an episode first.',
+                    action: filledIconButton(
                       onPressed: () => showDialog<void>(
                         context: context,
                         builder: (_) => const _ProviderSettings(),
@@ -245,73 +304,48 @@ class _SourceSelectionScreenState extends ConsumerState<SourceSelectionScreen> {
                     ),
                   );
                 }
-                return DefaultTabController(
-                  length: providers.length + 1,
-                  child: Column(
-                    children: [
-                      TabBar(
-                        isScrollable: true,
-                        tabAlignment: TabAlignment.start,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        tabs: [
-                          Tab(text: 'All ($total)'),
-                          for (final p in providers)
-                            Tab(
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  StatusDot(
-                                    color: p.error != null
-                                        ? DesignTokens.danger
-                                        : DesignTokens.accent,
-                                    semanticLabel: p.error != null
-                                        ? '${p.name} has an error'
-                                        : '${p.name} is healthy',
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text('${p.name} (${p.sources.length})'),
-                                ],
+                final lane = _lane.clamp(0, providers.length);
+                final visible = lane == 0
+                    ? providers
+                    : [providers[lane - 1]];
+                return Column(
+                  children: [
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Row(
+                        children: [
+                          TextButton(
+                            onPressed: () => setState(() => _lane = 0),
+                            child: Text('All ($total)'),
+                          ),
+                          for (var i = 0; i < providers.length; i++)
+                            TextButton(
+                              onPressed: () => setState(() => _lane = i + 1),
+                              child: Text(
+                                '${providers[i].name} (${providers[i].sources.length})',
                               ),
                             ),
                         ],
                       ),
-                      Expanded(
-                        child: TabBarView(
-                          children: [
-                            _Results(
-                              providers: providers,
-                              sort: _sort,
-                              savedIds: _savedSourceIds,
-                              directOnly: _directOnly,
-                              quality: _quality,
-                              onToggleSaved: (id) => setState(() {
-                                if (_savedSourceIds.contains(id)) {
-                                  _savedSourceIds.remove(id);
-                                } else {
-                                  _savedSourceIds.add(id);
-                                }
-                              }),
-                            ),
-                            for (final p in providers)
-                              _Results(
-                                providers: [p],
-                                sort: _sort,
-                                savedIds: _savedSourceIds,
-                                directOnly: _directOnly,
-                                quality: _quality,
-                                onToggleSaved: (id) => setState(() {
-                                  if (_savedSourceIds.contains(id)) {
-                                    _savedSourceIds.remove(id);
-                                  } else {
-                                    _savedSourceIds.add(id);
-                                  }
-                                }),
-                              ),
-                          ],
-                        ),
+                    ),
+                    Expanded(
+                      child: _Results(
+                        providers: visible,
+                        sort: _sort,
+                        savedIds: _savedSourceIds,
+                        directOnly: _directOnly,
+                        quality: _quality,
+                        onToggleSaved: (id) => setState(() {
+                          if (_savedSourceIds.contains(id)) {
+                            _savedSourceIds.remove(id);
+                          } else {
+                            _savedSourceIds.add(id);
+                          }
+                        }),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 );
               },
             ),
@@ -356,22 +390,13 @@ class _ContextBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          SegmentedButton<_SortMode>(
-            style: const ButtonStyle(visualDensity: VisualDensity.compact),
-            segments: const [
-              ButtonSegment(
-                value: _SortMode.seeds,
-                icon: Icon(Icons.arrow_downward, size: 14),
-                label: Text('Seeds'),
-              ),
-              ButtonSegment(
-                value: _SortMode.size,
-                icon: Icon(Icons.storage_outlined, size: 14),
-                label: Text('Size'),
-              ),
-            ],
-            selected: {sort},
-            onSelectionChanged: (selected) => onSortChanged(selected.first),
+          TextButton(
+            onPressed: () => onSortChanged(_SortMode.seeds),
+            child: Text(sort == _SortMode.seeds ? 'Seeds ·' : 'Seeds'),
+          ),
+          TextButton(
+            onPressed: () => onSortChanged(_SortMode.size),
+            child: const Text('Size'),
           ),
         ],
       ),
@@ -411,9 +436,7 @@ class _FilterBar extends StatelessWidget {
           children: [
             FilterChip(
               label: const Text('Direct only'),
-              avatar: const Icon(Icons.bolt, size: 16),
               selected: directOnly,
-              visualDensity: VisualDensity.compact,
               onSelected: onDirectOnlyChanged,
             ),
             const SizedBox(width: 8),
@@ -423,7 +446,6 @@ class _FilterBar extends StatelessWidget {
                 child: ChoiceChip(
                   label: Text(q),
                   selected: quality == q,
-                  visualDensity: VisualDensity.compact,
                   onSelected: (_) => onQualityChanged(q),
                 ),
               ),
@@ -602,7 +624,7 @@ class _Results extends StatelessWidget {
   }
 }
 
-class _SourceCard extends ConsumerWidget {
+class _SourceCard extends StatelessWidget {
   const _SourceCard({
     required this.source,
     required this.saved,
@@ -613,17 +635,17 @@ class _SourceCard extends ConsumerWidget {
   final bool saved;
   final VoidCallback onToggleSaved;
 
-  void _play(BuildContext context, WidgetRef ref) {
+  void _play(BuildContext context) {
     // Prefetch in case hover did not fire (touch devices), then navigate
     // with the full source as `extra` so the player skips addon re-query.
     // ignore: discarded_futures
-    ref.read(streamingServiceProvider).prefetchSource(source);
+    AppStore.instance.streaming.prefetchSource(source);
     // Carry a saved position when history has one for this exact source,
     // mirroring Continue Watching. The player screens still apply
     // trivial/finished filtering, so this never forces a bad resume.
     final resumeMs = resumeMsForSource(
       source: source,
-      history: ref.read(watchHistoryProvider).value,
+      history: AppStore.instance.history.value,
     );
     context.push(
       Uri(
@@ -641,7 +663,7 @@ class _SourceCard extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final quality = formatQuality(source.name);
     return Container(
@@ -659,7 +681,7 @@ class _SourceCard extends ConsumerWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: SelectableText(
+                child: Text(
                   source.name,
                   maxLines: 2,
                   style: theme.textTheme.titleMedium?.copyWith(
@@ -668,8 +690,6 @@ class _SourceCard extends ConsumerWidget {
                 ),
               ),
               IconButton(
-                tooltip: saved ? 'Remove bookmark' : 'Bookmark source',
-                visualDensity: VisualDensity.compact,
                 icon: Icon(
                   saved ? Icons.bookmark : Icons.bookmark_border,
                   color: saved ? DesignTokens.accent : null,
@@ -737,21 +757,13 @@ class _SourceCard extends ConsumerWidget {
           const SizedBox(height: DesignTokens.space3),
           Row(
             children: [
-              MouseRegion(
-                onEnter: (_) {
-                  // Desktop hover: start metadata exchange before tap.
-                  // ignore: discarded_futures
-                  ref.read(streamingServiceProvider).prefetchSource(source);
-                },
-                child: FilledButton.icon(
-                  onPressed: () => _play(context, ref),
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('Play source'),
-                ),
+              filledIconButton(
+                onPressed: () => _play(context),
+                icon: const Icon(Icons.play_arrow),
+                label: const Text('Play source'),
               ),
               const SizedBox(width: 8),
               IconButton(
-                tooltip: 'Copy link',
                 icon: const Icon(Icons.link_outlined),
                 onPressed: () async {
                   await Clipboard.setData(
@@ -759,7 +771,6 @@ class _SourceCard extends ConsumerWidget {
                   );
                   if (context.mounted) {
                     ScaffoldMessenger.of(context)
-                      ..hideCurrentSnackBar()
                       ..showSnackBar(
                         const SnackBar(content: Text('Link copied')),
                       );
@@ -774,13 +785,14 @@ class _SourceCard extends ConsumerWidget {
   }
 }
 
-class _ProviderSettings extends ConsumerStatefulWidget {
+class _ProviderSettings extends StatefulWidget {
   const _ProviderSettings();
   @override
-  ConsumerState<_ProviderSettings> createState() => _ProviderSettingsState();
+  State<_ProviderSettings> createState() =>
+      _ProviderSettingsState();
 }
 
-class _ProviderSettingsState extends ConsumerState<_ProviderSettings> {
+class _ProviderSettingsState extends State<_ProviderSettings> {
   TextEditingController? _text;
   bool _saving = false;
   String? _error;
@@ -793,7 +805,7 @@ class _ProviderSettingsState extends ConsumerState<_ProviderSettings> {
 
   @override
   Widget build(BuildContext context) {
-    final urls = ref.watch(addonUrlsProvider);
+    final urls = (AppStore.instance.addonUrls..watch(context));
     return PopScope(
       canPop: !_saving,
       child: AlertDialog(
@@ -814,7 +826,8 @@ class _ProviderSettingsState extends ConsumerState<_ProviderSettings> {
                   error: (error, _) => AppError(
                     title: 'Could not load providers',
                     detail: friendlyError(error),
-                    onRetry: () => ref.invalidate(addonUrlsProvider),
+                    onRetry: () =>
+                        AppStore.instance.addonUrls.reload(),
                     retryLabel: 'Retry',
                   ),
                   data: (value) {
@@ -837,7 +850,7 @@ class _ProviderSettingsState extends ConsumerState<_ProviderSettings> {
                             labelText: 'Catalog links',
                             hintText:
                                 'https://torrentio.strem.fun/manifest.json',
-                            errorText: _error,
+                            helperText: _error,
                           ),
                         ),
                         const SizedBox(height: 12),
@@ -862,7 +875,7 @@ class _ProviderSettingsState extends ConsumerState<_ProviderSettings> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            onPressed: urls.hasValue && !_saving
+            onPressed: urls.value != null && !_saving
                 ? () async {
                     setState(() {
                       _saving = true;
@@ -880,9 +893,7 @@ class _ProviderSettingsState extends ConsumerState<_ProviderSettings> {
                       if (split.valid.isEmpty) {
                         throw const FormatException('No valid addon links.');
                       }
-                      await ref
-                          .read(addonUrlsProvider.notifier)
-                          .save(split.valid);
+                      await AppStore.instance.addonUrls.save(split.valid);
                       if (!context.mounted) return;
                       // Keep the bad lines visible for fixing instead of
                       // closing over them silently.

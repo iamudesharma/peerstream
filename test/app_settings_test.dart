@@ -1,9 +1,14 @@
-import 'package:flutter_test/flutter_test.dart';
 import 'package:peerstream/services/settings/settings_store.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:test/test.dart';
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() {
+    debugPreferenceStore = MemoryPreferenceStore();
+  });
+
+  tearDown(() {
+    debugPreferenceStore = null;
+  });
 
   test('AppSettings defaults cover player and subtitle preferences', () {
     const defaults = AppSettings();
@@ -14,7 +19,7 @@ void main() {
   });
 
   test('copyWith replaces player preferences and keeps unrelated fields', () {
-    final updated = const AppSettings(useMediaForgePlayer: true).copyWith(
+    final updated = const AppSettings().copyWith(
       playerVolume: 42,
       playerRate: 1.5,
       subtitleTextScale: 1.25,
@@ -24,11 +29,10 @@ void main() {
     expect(updated.playerRate, 1.5);
     expect(updated.subtitleTextScale, 1.25);
     expect(updated.subtitleBackground, SubtitleBackgroundStyle.solid);
-    expect(updated.useMediaForgePlayer, isTrue);
+    expect(updated.preferredAudioLanguage, isNull);
   });
 
-  test('player preferences round-trip through SharedPreferences', () async {
-    SharedPreferences.setMockInitialValues({});
+  test('player preferences round-trip through the preference store', () async {
     final written = (await readAppSettings()).copyWith(
       playerVolume: 35,
       playerRate: 1.25,

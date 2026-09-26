@@ -1,19 +1,19 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
+import 'package:peerstream/providers/app_store.dart';
+import 'package:peerstream/core/navigation.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/design_tokens.dart';
 import '../../core/widgets/app_scaffold.dart';
 import '../../core/widgets/settings_widgets.dart';
-import '../../providers/app_providers.dart';
 import 'http_server_section.dart';
 
-class SettingsScreen extends ConsumerWidget {
+class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final addonUrls = ref.watch(addonUrlsProvider);
+  Widget build(BuildContext context) {
+    final addonUrls = (AppStore.instance.addonUrls..watch(context));
     final addonCount = addonUrls.value?.length ?? 0;
 
     return AppScaffold(
@@ -86,6 +86,8 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ],
           ),
+          // Clears the Scaffold's tab bar; see home_screen.dart.
+          const SizedBox(height: bottomBarHeight),
         ],
       ),
     );

@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/design_tokens.dart';
 import '../../core/format.dart';
@@ -58,7 +59,6 @@ class TorrentStatistics extends StatelessWidget {
             '${(progress * 100).toStringAsFixed(1)}% · ${formatBytes(stats.downloadedBytes)} of ${formatBytes(stats.totalBytes)}',
             style: theme.textTheme.bodySmall?.copyWith(
               color: DesignTokens.textSecondary,
-              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
           const SizedBox(height: DesignTokens.space3),
@@ -108,7 +108,6 @@ class _Stat extends StatelessWidget {
             value,
             style: theme.textTheme.bodyMedium?.copyWith(
               fontWeight: FontWeight.w600,
-              fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
         ],

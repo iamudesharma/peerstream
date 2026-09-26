@@ -1,14 +1,14 @@
 pluginManagement {
-    val flutterSdkPath =
+    val dnSdkPath =
         run {
             val properties = java.util.Properties()
             file("local.properties").inputStream().use { properties.load(it) }
-            val flutterSdkPath = properties.getProperty("flutter.sdk")
-            require(flutterSdkPath != null) { "flutter.sdk not set in local.properties" }
-            flutterSdkPath
+            val dnSdkPath = properties.getProperty("dn.sdk")
+            require(dnSdkPath != null) { "dn.sdk not set in local.properties (run `dn build` once, or set it to your DartNative SDK path)" }
+            dnSdkPath
         }
 
-    includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
+    includeBuild("$dnSdkPath/packages/flutter_tools/gradle")
 
     repositories {
         google()
@@ -18,9 +18,9 @@ pluginManagement {
 }
 
 plugins {
-    id("dev.flutter.flutter-plugin-loader") version "1.0.0"
-    id("com.android.application") version "9.1.0" apply false
-    id("org.jetbrains.kotlin.android") version "2.4.0" apply false
+    id("com.dartnative.plugin-loader") version "1.0.0"
+    id("com.android.application") version "8.11.1" apply false
+    id("org.jetbrains.kotlin.android") version "2.2.20" apply false
 }
 
 include(":app")

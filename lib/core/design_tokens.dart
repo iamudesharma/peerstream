@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:dartnative/dartnative.dart';
 
 abstract final class DesignTokens {
   static const background = Color(0xFF0F0F11);

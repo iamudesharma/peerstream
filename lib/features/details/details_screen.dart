@@ -1,7 +1,9 @@
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/material.dart' hide Badge;
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:peerstream/providers/app_store.dart';
+import 'package:peerstream/core/navigation.dart';
+import 'package:dartnative/flutter_compat.dart' hide Badge;
+import 'package:dartnative/dartnative.dart' hide Badge;
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/image_url.dart';
 import '../../core/design_tokens.dart';
@@ -13,18 +15,17 @@ import '../../core/widgets/skeletons.dart';
 import '../../models/media_details.dart';
 import '../../models/media_item.dart';
 import '../../models/saved_item.dart';
-import '../../providers/app_providers.dart';
 import '../episodes/episode_selection.dart';
 
-class DetailsScreen extends ConsumerStatefulWidget {
+class DetailsScreen extends StatefulWidget {
   const DetailsScreen({required this.mediaRef, super.key});
   final MediaRef mediaRef;
 
   @override
-  ConsumerState<DetailsScreen> createState() => _DetailsScreenState();
+  State<DetailsScreen> createState() => _DetailsScreenState();
 }
 
-class _DetailsScreenState extends ConsumerState<DetailsScreen> {
+class _DetailsScreenState extends State<DetailsScreen> {
   @override
   void initState() {
     super.initState();
@@ -33,18 +34,23 @@ class _DetailsScreenState extends ConsumerState<DetailsScreen> {
     Future.microtask(() {
       if (!mounted) return;
       // ignore: discarded_futures
-      ref.read(streamingServiceProvider).warmUp();
+      AppStore.instance.streaming.warmUp();
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final details = ref.watch(detailsProvider(widget.mediaRef));
-    final myList = ref.watch(myListProvider);
-    final isSaved =
-        myList.value?.any((item) => item.media == widget.mediaRef) ?? false;
+    final details = (AppStore.instance.detailsFor(widget.mediaRef)..watch(context));
+    final myList = (AppStore.instance.myList..watch(context));
+    final isSaved = myList.value?.any(
+          (item) => item.media == widget.mediaRef,
+        ) ??
+        false;
     final loadedItem = details.value?.item;
     return Scaffold(
+      // The screen colour belongs on the Scaffold: with no backgroundColor the
+      // route reports the white default and dark screens flash white.
+      backgroundColor: DesignTokens.background,
       appBar: AppBar(
         title: details.when(
           data: (value) => Text(
@@ -57,7 +63,6 @@ class _DetailsScreenState extends ConsumerState<DetailsScreen> {
         ),
         actions: [
           IconButton(
-            tooltip: isSaved ? 'Remove from watchlist' : 'Save to watchlist',
             icon: Icon(
               isSaved ? Icons.bookmark : Icons.bookmark_border,
               color: isSaved ? DesignTokens.accent : null,
@@ -65,15 +70,14 @@ class _DetailsScreenState extends ConsumerState<DetailsScreen> {
             onPressed: loadedItem == null
                 ? null
                 : () async {
-                    final wasSaved = ref
-                        .read(myListProvider.notifier)
-                        .isSaved(widget.mediaRef);
-                    await ref
-                        .read(myListProvider.notifier)
-                        .toggle(SavedItem.fromMediaItem(loadedItem));
+                    final wasSaved = AppStore.instance.myList.isSaved(
+                      widget.mediaRef,
+                    );
+                    await AppStore.instance.myList.toggle(
+                      SavedItem.fromMediaItem(loadedItem),
+                    );
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(context)
-                      ..hideCurrentSnackBar()
                       ..showSnackBar(
                         SnackBar(
                           content: Text(
@@ -84,9 +88,9 @@ class _DetailsScreenState extends ConsumerState<DetailsScreen> {
                           action: SnackBarAction(
                             label: 'Undo',
                             onPressed: () {
-                              ref
-                                  .read(myListProvider.notifier)
-                                  .toggle(SavedItem.fromMediaItem(loadedItem));
+                              AppStore.instance.myList.toggle(
+                                SavedItem.fromMediaItem(loadedItem),
+                              );
                             },
                           ),
                         ),
@@ -122,9 +126,10 @@ class _DetailsScreenState extends ConsumerState<DetailsScreen> {
         error: (error, _) => AppError(
           title: 'Could not load details',
           detail: friendlyError(error),
-          onRetry: () => ref.invalidate(detailsProvider(widget.mediaRef)),
+          onRetry: () =>
+              AppStore.instance.detailsFor(widget.mediaRef).reload(),
           retryLabel: 'Retry',
-          secondary: OutlinedButton.icon(
+          secondary: outlinedIconButton(
             onPressed: () => context.pop(),
             icon: const Icon(Icons.arrow_back),
             label: const Text('Go back'),
@@ -156,26 +161,27 @@ class _DetailsBodyState extends State<_DetailsBody> {
     return ListView(
       children: [
         SizedBox(
-          height: wide
-              ? 480
-              : 350 + (MediaQuery.textScalerOf(context).scale(30) - 30) * 3,
+          height: wide ? 480 : 350,
           child: Stack(
             fit: StackFit.expand,
             children: [
               if (backdrop != null)
-                CachedNetworkImage(
-                  imageUrl: backdrop,
+                Image.network(
+                  backdrop,
                   fit: BoxFit.cover,
-                  memCacheWidth: 1280,
-                  maxWidthDiskCache: 1280,
+                  // The hero is a full-bleed 350dp band; decoding the 1280px
+                  // source on both axes is what pushed this screen into the
+                  // image-cache thrash.
+                  cacheWidth: wide ? 1280 : 780,
+                  cacheHeight: wide ? 720 : 420,
                   fadeInDuration: const Duration(milliseconds: 150),
-                  placeholder: (_, _) =>
-                      const ColoredBox(color: DesignTokens.surface2),
-                  errorWidget: (_, _, _) => const _BackdropFallback(),
+                  placeholder: const ColoredBox(color: DesignTokens.surface2),
+                  errorWidget: const _BackdropFallback(),
                 )
               else
                 const _BackdropFallback(),
               const DecoratedBox(
+                child: SizedBox.expand(),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
@@ -193,12 +199,10 @@ class _DetailsBodyState extends State<_DetailsBody> {
                 left: 0,
                 right: 0,
                 bottom: 0,
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      maxWidth: DesignTokens.contentMaxWidth,
-                    ),
-                    child: Padding(
+                // No Center/ConstrainedBox in here: an unconstrained
+                // centering wrapper collapses on this runtime and dragged the
+                // whole overlay onto the bottom edge.
+                child: Padding(
                       padding: const EdgeInsets.fromLTRB(
                         DesignTokens.pageGutter,
                         0,
@@ -236,8 +240,6 @@ class _DetailsBodyState extends State<_DetailsBody> {
                           ),
                         ],
                       ),
-                    ),
-                  ),
                 ),
               ),
             ],
@@ -305,7 +307,6 @@ class _DetailsBodyState extends State<_DetailsBody> {
                               setState(() => _expanded = !_expanded),
                           style: TextButton.styleFrom(
                             padding: EdgeInsets.zero,
-                            alignment: Alignment.centerLeft,
                           ),
                           child: Text(_expanded ? 'Show less' : 'Show more'),
                         ),
@@ -339,46 +340,42 @@ class _BackdropFallback extends StatelessWidget {
   }
 }
 
-class _MovieActions extends ConsumerWidget {
+class _MovieActions extends StatelessWidget {
   const _MovieActions({required this.item});
   final MediaItem item;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final sources = ref.watch(sourceListProvider(item.ref));
+    final sources = AppStore.instance.discovery((
+      media: item.ref,
+      season: null,
+      episode: null,
+    ))..watch(context);
+    final count = sources.value?.allSources.length;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
           width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: () => context.push('/sources/${item.ref.routeKey}'),
+          child: filledIconButton(
+            onPressed: () =>
+                context.push('/sources/${item.ref.routeKey}'),
             icon: const Icon(Icons.play_arrow),
             label: const Text('Find sources'),
           ),
         ),
         const SizedBox(height: DesignTokens.space2),
-        sources.when(
-          data: (list) => Text(
-            list.isEmpty
-                ? 'No sources cached'
-                : '${list.length} source${list.length == 1 ? '' : 's'} found',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: DesignTokens.textTertiary,
-            ),
-          ),
-          loading: () => Text(
-            'Checking sources',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: DesignTokens.textTertiary,
-            ),
-          ),
-          error: (_, _) => Text(
-            'Source check unavailable',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: DesignTokens.textTertiary,
-            ),
+        Text(
+          sources.hasError
+              ? 'Source check unavailable'
+              : count == null
+              ? 'Checking sources'
+              : count == 0
+              ? 'No sources cached'
+              : '$count source${count == 1 ? '' : 's'} found',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: DesignTokens.textTertiary,
           ),
         ),
       ],

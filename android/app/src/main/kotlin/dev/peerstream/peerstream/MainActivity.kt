@@ -1,5 +1,9 @@
 package dev.peerstream.peerstream
 
-import io.flutter.embedding.android.FlutterActivity
+import com.dartnative.runtime.DartNativeActivity
 
-class MainActivity : FlutterActivity()
+class MainActivity : DartNativeActivity() {
+    // The base class registers the root view, starts Dart, and wires
+    // safe-area/IME insets. Override the lifecycle methods (calling super)
+    // to customize.
+}

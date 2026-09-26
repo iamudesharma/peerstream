@@ -7,12 +7,35 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
-import 'package:flutter/services.dart' show rootBundle;
 
 import 'ffi_bindings.dart';
 import 'models.dart';
+
+/// Supplies the Mozilla CA bundle used on Android before the session starts.
+///
+/// The app sets this from its bundled `assets/cacert.pem`. When it is unset,
+/// the package reads `packages/libtorrent_flutter/assets/cacert.pem` from the
+/// process working directory (source checkouts and tests).
+typedef CaBundleLoader = Future<List<int>?> Function();
+
+CaBundleLoader? loadCaBundle;
+
+Future<Uint8List> _readCaBundleFromDisk() async {
+  const candidates = [
+    'assets/cacert.pem',
+    'packages/libtorrent_flutter/assets/cacert.pem',
+  ];
+  for (final path in candidates) {
+    final file = File(path);
+    if (await file.exists()) return file.readAsBytes();
+  }
+  throw const FileSystemException(
+    'cacert.pem was not bundled. Set loadCaBundle or ship assets/cacert.pem.',
+  );
+}
 
 // ─── Tracker Management ─────────────────────────────────────────────────────
 
@@ -194,13 +217,10 @@ class LibtorrentFlutter {
         await certDir.create(recursive: true);
 
         final certFile = File('${certDir.path}/cacert.pem');
-        final byteData = await rootBundle.load(
-          'packages/libtorrent_flutter/assets/cacert.pem',
-        );
-        final certBytes = byteData.buffer.asUint8List(
-          byteData.offsetInBytes,
-          byteData.lengthInBytes,
-        );
+        final loaded = await loadCaBundle?.call();
+        final certBytes = loaded != null
+            ? Uint8List.fromList(loaded)
+            : await _readCaBundleFromDisk();
 
         // A normal Mozilla CA bundle is well over 100 KB.
         final certText = ascii.decode(certBytes, allowInvalid: true);
@@ -277,18 +297,29 @@ class LibtorrentFlutter {
   /// performance. Falls back to libtorrent version when the symbol is
   /// missing (older prebuilt binary).
   String get bridgeVersion {
+    final fn = _b.bridgeVersion;
+    if (fn == null) return libraryVersion;
     try {
-      return _b.bridgeVersion().toDartString();
+      return fn().toDartString();
     } catch (_) {
       return libraryVersion;
     }
   }
 
+  /// Symbols this binary does not export. Non-empty means the prebuilt is
+  /// older than the bundled bridge and some features are unavailable.
+  List<String> get missingNativeSymbols => _b.missingSymbols;
+
+  /// True when every symbol the current Dart side expects resolved.
+  bool get hasFullNativeBridge => _b.isComplete;
+
   /// Selected-file verification: true only when every piece of [fileIndex]
   /// is downloaded and hash-verified. Rejects sparse preallocated files.
   bool isFileComplete(int torrentId, int fileIndex) {
+    final fn = _b.isFileComplete;
+    if (fn == null) return false;
     try {
-      return _b.isFileComplete(_session, torrentId, fileIndex) != 0;
+      return fn(_session, torrentId, fileIndex) != 0;
     } catch (_) {
       return false;
     }
@@ -297,10 +328,12 @@ class LibtorrentFlutter {
   /// Cache byte-budget telemetry for diagnostics.
   /// Returns (capacity, filled) including pending disk-read results.
   (int, int)? getCacheState(int streamId) {
+    final fn = _b.getCacheState;
+    if (fn == null) return null;
     final capPtr = calloc<Int64>();
     final fillPtr = calloc<Int64>();
     try {
-      final ok = _b.getCacheState(_session, streamId, capPtr, fillPtr);
+      final ok = fn(_session, streamId, capPtr, fillPtr);
       if (ok == 0) return null;
       return (capPtr.value, fillPtr.value);
     } catch (_) {
@@ -356,9 +389,13 @@ class LibtorrentFlutter {
   /// without a peer metadata exchange or a full file recheck. Returns false
   /// when the torrent has no metadata yet or the write failed.
   bool saveTorrentState(int id, String statePath) {
+    final fn = _b.saveTorrentState;
+    if (fn == null) return false;
     final p = statePath.toNativeUtf8();
     try {
-      return _b.saveTorrentState(_session, id, p) != 0;
+      return fn(_session, id, p) != 0;
+    } catch (_) {
+      return false;
     } finally {
       malloc.free(p);
     }
@@ -374,11 +411,15 @@ class LibtorrentFlutter {
     String? savePath,
     bool streamOnly = false,
   ]) {
+    final fn = _b.addTorrentWithState;
+    if (fn == null) return null;
     final p = statePath.toNativeUtf8();
     final s = (savePath ?? _defaultSavePath).toNativeUtf8();
     try {
-      final id = _b.addTorrentWithState(_session, p, s, streamOnly ? 1 : 0);
+      final id = fn(_session, p, s, streamOnly ? 1 : 0);
       return id < 0 ? null : id;
+    } catch (_) {
+      return null;
     } finally {
       malloc.free(p);
       malloc.free(s);
@@ -409,10 +450,11 @@ class LibtorrentFlutter {
   /// Returns false when the native symbol is missing (older prebuilt) or the
   /// attach fails. Never throws.
   bool addWebSeed(int id, String url) {
-    if (url.isEmpty) return false;
+    final fn = _b.addWebSeed;
+    if (fn == null || url.isEmpty) return false;
     final u = url.toNativeUtf8();
     try {
-      return _b.addWebSeed(_session, id, u) != 0;
+      return fn(_session, id, u) != 0;
     } catch (_) {
       return false;
     } finally {
@@ -493,27 +535,35 @@ class LibtorrentFlutter {
     int byteOffset, {
     int windowBytes = 0,
     bool urgent = false,
-  }) =>
-      _b.setStreamPosition(
-        _session,
-        streamId,
-        byteOffset,
-        windowBytes,
-        urgent ? 1 : 0,
-      ) !=
-      0;
+  }) {
+    final fn = _b.setStreamPosition;
+    if (fn == null) return false;
+    return fn(
+          _session,
+          streamId,
+          byteOffset,
+          windowBytes,
+          urgent ? 1 : 0,
+        ) !=
+        0;
+  }
 
   /// Report the observed media duration so the native scheduler can refine
   /// bitrate, buffer-seconds and adaptive window sizing.
-  bool setStreamDuration(int streamId, int durationMs) =>
-      _b.setStreamDuration(_session, streamId, durationMs) != 0;
+  bool setStreamDuration(int streamId, int durationMs) {
+    final fn = _b.setStreamDuration;
+    if (fn == null) return false;
+    return fn(_session, streamId, durationMs) != 0;
+  }
 
   /// One-line scheduler snapshot for diagnostics/tuning, or null.
   String? streamDebugSnapshot(int streamId) {
+    final fn = _b.getStreamDebug;
+    if (fn == null) return null;
     const cap = 512;
     final buf = calloc<Uint8>(cap);
     try {
-      final ok = _b.getStreamDebug(_session, streamId, buf.cast<Utf8>(), cap);
+      final ok = fn(_session, streamId, buf.cast<Utf8>(), cap);
       if (ok == 0) return null;
       return buf.cast<Utf8>().toDartString();
     } finally {

@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart';
 import 'package:peerstream/models/media_item.dart';
 import 'package:peerstream/models/torrent_models.dart';
 import 'package:peerstream/services/torrent/addon_provider.dart';

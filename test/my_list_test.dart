@@ -1,4 +1,4 @@
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart';
 import 'package:peerstream/models/media_item.dart';
 import 'package:peerstream/models/saved_item.dart';
 import 'package:peerstream/services/mylist/my_list_store_memory.dart'

@@ -1,124 +1,95 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
+import 'package:peerstream/providers/app_store.dart';
+import 'package:peerstream/providers/loadable.dart';
+import 'package:peerstream/core/navigation.dart';
+import 'package:dartnative/flutter_compat.dart' hide Badge;
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/config.dart';
 import '../../core/design_tokens.dart';
 import '../../core/widgets/app_scaffold.dart';
 import '../../core/widgets/media_row.dart';
 import '../../core/widgets/section_header.dart';
-import '../../providers/app_providers.dart';
 import '../../services/tmdb/tmdb_service.dart';
 import 'continue_watching_row.dart';
 import 'featured_media.dart';
 
-class HomeScreen extends ConsumerWidget {
+class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final hasHistory =
-        ref.watch(watchHistoryProvider).value?.isNotEmpty ?? false;
-    final hasMyList = ref.watch(myListProvider).value?.isNotEmpty ?? false;
+        (AppStore.instance.history..watch(context)).value?.isNotEmpty ?? false;
+    final hasMyList =
+        (AppStore.instance.myList..watch(context)).value?.isNotEmpty ?? false;
     final hasToken = AppConfig.hasTmdbToken;
     final featured =
-        ref.watch(trendingMoviesProvider).value?.firstOrNull ?? demoItems.first;
+        (AppStore.instance.trendingMovies..watch(context)).value?.firstOrNull ??
+        demoItems.first;
     return AppScaffold(
       selectedIndex: 0,
-      body: RefreshIndicator(
-        onRefresh: () async {
-          ref.invalidate(trendingMoviesProvider);
-          ref.invalidate(trendingSeriesProvider);
-          ref.invalidate(popularMoviesProvider);
-          ref.invalidate(streamingCatalogsProvider);
-          ref.invalidate(streamingCatalogProvider);
-          ref.invalidate(searchResultsProvider);
-          ref.invalidate(categoryProvider);
-          ref.invalidate(watchHistoryProvider);
-          ref.invalidate(myListProvider);
-        },
-        child: CustomScrollView(
-          slivers: [
-            _HomeSearchBar(onSearch: () => context.go('/search')),
-            SliverToBoxAdapter(child: FeaturedMedia(item: featured)),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: DesignTokens.space6),
+      // A plain ListView, not CustomScrollView + slivers. The sliver form
+      // measured its content wrong on this runtime: everything after the
+      // streaming-catalogs section got zero height, so the scroll range ended
+      // there and the lower half of the page was unreachable.
+      body: ListView(
+        children: [
+          _HomeSearchBar(onSearch: () => context.go('/search')),
+          FeaturedMedia(item: featured),
+          const SizedBox(height: DesignTokens.space6),
+          const ContinueWatchingRow(),
+          if (hasHistory) const SizedBox(height: DesignTokens.space6),
+          const _MyListSliver(),
+          if (hasMyList) const SizedBox(height: DesignTokens.space6),
+          MediaRow(
+            title: 'Trending movies',
+            items: (AppStore.instance.trendingMovies..watch(context)),
+            onSeeAll: hasToken
+                ? () => context.push(
+                    '/category/movie/0?title=${Uri.encodeComponent('Trending movies')}',
+                  )
+                : null,
+          ),
+          const SizedBox(height: DesignTokens.space6),
+          MediaRow(
+            title: 'Trending series',
+            items: (AppStore.instance.trendingSeries..watch(context)),
+            onSeeAll: hasToken
+                ? () => context.push(
+                    '/category/tv/0?title=${Uri.encodeComponent('Trending series')}',
+                  )
+                : null,
+          ),
+          const SizedBox(height: DesignTokens.space6),
+          MediaRow(
+            title: 'Popular movies',
+            items: (AppStore.instance.popularMovies..watch(context)),
+            onSeeAll: hasToken
+                ? () => context.push(
+                    '/category/movie/0?title=${Uri.encodeComponent('Popular movies')}',
+                  )
+                : null,
+          ),
+          const SizedBox(height: DesignTokens.space6),
+          const _StreamingCatalogs(),
+          const SizedBox(height: DesignTokens.space6),
+          const _Categories(),
+          const SizedBox(height: DesignTokens.space6),
+          if (!hasToken) ...[
+            MediaRow(
+              title: 'Open movies',
+              items: Loadable.seed(demoItems),
+              demoBadge: true,
             ),
-            const SliverToBoxAdapter(child: ContinueWatchingRow()),
-            if (hasHistory)
-              const SliverToBoxAdapter(
-                child: SizedBox(height: DesignTokens.space6),
-              ),
-            const _MyListSliver(),
-            if (hasMyList)
-              const SliverToBoxAdapter(
-                child: SizedBox(height: DesignTokens.space6),
-              ),
-            SliverToBoxAdapter(
-              child: MediaRow(
-                title: 'Trending movies',
-                items: ref.watch(trendingMoviesProvider),
-                onSeeAll: hasToken
-                    ? () => context.push(
-                        '/category/movie/0?title=${Uri.encodeComponent('Trending movies')}',
-                      )
-                    : null,
-              ),
-            ),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: DesignTokens.space6),
-            ),
-            SliverToBoxAdapter(
-              child: MediaRow(
-                title: 'Trending series',
-                items: ref.watch(trendingSeriesProvider),
-                onSeeAll: hasToken
-                    ? () => context.push(
-                        '/category/tv/0?title=${Uri.encodeComponent('Trending series')}',
-                      )
-                    : null,
-              ),
-            ),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: DesignTokens.space6),
-            ),
-            SliverToBoxAdapter(
-              child: MediaRow(
-                title: 'Popular movies',
-                items: ref.watch(popularMoviesProvider),
-                onSeeAll: hasToken
-                    ? () => context.push(
-                        '/category/movie/0?title=${Uri.encodeComponent('Popular movies')}',
-                      )
-                    : null,
-              ),
-            ),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: DesignTokens.space6),
-            ),
-            const SliverToBoxAdapter(child: _StreamingCatalogs()),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: DesignTokens.space6),
-            ),
-            const SliverToBoxAdapter(child: _Categories()),
-            const SliverToBoxAdapter(
-              child: SizedBox(height: DesignTokens.space6),
-            ),
-            if (!hasToken)
-              const SliverToBoxAdapter(
-                child: MediaRow(
-                  title: 'Open movies',
-                  items: AsyncData(demoItems),
-                  demoBadge: true,
-                ),
-              ),
-            if (!hasToken)
-              const SliverToBoxAdapter(
-                child: SizedBox(height: DesignTokens.space6),
-              ),
-            const SliverToBoxAdapter(child: _TmdbCredit()),
+            const SizedBox(height: DesignTokens.space6),
           ],
-        ),
+          const _TmdbCredit(),
+          // Clears the Scaffold's tab bar: the body is not inset for it, so
+          // without this the last row sits under the bar.
+          const SizedBox(height: bottomBarHeight),
+        ],
       ),
     );
   }
@@ -129,42 +100,45 @@ class _HomeSearchBar extends StatelessWidget {
   final VoidCallback onSearch;
 
   @override
-  Widget build(BuildContext context) => SliverToBoxAdapter(
-    child: Padding(
+  Widget build(BuildContext context) {
+    // MediaQuery, not LayoutBuilder: inside a scrolling body the builder's
+    // constraints are not resolved and the row collapses, which also left the
+    // whole list without a scroll range.
+    final wide = MediaQuery.sizeOf(context).width >= 600;
+    return Padding(
       padding: const EdgeInsets.all(DesignTokens.pageGutter),
-      child: LayoutBuilder(
-        builder: (context, constraints) => Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Discover',
-                    style: Theme.of(context).textTheme.headlineLarge,
-                  ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Find your next great watch.',
-                    style: TextStyle(color: DesignTokens.textSecondary),
-                  ),
-                ],
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Discover',
+                  style: Theme.of(context).textTheme.headlineLarge,
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Find your next great watch.',
+                  style: TextStyle(color: DesignTokens.textSecondary),
+                ),
+              ],
+            ),
+          ),
+          if (wide)
+            SizedBox(
+              width: 300,
+              child: outlinedIconButton(
+                onPressed: onSearch,
+                icon: const Icon(Icons.search, size: 20),
+                label: const Text('Search movies and series'),
               ),
             ),
-            if (constraints.maxWidth >= 600)
-              SizedBox(
-                width: 300,
-                child: OutlinedButton.icon(
-                  onPressed: onSearch,
-                  icon: const Icon(Icons.search_rounded, size: 20),
-                  label: const Text('Search movies and series'),
-                ),
-              ),
-          ],
-        ),
+        ],
       ),
-    ),
-  );
+    );
+  }
 }
 
 class StatusPill extends StatelessWidget {
@@ -199,20 +173,18 @@ class StatusPill extends StatelessWidget {
   }
 }
 
-class _MyListSliver extends ConsumerWidget {
+class _MyListSliver extends StatelessWidget {
   const _MyListSliver();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final myList = ref.watch(myListProvider);
+  Widget build(BuildContext context) {
+    final myList = (AppStore.instance.myList..watch(context));
     return myList.when(
       loading: () => const SliverToBoxAdapter(child: SizedBox.shrink()),
       error: (_, _) => const SliverToBoxAdapter(child: SizedBox.shrink()),
       data: (list) {
-        if (list.isEmpty) {
-          return const SliverToBoxAdapter(child: SizedBox.shrink());
-        }
-        final items = AsyncData(
+        if (list.isEmpty) return const SliverToBoxAdapter(child: SizedBox.shrink());
+        final items = Loadable.seed(
           list.map((entry) => entry.toMediaItem()).toList(),
         );
         return SliverToBoxAdapter(
@@ -241,7 +213,7 @@ class _MyListSliver extends ConsumerWidget {
                 ),
               );
               if (confirmed == true) {
-                await ref.read(myListProvider.notifier).clear();
+                await AppStore.instance.myList.clear();
               }
             },
           ),
@@ -251,15 +223,15 @@ class _MyListSliver extends ConsumerWidget {
   }
 }
 
-class _StreamingCatalogs extends ConsumerWidget {
+class _StreamingCatalogs extends StatelessWidget {
   const _StreamingCatalogs();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     if (!AppConfig.hasStreamingCatalogs) {
       return const SizedBox.shrink();
     }
-    final catalogs = ref.watch(streamingCatalogsProvider);
+    final catalogs = (AppStore.instance.streamingCatalogs..watch(context));
     return catalogs.when(
       loading: () => const SizedBox.shrink(),
       error: (_, _) => const SizedBox.shrink(),
@@ -284,12 +256,10 @@ class _StreamingCatalogs extends ConsumerWidget {
             for (var i = 0; i < rows.length; i++) ...[
               MediaRow(
                 title: rows[i].title,
-                items: ref.watch(
-                  streamingCatalogProvider((
-                    type: rows[i].type,
-                    catalogId: rows[i].id,
-                  )),
-                ),
+                items: (AppStore.instance.catalogItems((
+                  type: rows[i].type,
+                  catalogId: rows[i].id,
+                ))..watch(context)),
               ),
               if (i != rows.length - 1)
                 const SizedBox(height: DesignTokens.space6),
@@ -362,7 +332,6 @@ class _Categories extends StatelessWidget {
                         ? 'Show ${genre.$1} movies'
                         : 'Add a TMDB token to browse ${genre.$1}',
                     child: ActionChip(
-                      avatar: Icon(genre.$3, size: 16),
                       label: Text(genre.$1),
                       onPressed: enabled
                           ? () => context.push(

@@ -1,53 +1,52 @@
 import 'dart:async';
+import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:media_kit/media_kit.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:libtorrent_flutter/libtorrent_flutter.dart' as lt;
 
 import 'app.dart';
-import 'providers/app_providers.dart';
-import 'providers/player_providers.dart';
+import 'core/navigation.dart';
+import 'dartnative_plugin_registrant.dart';
+import 'providers/app_store.dart';
+import 'services/torrent/torrent_engine.dart';
 
-void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  MediaKit.ensureInitialized();
-  final container = ProviderContainer();
-  unawaited(container.read(myListProvider.future));
-  unawaited(container.read(watchHistoryProvider.future));
-  unawaited(container.read(addonUrlsProvider.future));
-  // Warm the torrent session (DHT bootstrap, native init) at app launch so
-  // the first Play tap does not pay cold-start cost in the player.
-  unawaited(container.read(streamingServiceProvider).warmUp());
-  // Tear native work down before the Dart isolate is destroyed. Without this,
-  // libmpv/libtorrent wakeups delivered during isolate teardown invoke FFI
-  // callbacks the VM has already deleted ("Callback invoked after it has been
-  // deleted"), aborting debug builds on quit. Disposing the streaming service
-  // also records the final verified cache state.
-  // The binding retains the listener as an observer; no field needed. It is
-  // deliberately never disposed: exit dispatch awaits each observer in turn
-  // (WidgetsBinding.handleRequestAppExit), so disposing during teardown can
-  // invalidate a listener mid-dispatch and trip the used-after-dispose
-  // assertion. This is the sole exit-handling listener, so it stays valid
-  // for the full dispatch; state saving (persistState) runs before teardown.
-  AppLifecycleListener(
-    onStateChange: (state) {
-      if (state == AppLifecycleState.paused ||
-          state == AppLifecycleState.hidden ||
-          state == AppLifecycleState.detached) {
-        unawaited(container.read(streamingServiceProvider).persistState());
+Future<void> main() async {
+  DartNativePluginRegistrant.registerAll();
+  SystemChrome.defaultStyle = const SystemUiOverlayStyle(
+    statusBarColor: Color(0x00000000),
+    statusBarBrightness: Brightness.dark,
+    statusBarIconBrightness: Brightness.light,
+    systemNavigationBarColor: Color(0xFF07090D),
+    systemNavigationBarIconBrightness: Brightness.light,
+  );
+  lt.loadCaBundle = () async {
+    final bytes = loadAssetBytes('assets/cacert.pem');
+    return bytes == null ? null : Uint8List.fromList(bytes);
+  };
+  setAppBrightness(Brightness.dark);
+  registerPeerStreamRoutes();
+  final store = AppStore.instance;
+  unawaited(AppStore.instance.myList.reload());
+  unawaited(AppStore.instance.history.reload());
+  unawaited(AppStore.instance.addonUrls.reload());
+  WidgetsBinding.instance.addObserver(_QuitObserver(store));
+  runApp(PeerStreamApp());
+}
+
+class _QuitObserver with WidgetsBindingObserver {
+  _QuitObserver(this.store);
+
+  final AppStore store;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      final engine = AppStore.instance.streaming.engine;
+      if (engine is TorrentStatePersistence) {
+        final persistence = engine as TorrentStatePersistence;
+        unawaited(persistence.persistSessionState());
       }
-    },
-    onExitRequested: () => performAppExit(
-      persistState: () =>
-          container.read(streamingServiceProvider).persistState(),
-      stopPlayer: () => container.read(mediaKitPlayerProvider).stop(),
-      disposeServices: () => container.read(streamingServiceProvider).dispose(),
-    ),
-  );
-  runApp(
-    UncontrolledProviderScope(
-      container: container,
-      child: const PeerStreamApp(),
-    ),
-  );
+    }
+  }
 }

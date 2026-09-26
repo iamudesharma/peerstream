@@ -1,19 +1,25 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:peerstream/providers/app_store.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/design_tokens.dart';
 import '../../core/widgets/settings_widgets.dart';
-import '../../providers/settings_providers.dart';
 import '../../services/settings/settings_store.dart';
 
-class SubtitlesScreen extends ConsumerWidget {
+class SubtitlesScreen extends StatelessWidget {
   const SubtitlesScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final settings = ref.watch(appSettingsProvider);
+  Widget build(BuildContext context) {
+    final settings = (AppStore.instance.settings..watch(context));
 
     return Scaffold(
+
+      // The screen colour belongs on the Scaffold: with no backgroundColor the
+
+      // route reports the white default and dark screens flash white.
+
+      backgroundColor: DesignTokens.background,
       appBar: AppBar(title: const Text('Subtitles')),
       body: ListView(
         padding: const EdgeInsets.all(DesignTokens.pageGutter),
@@ -44,9 +50,9 @@ class SubtitlesScreen extends ConsumerWidget {
                       icon: Icons.subtitles_outlined,
                       value: s.autoLoadSubtitles,
                       onChanged: (value) {
-                        ref
-                            .read(appSettingsProvider.notifier)
-                            .setAutoLoadSubtitles(value);
+                        AppStore.instance.settings.setAutoLoadSubtitles(
+                          value,
+                        );
                       },
                     ),
                   ],
@@ -64,11 +70,9 @@ class SubtitlesScreen extends ConsumerWidget {
                           SelectOption(value: lang, label: lang),
                       ],
                       onChanged: (value) {
-                        ref
-                            .read(appSettingsProvider.notifier)
-                            .setSubtitleLanguage(
-                              value == 'None' ? null : value,
-                            );
+                        AppStore.instance.settings.setSubtitleLanguage(
+                          value == 'None' ? null : value,
+                        );
                       },
                     ),
                   ],
@@ -89,9 +93,7 @@ class SubtitlesScreen extends ConsumerWidget {
                           ),
                       ],
                       onChanged: (value) {
-                        ref
-                            .read(appSettingsProvider.notifier)
-                            .setSubtitleTextScale(value);
+                        AppStore.instance.settings.setSubtitleTextScale(value);
                       },
                     ),
                     const Divider(height: 1),
@@ -107,9 +109,7 @@ class SubtitlesScreen extends ConsumerWidget {
                           ),
                       ],
                       onChanged: (value) {
-                        ref
-                            .read(appSettingsProvider.notifier)
-                            .setSubtitleBackground(value);
+                        AppStore.instance.settings.setSubtitleBackground(value);
                       },
                     ),
                   ],

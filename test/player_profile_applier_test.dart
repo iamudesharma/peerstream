@@ -1,4 +1,4 @@
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart';
 import 'package:peerstream/services/streaming/playback_config.dart';
 import 'package:peerstream/services/streaming/player_profile_applier.dart';
 

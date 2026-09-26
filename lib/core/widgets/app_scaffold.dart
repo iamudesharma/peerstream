@@ -1,7 +1,13 @@
-import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
+import 'package:peerstream/core/navigation.dart';
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../design_tokens.dart';
+
+/// Height the Scaffold's own bottom navigation bar occupies on a narrow
+/// layout. The bar is not a system inset, so the body has to reserve it.
+const double bottomBarHeight = 56;
 
 class AppScaffold extends StatelessWidget {
   const AppScaffold({
@@ -22,15 +28,10 @@ class AppScaffold extends StatelessWidget {
     final width = MediaQuery.sizeOf(context).width;
     final wide = width >= 900;
     final extended = width >= 1200;
-    final content = Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: DesignTokens.contentMaxWidth,
-        ),
-        child: body,
-      ),
-    );
     return Scaffold(
+      // Scaffold does not read the theme here: with backgroundColor null the
+      // route reports the white default and the page reads as a light screen.
+      backgroundColor: DesignTokens.background,
       appBar: wide
           ? null
           : AppBar(
@@ -38,19 +39,20 @@ class AppScaffold extends StatelessWidget {
               actions: [
                 if (selectedIndex != 1)
                   IconButton(
-                    tooltip: 'Search movies and series',
                     onPressed: () => _navigate(context, 1),
-                    icon: const Icon(Icons.search_rounded),
+                    icon: const Icon(Icons.search),
                   ),
                 const SizedBox(width: 8),
               ],
             ),
-      body: SafeArea(
-        top: wide,
-        bottom: false,
-        child: wide
-            ? Row(
-                children: [
+      // No wrapper around [body] on a narrow layout: the Scaffold body has to
+      // BE the scrollable. Padding/Center/ConstrainedBox around it leave it
+      // without a bounded height and the whole subtree collapses. Screens
+      // reserve the tab bar's height as trailing content instead
+      // (see [bottomBarHeight]).
+      body: wide
+          ? Row(
+              children: [
                   SizedBox(
                     width: extended ? 224 : 88,
                     child: Column(
@@ -89,9 +91,9 @@ class AppScaffold extends StatelessWidget {
                                 'Settings',
                               ][i],
                               icon: const [
-                                Icons.explore_outlined,
-                                Icons.search_rounded,
-                                Icons.tune_rounded,
+                                Icons.home,
+                                Icons.search,
+                                Icons.tune,
                               ][i],
                               selected: selectedIndex == i,
                               extended: extended,
@@ -115,11 +117,19 @@ class AppScaffold extends StatelessWidget {
                     ),
                   ),
                   const VerticalDivider(width: 1),
-                  Expanded(child: content),
-                ],
-              )
-            : content,
-      ),
+                  Expanded(
+                    child: Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: DesignTokens.contentMaxWidth,
+                        ),
+                        child: body,
+                      ),
+                    ),
+                  ),
+              ],
+            )
+          : body,
       bottomNavigationBar: wide
           ? null
           : NavigationBar(
@@ -127,16 +137,16 @@ class AppScaffold extends StatelessWidget {
               onDestinationSelected: (index) => _navigate(context, index),
               destinations: const [
                 NavigationDestination(
-                  icon: Icon(Icons.explore_outlined),
-                  selectedIcon: Icon(Icons.explore),
+                  icon: Icon(Icons.home),
+                  selectedIcon: Icon(Icons.home),
                   label: 'Discover',
                 ),
                 NavigationDestination(
-                  icon: Icon(Icons.search_rounded),
+                  icon: Icon(Icons.search),
                   label: 'Search',
                 ),
                 NavigationDestination(
-                  icon: Icon(Icons.tune_rounded),
+                  icon: Icon(Icons.tune),
                   label: 'Settings',
                 ),
               ],
@@ -161,7 +171,7 @@ class PeerStreamBrand extends StatelessWidget {
           borderRadius: BorderRadius.circular(11),
         ),
         child: const Icon(
-          Icons.play_arrow_rounded,
+          Icons.play_arrow,
           color: Colors.white,
           size: 26,
         ),
@@ -200,50 +210,50 @@ class _NavigationItem extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    selected: selected,
-    child: Tooltip(
-      message: extended ? '' : label,
-      child: Material(
+  Widget build(BuildContext context) => Tooltip(
+    message: extended ? '' : label,
+    child: Container(
+      decoration: BoxDecoration(
         color: selected ? DesignTokens.surface2 : Colors.transparent,
         borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            child: Row(
-              mainAxisAlignment: extended
-                  ? MainAxisAlignment.start
-                  : MainAxisAlignment.center,
-              children: [
-                Icon(
-                  icon,
-                  size: 23,
-                  color: selected
-                      ? DesignTokens.accent
-                      : DesignTokens.textSecondary,
-                ),
-                if (extended) ...[
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontWeight: selected
-                            ? FontWeight.w700
-                            : FontWeight.w500,
-                        color: selected
-                            ? DesignTokens.textPrimary
-                            : DesignTokens.textSecondary,
-                      ),
+      ),
+      // GestureDetector, not InkWell: InkWell has no native counterpart and
+      // its subtree is dropped, which blanked the whole navigation rail.
+      child: GestureDetector(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          child: Row(
+            mainAxisAlignment: extended
+                ? MainAxisAlignment.start
+                : MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 23,
+                color: selected
+                    ? DesignTokens.accent
+                    : DesignTokens.textSecondary,
+              ),
+              if (extended) ...[
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: selected
+                          ? FontWeight.w700
+                          : FontWeight.w500,
+                      color: selected
+                          ? DesignTokens.textPrimary
+                          : DesignTokens.textSecondary,
                     ),
                   ),
-                ],
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ),

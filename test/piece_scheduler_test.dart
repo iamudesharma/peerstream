@@ -1,4 +1,4 @@
-import 'package:flutter_test/flutter_test.dart';
+import 'package:test/test.dart';
 import 'package:peerstream/services/streaming/piece_scheduler.dart';
 
 void main() {

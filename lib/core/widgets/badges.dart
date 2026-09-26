@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../design_tokens.dart';
 import '../format.dart';
@@ -52,7 +54,7 @@ class Badge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: 12, color: foreground),
+            Icon(icon!, size: 12, color: foreground),
             const SizedBox(width: 4),
           ],
           Text(
@@ -83,8 +85,8 @@ class StatusDot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      label: semanticLabel,
+    return Tooltip(
+      message: semanticLabel,
       child: Container(
         width: size,
         height: size,

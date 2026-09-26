@@ -1,6 +1,7 @@
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:peerstream/core/icons.dart';
+import 'package:peerstream/core/navigation.dart';
 
 import '../../core/design_tokens.dart';
 import '../../core/image_url.dart';
@@ -24,9 +25,12 @@ class FeaturedMedia extends StatelessWidget {
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(24),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final narrow = constraints.maxWidth < 600;
+        // MediaQuery, not LayoutBuilder: a LayoutBuilder inside a scrolling
+        // body is not given resolved constraints here, so the hero collapsed
+        // to nothing.
+        child: Builder(
+          builder: (context) {
+            final narrow = MediaQuery.sizeOf(context).width < 600;
             return Stack(
               children: [
                 Positioned.fill(
@@ -34,13 +38,13 @@ class FeaturedMedia extends StatelessWidget {
                     color: DesignTokens.surface2,
                     child: image == null
                         ? const SizedBox.shrink()
-                        : CachedNetworkImage(
-                            imageUrl: image,
+                        : Image.network(
+                            image,
                             fit: BoxFit.cover,
                             alignment: Alignment.centerRight,
-                            memCacheWidth: 1280,
-                            maxWidthDiskCache: 1280,
-                            errorWidget: (_, _, _) => const SizedBox.shrink(),
+                            cacheWidth: narrow ? 780 : 1280,
+                            cacheHeight: narrow ? 440 : 720,
+                            errorWidget: const SizedBox.shrink(),
                           ),
                   ),
                 ),
@@ -56,6 +60,7 @@ class FeaturedMedia extends StatelessWidget {
                         stops: [0, 0.5, 1],
                       ),
                     ),
+                    child: SizedBox.expand(),
                   ),
                 ),
                 ConstrainedBox(
@@ -65,7 +70,7 @@ class FeaturedMedia extends StatelessWidget {
                     child: SizedBox(
                       width: narrow
                           ? double.infinity
-                          : constraints.maxWidth * 0.6,
+                          : MediaQuery.sizeOf(context).width * 0.6,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -113,10 +118,10 @@ class FeaturedMedia extends StatelessWidget {
                             ),
                           ],
                           const SizedBox(height: 24),
-                          FilledButton.icon(
+                          filledIconButton(
                             onPressed: () =>
                                 context.push('/details/${item.ref.routeKey}'),
-                            icon: const Icon(Icons.play_arrow_rounded),
+                            icon: const Icon(Icons.play_arrow),
                             label: const Text('Explore title'),
                           ),
                         ],

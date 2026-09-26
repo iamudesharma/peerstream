@@ -1,14 +1,16 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:peerstream/providers/app_store.dart';
+import 'package:dartnative/flutter_compat.dart' hide Badge;
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/design_tokens.dart';
 import '../../core/format.dart';
 import '../../core/widgets/app_empty.dart';
 import '../../core/widgets/app_scaffold.dart';
-import '../../providers/app_providers.dart';
 import '../../services/playback/playback_cache_models.dart';
 
-class StoragePlaybackScreen extends ConsumerWidget {
+class StoragePlaybackScreen extends StatelessWidget {
   const StoragePlaybackScreen({super.key});
 
   static const _limits = <int>[
@@ -19,19 +21,19 @@ class StoragePlaybackScreen extends ConsumerWidget {
     10 * 1024 * 1024 * 1024,
   ];
 
-  void _refresh(WidgetRef ref) {
-    ref.invalidate(playbackCacheSummaryProvider);
-    ref.invalidate(playbackCacheEntriesProvider);
+  void _refresh() {
+    AppStore.instance.cacheSummary.reload();
+    AppStore.instance.cacheEntries.reload();
   }
 
-  Future<void> _setLimit(BuildContext context, WidgetRef ref, int bytes) async {
-    final cache = ref.read(playbackCacheProvider);
+  Future<void> _setLimit(BuildContext context, int bytes) async {
+    final cache = AppStore.instance.cache;
     final current = await cache.preferences();
     await cache.savePreferences(current.copyWith(maxCacheBytes: bytes));
-    _refresh(ref);
+    _refresh();
   }
 
-  Future<void> _clear(BuildContext context, WidgetRef ref) async {
+  Future<void> _clear(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -52,14 +54,14 @@ class StoragePlaybackScreen extends ConsumerWidget {
       ),
     );
     if (confirmed != true) return;
-    await ref.read(playbackCacheProvider).clear();
-    _refresh(ref);
+    await AppStore.instance.cache.clear();
+    _refresh();
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final summary = ref.watch(playbackCacheSummaryProvider);
-    final entries = ref.watch(playbackCacheEntriesProvider);
+  Widget build(BuildContext context) {
+    final summary = (AppStore.instance.cacheSummary..watch(context));
+    final entries = (AppStore.instance.cacheEntries..watch(context));
     return AppScaffold(
       selectedIndex: 2,
       title: 'Storage & playback',
@@ -85,8 +87,8 @@ class StoragePlaybackScreen extends ConsumerWidget {
             ),
             data: (value) => _StorageSummary(
               summary: value,
-              onLimit: (limit) => _setLimit(context, ref, limit),
-              onClear: () => _clear(context, ref),
+              onLimit: (limit) => _setLimit(context, limit),
+              onClear: () => _clear(context),
             ),
           ),
           const SizedBox(height: 24),
@@ -126,13 +128,12 @@ class StoragePlaybackScreen extends ConsumerWidget {
                                 : 'Partly downloaded · ${formatBytes(item.byteSize)}',
                           ),
                           trailing: IconButton(
-                            tooltip: 'Remove saved video',
                             icon: const Icon(Icons.delete_outline),
                             onPressed: () async {
-                              await ref
-                                  .read(playbackCacheProvider)
-                                  .remove(item.cacheKey);
-                              _refresh(ref);
+                              await AppStore.instance.cache.remove(
+                                item.cacheKey,
+                              );
+                              _refresh();
                             },
                           ),
                         ),

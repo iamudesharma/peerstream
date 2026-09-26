@@ -1,0 +1,97 @@
+import 'package:dartnative/dartnative.dart';
+
+/// Flutter `Icons` names mapped onto Material Symbols.
+///
+/// Rounded, not Outlined: the runtime bundles and subsets the `Material
+/// Symbols Rounded` family, while `Material Symbols Outlined` ships no font
+/// and renders every glyph as tofu.
+abstract final class Icons {
+  static const add = MaterialSymbolsRounded.add;
+  static const animation = MaterialSymbolsRounded.animation;
+  static const arrow_back = MaterialSymbolsRounded.arrow_back;
+  static const arrow_downward = MaterialSymbolsRounded.arrow_downward;
+  static const arrow_drop_down = MaterialSymbolsRounded.arrow_drop_down;
+  static const arrow_forward = MaterialSymbolsRounded.arrow_forward;
+  static const arrow_upward = MaterialSymbolsRounded.arrow_upward;
+  static const aspect_ratio = MaterialSymbolsRounded.aspect_ratio;
+  static const audiotrack_outlined = MaterialSymbolsRounded.audiotrack;
+  static const auto_awesome_outlined = MaterialSymbolsRounded.auto_awesome;
+  static const bolt = MaterialSymbolsRounded.bolt;
+  static const bookmark = MaterialSymbolsRounded.bookmark;
+  static const bookmark_border = MaterialSymbolsRounded.bookmark_border;
+  static const check = MaterialSymbolsRounded.check;
+  static const check_circle_outline = MaterialSymbolsRounded.check_circle_outline;
+  static const chevron_right = MaterialSymbolsRounded.chevron_right;
+  static const circle = MaterialSymbolsRounded.circle;
+  static const clear = MaterialSymbolsRounded.clear;
+  static const close = MaterialSymbolsRounded.close;
+  static const copy_outlined = MaterialSymbolsRounded.content_copy;
+  static const delete_outline = MaterialSymbolsRounded.delete_outline;
+  static const delete_sweep_outlined = MaterialSymbolsRounded.delete_sweep;
+  static const description_outlined = MaterialSymbolsRounded.description;
+  static const dns_outlined = MaterialSymbolsRounded.dns;
+  static const downloading_outlined = MaterialSymbolsRounded.downloading;
+  static const error_outline = MaterialSymbolsRounded.error_outline;
+  static const explore_off_outlined = MaterialSymbolsRounded.explore_off;
+  static const extension_off_outlined = MaterialSymbolsRounded.extension_off;
+  static const extension_outlined = MaterialSymbolsRounded.extension_;
+  static const format_color_fill = MaterialSymbolsRounded.format_color_fill;
+  static const format_size = MaterialSymbolsRounded.format_size;
+  static const forward_10 = MaterialSymbolsRounded.forward_10;
+  static const forward_5 = MaterialSymbolsRounded.forward_5;
+  static const gavel_outlined = MaterialSymbolsRounded.gavel;
+  static const grid_view_outlined = MaterialSymbolsRounded.grid_view;
+  static const high_quality_outlined = MaterialSymbolsRounded.high_quality;
+  static const history_outlined = MaterialSymbolsRounded.history;
+  static const home = MaterialSymbolsRounded.home;
+  static const home_outlined = MaterialSymbolsRounded.home;
+  static const hub_outlined = MaterialSymbolsRounded.hub;
+  static const image_not_supported_outlined = MaterialSymbolsRounded.image_not_supported;
+  static const info_outline = MaterialSymbolsRounded.info;
+  static const key_outlined = MaterialSymbolsRounded.key;
+  static const keyboard_outlined = MaterialSymbolsRounded.keyboard;
+  static const language = MaterialSymbolsRounded.language;
+  static const link = MaterialSymbolsRounded.link;
+  static const link_outlined = MaterialSymbolsRounded.link;
+  static const memory = MaterialSymbolsRounded.memory;
+  static const monitor_heart_outlined = MaterialSymbolsRounded.monitor_heart;
+  static const movie_filter_outlined = MaterialSymbolsRounded.movie_filter;
+  static const movie_outlined = MaterialSymbolsRounded.movie;
+  static const multitrack_audio = MaterialSymbolsRounded.audiotrack;
+  static const offline_pin_outlined = MaterialSymbolsRounded.offline_pin;
+  static const pause = MaterialSymbolsRounded.pause;
+  static const people_outline = MaterialSymbolsRounded.people_outline;
+  static const percent = MaterialSymbolsRounded.percent;
+  static const play_arrow = MaterialSymbolsRounded.play_arrow;
+  static const play_circle_fill = MaterialSymbolsRounded.play_circle;
+  static const play_circle_outline = MaterialSymbolsRounded.play_circle;
+  static const public = MaterialSymbolsRounded.public;
+  static const refresh = MaterialSymbolsRounded.refresh;
+  static const replay = MaterialSymbolsRounded.replay;
+  static const replay_10 = MaterialSymbolsRounded.replay_10;
+  static const replay_5 = MaterialSymbolsRounded.replay_5;
+  static const rocket_launch_outlined = MaterialSymbolsRounded.rocket_launch;
+  static const science_outlined = MaterialSymbolsRounded.science;
+  static const search = MaterialSymbolsRounded.search;
+  static const search_off_outlined = MaterialSymbolsRounded.search_off;
+  static const sentiment_satisfied_alt_outlined = MaterialSymbolsRounded.sentiment_satisfied_alt;
+  static const settings = MaterialSymbolsRounded.settings;
+  static const settings_outlined = MaterialSymbolsRounded.settings;
+  static const skip_next = MaterialSymbolsRounded.skip_next;
+  static const skip_previous = MaterialSymbolsRounded.skip_previous;
+  static const slow_motion_video = MaterialSymbolsRounded.slow_motion_video;
+  static const speed = MaterialSymbolsRounded.speed;
+  static const star = MaterialSymbolsRounded.star;
+  static const storage_outlined = MaterialSymbolsRounded.storage;
+  static const subtitles_off_outlined = MaterialSymbolsRounded.subtitles_off;
+  static const subtitles_outlined = MaterialSymbolsRounded.subtitles;
+  static const swap_horiz = MaterialSymbolsRounded.swap_horiz;
+  static const tag = MaterialSymbolsRounded.tag;
+  static const tune = MaterialSymbolsRounded.tune;
+  static const tv_outlined = MaterialSymbolsRounded.tv;
+  static const video_library_outlined = MaterialSymbolsRounded.video_library;
+  static const volume_off = MaterialSymbolsRounded.volume_off;
+  static const volume_up = MaterialSymbolsRounded.volume_up;
+  static const warning_amber_outlined = MaterialSymbolsRounded.warning_amber;
+  static const web_asset_off_outlined = MaterialSymbolsRounded.web_asset_off;
+}

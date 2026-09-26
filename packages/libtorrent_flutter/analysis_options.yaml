@@ -1,15 +1,8 @@
-include: package:flutter_lints/flutter.yaml
+include: package:lints/recommended.yaml
 
 analyzer:
+  # Mirrors the root analysis_options.yaml: Refrence/ is a stale,
+  # incomplete snapshot (missing sibling part files, imports
+  # package:flutter) kept for reference only — never analyzed.
   exclude:
     - Refrence/**
-    - build/**
-    - android/**
-    - ios/**
-    - web/**
-    - windows/**
-    - macos/**
-    - linux/**
-
-# Additional information about this file can be found at
-# https://dart.dev/guides/language/analysis-options

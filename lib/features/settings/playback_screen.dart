@@ -1,19 +1,16 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:media_forge_player/media_forge_player.dart'
-    show VideoEnhancementMode;
-
+import 'package:peerstream/providers/app_store.dart';
+import 'package:dartnative/flutter_compat.dart' hide Badge;
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 import '../../core/design_tokens.dart';
 import '../../core/format.dart';
 import '../../core/widgets/app_empty.dart';
 import '../../core/widgets/settings_widgets.dart';
-import '../../providers/app_providers.dart';
-import '../../providers/settings_providers.dart';
 import '../../services/playback/playback_cache_models.dart';
 import '../../services/settings/settings_store.dart';
-import '../player/player_backend.dart';
 
-class PlaybackScreen extends ConsumerWidget {
+class PlaybackScreen extends StatelessWidget {
   const PlaybackScreen({super.key});
 
   static const _cacheLimits = <int>[
@@ -24,23 +21,19 @@ class PlaybackScreen extends ConsumerWidget {
     10 * 1024 * 1024 * 1024,
   ];
 
-  void _refresh(WidgetRef ref) {
-    ref.invalidate(playbackCacheSummaryProvider);
-    ref.invalidate(playbackCacheEntriesProvider);
+  void _refresh() {
+    AppStore.instance.cacheSummary.reload();
+    AppStore.instance.cacheEntries.reload();
   }
 
-  Future<void> _setCacheLimit(
-    BuildContext context,
-    WidgetRef ref,
-    int bytes,
-  ) async {
-    final cache = ref.read(playbackCacheProvider);
+  Future<void> _setCacheLimit(BuildContext context, int bytes) async {
+    final cache = AppStore.instance.cache;
     final current = await cache.preferences();
     await cache.savePreferences(current.copyWith(maxCacheBytes: bytes));
-    _refresh(ref);
+    _refresh();
   }
 
-  Future<void> _clearCache(BuildContext context, WidgetRef ref) async {
+  Future<void> _clearCache(BuildContext context) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -61,20 +54,23 @@ class PlaybackScreen extends ConsumerWidget {
       ),
     );
     if (confirmed != true) return;
-    await ref.read(playbackCacheProvider).clear();
-    _refresh(ref);
+    await AppStore.instance.cache.clear();
+    _refresh();
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final summary = ref.watch(playbackCacheSummaryProvider);
-    final entries = ref.watch(playbackCacheEntriesProvider);
-    final settings = ref.watch(appSettingsProvider);
-    final enhancementCapabilities = ref.watch(
-      mediaForgeVideoEnhancementCapabilitiesProvider,
-    );
+  Widget build(BuildContext context) {
+    final summary = (AppStore.instance.cacheSummary..watch(context));
+    final entries = (AppStore.instance.cacheEntries..watch(context));
+    final settings = (AppStore.instance.settings..watch(context));
 
     return Scaffold(
+
+      // The screen colour belongs on the Scaffold: with no backgroundColor the
+
+      // route reports the white default and dark screens flash white.
+
+      backgroundColor: DesignTokens.background,
       appBar: AppBar(title: const Text('Playback & Storage')),
       body: ListView(
         padding: const EdgeInsets.all(DesignTokens.pageGutter),
@@ -110,8 +106,8 @@ class PlaybackScreen extends ConsumerWidget {
                 ),
                 data: (value) => _CacheSummary(
                   summary: value,
-                  onLimit: (limit) => _setCacheLimit(context, ref, limit),
-                  onClear: () => _clearCache(context, ref),
+                  onLimit: (limit) => _setCacheLimit(context, limit),
+                  onClear: () => _clearCache(context),
                 ),
               ),
             ],
@@ -137,7 +133,7 @@ class PlaybackScreen extends ConsumerWidget {
                           SelectOption(value: lang, label: lang),
                       ],
                       onChanged: (value) {
-                        final notifier = ref.read(appSettingsProvider.notifier);
+                        final notifier = AppStore.instance.settings;
                         notifier.setAudioLanguage(
                           value == 'Default' ? null : value,
                         );
@@ -153,78 +149,13 @@ class PlaybackScreen extends ConsumerWidget {
                           SelectOption(value: lang, label: lang),
                       ],
                       onChanged: (value) {
-                        final notifier = ref.read(appSettingsProvider.notifier);
+                        final notifier = AppStore.instance.settings;
                         notifier.setSubtitleLanguage(
                           value == 'None' ? null : value,
                         );
                       },
                     ),
                   ],
-                ),
-              ),
-            ],
-          ),
-          SettingsSection(
-            title: 'Playback engine',
-            subtitle: 'Experimental backend selection',
-            children: [
-              settings.when(
-                loading: () => const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-                error: (_, _) => const SizedBox.shrink(),
-                data: (s) => Column(
-                  children: [
-                    SettingsToggle(
-                      title: 'Use MediaForge Player (Experimental)',
-                      subtitle: 'Use the experimental MediaForge playback engine instead of the default player. Applies to the next video you open.',
-                      icon: Icons.science_outlined,
-                      value: s.useMediaForgePlayer,
-                      onChanged: (value) {
-                        ref
-                            .read(appSettingsProvider.notifier)
-                            .setUseMediaForgePlayer(value);
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          SettingsSection(
-            title: 'Experimental MediaForge settings',
-            subtitle: 'Defaults for future MediaForge sessions',
-            children: [
-              settings.when(
-                loading: () => const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-                error: (_, _) => const SizedBox.shrink(),
-                data: (s) => SettingsSelect<VideoEnhancementMode>(
-                  title: 'Video Enhancement',
-                  subtitle: mediaForgeVideoEnhancementCapabilityDescription(
-                    enhancementCapabilities,
-                  ),
-                  icon: Icons.auto_awesome_outlined,
-                  value: s.mediaForgeVideoEnhancementMode,
-                  options: [
-                    for (final mode in VideoEnhancementMode.values)
-                      SelectOption(
-                        value: mode,
-                        label: mode.displayName,
-                        enabled: isMediaForgeVideoEnhancementModeSupported(
-                          mode: mode,
-                          capabilities: enhancementCapabilities,
-                        ),
-                      ),
-                  ],
-                  onChanged: (value) {
-                    ref
-                        .read(appSettingsProvider.notifier)
-                        .setMediaForgeVideoEnhancementMode(value);
-                  },
                 ),
               ),
             ],
@@ -269,13 +200,12 @@ class PlaybackScreen extends ConsumerWidget {
                                     : 'Partly downloaded · ${formatBytes(item.byteSize)}',
                               ),
                               trailing: IconButton(
-                                tooltip: 'Remove saved video',
                                 icon: const Icon(Icons.delete_outline),
                                 onPressed: () async {
-                                  await ref
-                                      .read(playbackCacheProvider)
-                                      .remove(item.cacheKey);
-                                  _refresh(ref);
+                                  await AppStore.instance.cache.remove(
+                                    item.cacheKey,
+                                  );
+                                  _refresh();
                                 },
                               ),
                             ),

@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/gap_widgets.dart';
 
 import '../design_tokens.dart';
 
@@ -78,14 +79,14 @@ class MediaRowSkeleton extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       height: 310,
-      child: ListView.separated(
+      child: separatedListView(
         padding: const EdgeInsets.symmetric(
           horizontal: DesignTokens.pageGutter,
         ),
         scrollDirection: Axis.horizontal,
-        physics: const NeverScrollableScrollPhysics(),
         itemCount: count,
-        separatorBuilder: (_, _) => const SizedBox(width: DesignTokens.space3),
+        separatorBuilder: (_, _) =>
+            const SizedBox(width: DesignTokens.space3),
         itemBuilder: (_, _) => const MediaCardSkeleton(),
       ),
     );
@@ -123,8 +124,8 @@ class SkeletonGrid extends StatelessWidget {
       padding: const EdgeInsets.all(DesignTokens.pageGutter),
       physics: const NeverScrollableScrollPhysics(),
       shrinkWrap: true,
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: DesignTokens.gridMaxExtent,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
         mainAxisExtent: 300,
         crossAxisSpacing: 12,
         mainAxisSpacing: 16,
@@ -144,15 +145,8 @@ class SliverSkeletonGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     return SliverPadding(
       padding: const EdgeInsets.all(DesignTokens.pageGutter),
-      sliver: SliverGrid.builder(
-        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-          maxCrossAxisExtent: DesignTokens.gridMaxExtent,
-          mainAxisExtent: 300,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 16,
-        ),
-        itemCount: count,
-        itemBuilder: (_, _) => const _GridCellSkeleton(),
+      sliver: SliverToBoxAdapter(
+        child: SkeletonGrid(count: count),
       ),
     );
   }
@@ -219,7 +213,8 @@ class SourceListSkeleton extends StatelessWidget {
           padding: const EdgeInsets.all(DesignTokens.space4),
           decoration: BoxDecoration(
             color: DesignTokens.surface,
-            borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
+            borderRadius:
+                BorderRadius.circular(DesignTokens.radiusCard),
             border: Border.all(color: DesignTokens.line),
           ),
           child: const Column(

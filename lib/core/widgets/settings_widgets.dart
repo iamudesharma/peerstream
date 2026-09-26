@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../design_tokens.dart';
 
@@ -78,7 +80,7 @@ class SettingsTile extends StatelessWidget {
     return ListTile(
       leading: icon != null
           ? Icon(
-              icon,
+              icon!,
               color: enabled
                   ? DesignTokens.textSecondary
                   : DesignTokens.textTertiary,
@@ -93,7 +95,6 @@ class SettingsTile extends StatelessWidget {
       subtitle: subtitle != null ? Text(subtitle!) : null,
       trailing: trailing,
       onTap: enabled ? onTap : null,
-      enabled: enabled,
     );
   }
 }
@@ -121,7 +122,7 @@ class SettingsToggle extends StatelessWidget {
     return SwitchListTile(
       secondary: icon != null
           ? Icon(
-              icon,
+              icon!,
               color: enabled
                   ? DesignTokens.textSecondary
                   : DesignTokens.textTertiary,
@@ -165,7 +166,7 @@ class SettingsSelect<T> extends StatelessWidget {
       orElse: options.isNotEmpty ? () => options.first : () => options.first,
     );
     return ListTile(
-      leading: icon != null ? Icon(icon) : null,
+      leading: icon != null ? Icon(icon!) : null,
       title: Text(title),
       subtitle: subtitle != null ? Text(subtitle!) : null,
       trailing: PopupMenuButton<T>(
@@ -245,7 +246,7 @@ class SettingsAction extends StatelessWidget {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(
-                icon,
+                icon!,
                 color: destructive
                     ? DesignTokens.danger
                     : DesignTokens.textPrimary,
@@ -285,7 +286,7 @@ class SettingsInfo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      leading: icon != null ? Icon(icon) : null,
+      leading: icon != null ? Icon(icon!) : null,
       title: Text(title),
       trailing: Text(
         value,
@@ -319,12 +320,12 @@ class SettingsTextField extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: TextField(
         controller: controller,
-        keyboardType: keyboardType,
+        keyboardType: keyboardType ?? TextInputType.text,
         decoration: InputDecoration(
           labelText: label,
           hintText: hint,
-          prefixIcon: icon != null ? Icon(icon) : null,
-          errorText: errorText,
+          helperText: errorText,
+          prefixIcon: icon != null ? Icon(icon!) : null,
         ),
       ),
     );

@@ -1,6 +1,6 @@
+import '../../core/foundation.dart';
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 
 import '../../models/torrent_models.dart';
 import '../playback/playback_cache.dart';

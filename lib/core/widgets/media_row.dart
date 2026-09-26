@@ -1,5 +1,6 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/design_tokens.dart';
 import '../../core/format.dart';
@@ -8,6 +9,7 @@ import '../../core/widgets/app_error.dart';
 import '../../core/widgets/section_header.dart';
 import '../../core/widgets/skeletons.dart';
 import '../../models/media_item.dart';
+import '../../providers/loadable.dart';
 import 'media_card.dart';
 
 class MediaRow extends StatelessWidget {
@@ -21,7 +23,7 @@ class MediaRow extends StatelessWidget {
   });
 
   final String title;
-  final AsyncValue<List<MediaItem>> items;
+  final Loadable<List<MediaItem>> items;
   final VoidCallback? onSeeAll;
   final String seeAllLabel;
   final bool demoBadge;
@@ -87,7 +89,7 @@ class MediaRow extends StatelessWidget {
           ),
         const SizedBox(height: DesignTokens.space3),
         SizedBox(
-          height: 340 + (MediaQuery.textScalerOf(context).scale(14) - 14) * 4,
+          height: 340,
           child: items.when(
             loading: () => const MediaRowSkeleton(),
             error: (error, _) => Padding(
@@ -112,15 +114,23 @@ class MediaRow extends StatelessWidget {
                     title: 'Nothing here yet',
                     hint: 'Check back later for new titles.',
                   )
-                : ListView.separated(
+                // FastList, not ListView.builder: the rows are image-heavy and
+                // ListView.builder builds every card eagerly as a live view.
+                // keepAliveCount windows the content so only the visible cards
+                // (plus a small overscan) hold bitmaps and views.
+                : FastList(
                     padding: const EdgeInsets.symmetric(
                       horizontal: DesignTokens.pageGutter,
                     ),
                     scrollDirection: Axis.horizontal,
                     itemCount: media.length,
-                    separatorBuilder: (_, _) =>
-                        const SizedBox(width: DesignTokens.space3),
-                    itemBuilder: (_, index) => MediaCard(item: media[index]),
+                    keepAliveCount: 6,
+                    itemBuilder: (_, index) => Padding(
+                      padding: const EdgeInsets.only(
+                        right: DesignTokens.space3,
+                      ),
+                      child: MediaCard(item: media[index]),
+                    ),
                   ),
           ),
         ),

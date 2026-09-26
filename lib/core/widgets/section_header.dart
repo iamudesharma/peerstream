@@ -1,4 +1,7 @@
-import 'package:flutter/material.dart';
+import 'package:dartnative/flutter_compat.dart' hide Badge;
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../design_tokens.dart';
 
@@ -35,9 +38,8 @@ class SectionHeader extends StatelessWidget {
           ],
 
           if (onSeeAll != null)
-            TextButton.icon(
+            textIconButton(
               onPressed: onSeeAll,
-              iconAlignment: IconAlignment.end,
               icon: const Icon(Icons.arrow_forward, size: 16),
               label: Text(seeAllLabel),
             ),

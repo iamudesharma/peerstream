@@ -1,10 +1,10 @@
+import '../../core/foundation.dart';
 import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
 import 'package:libtorrent_flutter/libtorrent_flutter.dart' as lt;
-import 'package:path_provider/path_provider.dart';
+import 'package:dartnative_path_provider/dartnative_path_provider.dart';
 
 import '../../models/torrent_models.dart';
 import '../playback/playback_cache.dart';
@@ -58,9 +58,9 @@ class NativeTorrentEngine
   @override
   Future<void> initialize() async {
     if (_engine != null) return;
-    final cache = await getApplicationCacheDirectory();
+    final cache = getApplicationCacheDirectory();
     _sessionDirectory = await Directory(
-      '${cache.path}${Platform.pathSeparator}peerstream-session',
+      '$cache${Platform.pathSeparator}peerstream-session',
     ).create(recursive: true);
     await lt.LibtorrentFlutter.init(
       defaultSavePath: _sessionDirectory!.path,
@@ -73,6 +73,18 @@ class NativeTorrentEngine
       fetchTrackers: false,
     );
     _engine = lt.LibtorrentFlutter.instance;
+    // A prebuilt older than the bundled bridge leaves some symbols out. Say so
+    // once, loudly: the affected features (fast resume, web seeds, stream
+    // diagnostics) degrade, everything else keeps working.
+    final missing = _engine!.missingNativeSymbols;
+    if (missing.isNotEmpty) {
+      debugPrint(
+        '[libtorrent] native library is older than this Dart side. '
+        'Missing: ${missing.join(', ')}. '
+        'Fast resume, web seeds and stream diagnostics are unavailable; '
+        'playback, seeking and the loopback server are unaffected.',
+      );
+    }
     _engine!.configureSession(
       const lt.BtConfig(
         cacheSize: 128 * 1024 * 1024,

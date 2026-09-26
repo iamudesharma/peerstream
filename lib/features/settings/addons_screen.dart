@@ -1,16 +1,18 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:peerstream/providers/app_store.dart';
+import 'package:dartnative/flutter_compat.dart' hide Badge;
+import 'package:peerstream/core/gap_widgets.dart';
+import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/icons.dart';
 
 import '../../core/design_tokens.dart';
 import '../../core/widgets/app_empty.dart';
 import '../../core/widgets/settings_widgets.dart';
-import '../../providers/app_providers.dart';
 import '../../services/torrent/addon_provider.dart';
 
-class AddonsScreen extends ConsumerWidget {
+class AddonsScreen extends StatelessWidget {
   const AddonsScreen({super.key});
 
-  Future<void> _addAddon(BuildContext context, WidgetRef ref) async {
+  Future<void> _addAddon(BuildContext context) async {
     final controller = TextEditingController();
     String? errorText;
 
@@ -34,7 +36,7 @@ class AddonsScreen extends ConsumerWidget {
                   labelText: 'Addon URL',
                   hintText: 'https://example.com/manifest.json',
                   prefixIcon: const Icon(Icons.link),
-                  errorText: errorText,
+                  helperText: errorText,
                 ),
                 onChanged: (_) {
                   if (errorText != null) {
@@ -70,8 +72,8 @@ class AddonsScreen extends ConsumerWidget {
     );
 
     if (result != null) {
-      final notifier = ref.read(addonUrlsProvider.notifier);
-      final current = ref.read(addonUrlsProvider).value ?? [];
+      final notifier = AppStore.instance.addonUrls;
+      final current = AppStore.instance.addonUrls.value ?? [];
       if (!current.contains(result)) {
         await notifier.save([...current, result]);
       }
@@ -80,7 +82,6 @@ class AddonsScreen extends ConsumerWidget {
 
   Future<void> _removeAddon(
     BuildContext context,
-    WidgetRef ref,
     String url,
   ) async {
     final confirmed = await showDialog<bool>(
@@ -103,24 +104,29 @@ class AddonsScreen extends ConsumerWidget {
       ),
     );
     if (confirmed == true) {
-      final notifier = ref.read(addonUrlsProvider.notifier);
-      final current = ref.read(addonUrlsProvider).value ?? [];
+      final notifier = AppStore.instance.addonUrls;
+      final current = AppStore.instance.addonUrls.value ?? [];
       await notifier.save(current.where((u) => u != url).toList());
     }
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final addonUrls = ref.watch(addonUrlsProvider);
+  Widget build(BuildContext context) {
+    final addonUrls = (AppStore.instance.addonUrls..watch(context));
 
     return Scaffold(
+
+      // The screen colour belongs on the Scaffold: with no backgroundColor the
+
+      // route reports the white default and dark screens flash white.
+
+      backgroundColor: DesignTokens.background,
       appBar: AppBar(
         title: const Text('Addons'),
         actions: [
           IconButton(
-            tooltip: 'Add addon',
             icon: const Icon(Icons.add),
-            onPressed: () => _addAddon(context, ref),
+            onPressed: () => _addAddon(context),
           ),
         ],
       ),
@@ -137,8 +143,8 @@ class AddonsScreen extends ConsumerWidget {
               icon: Icons.extension_off_outlined,
               title: 'No addons configured',
               hint: 'Add a Stremio-compatible torrent addon to get started.',
-              action: FilledButton.icon(
-                onPressed: () => _addAddon(context, ref),
+              action: filledIconButton(
+                onPressed: () => _addAddon(context),
                 icon: const Icon(Icons.add),
                 label: const Text('Add addon'),
               ),
@@ -169,17 +175,16 @@ class AddonsScreen extends ConsumerWidget {
                       subtitle: url,
                       icon: Icons.extension_outlined,
                       trailing: IconButton(
-                        tooltip: 'Remove addon',
                         icon: const Icon(Icons.delete_outline),
-                        onPressed: () => _removeAddon(context, ref, url),
+                        onPressed: () => _removeAddon(context, url),
                       ),
                     ),
                 ],
               ),
               const SizedBox(height: 16),
               Center(
-                child: TextButton.icon(
-                  onPressed: () => _addAddon(context, ref),
+                child: textIconButton(
+                  onPressed: () => _addAddon(context),
                   icon: const Icon(Icons.add),
                   label: const Text('Add addon'),
                 ),

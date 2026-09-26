@@ -399,14 +399,33 @@ DynamicLibrary _openNativeLib() {
 class TorrentBridgeBindings {
   final DynamicLibrary _lib;
 
+  /// Symbols this binary does not export. A prebuilt older than the bundled
+  /// torrent_bridge.cpp leaves these null; the features that use them degrade
+  /// instead of the whole bridge failing to load.
+  final List<String> missingSymbols = <String>[];
+
+  /// True when every symbol the current Dart side expects was resolved.
+  bool get isComplete => missingSymbols.isEmpty;
+
+  Pointer<NativeFunction<T>>? _optional<T extends Function>(String name) {
+    try {
+      return _lib.lookup<NativeFunction<T>>(name);
+    } on ArgumentError {
+      missingSymbols.add(name);
+      return null;
+    }
+  }
+
   late final LtCreateSession createSession;
   late final LtDestroySession destroySession;
   late final LtPollAlerts pollAlerts;
   late final LtSetAlertCallback setAlertCallback;
   late final LtAddMagnet addMagnet;
   late final LtAddTorrentFile addTorrentFile;
-  late final LtSaveTorrentState saveTorrentState;
-  late final LtAddTorrentWithState addTorrentWithState;
+  /// Null when the loaded binary predates this symbol.
+  late final LtSaveTorrentState? saveTorrentState;
+  /// Null when the loaded binary predates this symbol.
+  late final LtAddTorrentWithState? addTorrentWithState;
   late final LtRemoveTorrent removeTorrent;
   late final LtPauseTorrent pauseTorrent;
   late final LtResumeTorrent resumeTorrent;
@@ -418,9 +437,12 @@ class TorrentBridgeBindings {
   late final LtGetFiles getFiles;
   late final LtSetFilePriorities setFilePriorities;
   late final LtStartStream startStream;
-  late final LtSetStreamPosition setStreamPosition;
-  late final LtSetStreamDuration setStreamDuration;
-  late final LtGetStreamDebug getStreamDebug;
+  /// Null when the loaded binary predates this symbol.
+  late final LtSetStreamPosition? setStreamPosition;
+  /// Null when the loaded binary predates this symbol.
+  late final LtSetStreamDuration? setStreamDuration;
+  /// Null when the loaded binary predates this symbol.
+  late final LtGetStreamDebug? getStreamDebug;
   late final LtStopStream stopStream;
   late final LtGetStreamStatus getStreamStatus;
   late final LtGetAllStreamStatuses getAllStreamStatuses;
@@ -433,11 +455,15 @@ class TorrentBridgeBindings {
   late final LtGetActiveStreams getActiveStreams;
   late final LtLastError lastError;
   late final LtVersion version;
-  late final LtBridgeVersion bridgeVersion;
-  late final LtIsFileComplete isFileComplete;
-  late final LtGetCacheState getCacheState;
+  /// Null when the loaded binary predates this symbol.
+  late final LtBridgeVersion? bridgeVersion;
+  /// Null when the loaded binary predates this symbol.
+  late final LtIsFileComplete? isFileComplete;
+  /// Null when the loaded binary predates this symbol.
+  late final LtGetCacheState? getCacheState;
   late final LtSetSslCertPath setSslCertPath;
-  late final LtAddWebSeed addWebSeed;
+  /// Null when the loaded binary predates this symbol.
+  late final LtAddWebSeed? addWebSeed;
 
   TorrentBridgeBindings(this._lib) {
     createSession = _lib
@@ -458,14 +484,12 @@ class TorrentBridgeBindings {
     addTorrentFile = _lib
         .lookup<NativeFunction<_AddTorrentFileN>>('lt_add_torrent_file')
         .asFunction<LtAddTorrentFile>();
-    saveTorrentState = _lib
-        .lookup<NativeFunction<_SaveTorrentStateN>>('lt_save_torrent_state')
-        .asFunction<LtSaveTorrentState>();
-    addTorrentWithState = _lib
-        .lookup<NativeFunction<_AddTorrentWithStateN>>(
-          'lt_add_torrent_with_state',
-        )
-        .asFunction<LtAddTorrentWithState>();
+    saveTorrentState = _optional<_SaveTorrentStateN>(
+      'lt_save_torrent_state',
+    )?.asFunction<LtSaveTorrentState>();
+    addTorrentWithState = _optional<_AddTorrentWithStateN>(
+      'lt_add_torrent_with_state',
+    )?.asFunction<LtAddTorrentWithState>();
     removeTorrent = _lib
         .lookup<NativeFunction<_RemoveTorrentN>>('lt_remove_torrent')
         .asFunction<LtRemoveTorrent>();
@@ -499,15 +523,15 @@ class TorrentBridgeBindings {
     startStream = _lib
         .lookup<NativeFunction<_StartStreamN>>('lt_start_stream')
         .asFunction<LtStartStream>();
-    setStreamPosition = _lib
-        .lookup<NativeFunction<_SetStreamPositionN>>('lt_set_stream_position')
-        .asFunction<LtSetStreamPosition>();
-    setStreamDuration = _lib
-        .lookup<NativeFunction<_SetStreamDurationN>>('lt_set_stream_duration')
-        .asFunction<LtSetStreamDuration>();
-    getStreamDebug = _lib
-        .lookup<NativeFunction<_GetStreamDebugN>>('lt_get_stream_debug')
-        .asFunction<LtGetStreamDebug>();
+    setStreamPosition = _optional<_SetStreamPositionN>(
+      'lt_set_stream_position',
+    )?.asFunction<LtSetStreamPosition>();
+    setStreamDuration = _optional<_SetStreamDurationN>(
+      'lt_set_stream_duration',
+    )?.asFunction<LtSetStreamDuration>();
+    getStreamDebug = _optional<_GetStreamDebugN>(
+      'lt_get_stream_debug',
+    )?.asFunction<LtGetStreamDebug>();
     stopStream = _lib
         .lookup<NativeFunction<_StopStreamN>>('lt_stop_stream')
         .asFunction<LtStopStream>();
@@ -546,18 +570,18 @@ class TorrentBridgeBindings {
     version = _lib
         .lookup<NativeFunction<_VersionN>>('lt_version')
         .asFunction<LtVersion>();
-    bridgeVersion = _lib
-        .lookup<NativeFunction<_BridgeVersionN>>('lt_bridge_version')
-        .asFunction<LtBridgeVersion>();
-    isFileComplete = _lib
-        .lookup<NativeFunction<_IsFileCompleteN>>('lt_is_file_complete')
-        .asFunction<LtIsFileComplete>();
-    addWebSeed = _lib
-        .lookup<NativeFunction<_AddWebSeedN>>('lt_add_web_seed')
-        .asFunction<LtAddWebSeed>();
-    getCacheState = _lib
-        .lookup<NativeFunction<_GetCacheStateN>>('lt_get_cache_state')
-        .asFunction<LtGetCacheState>();
+    bridgeVersion = _optional<_BridgeVersionN>(
+      'lt_bridge_version',
+    )?.asFunction<LtBridgeVersion>();
+    isFileComplete = _optional<_IsFileCompleteN>(
+      'lt_is_file_complete',
+    )?.asFunction<LtIsFileComplete>();
+    addWebSeed = _optional<_AddWebSeedN>(
+      'lt_add_web_seed',
+    )?.asFunction<LtAddWebSeed>();
+    getCacheState = _optional<_GetCacheStateN>(
+      'lt_get_cache_state',
+    )?.asFunction<LtGetCacheState>();
     setSslCertPath = _lib
         .lookup<NativeFunction<_SetSslCertPathN>>('lt_set_ssl_cert_path')
         .asFunction<LtSetSslCertPath>();
