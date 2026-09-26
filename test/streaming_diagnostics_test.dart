@@ -57,7 +57,9 @@ void main() {
       d.rebufferEnded(start.add(const Duration(milliseconds: 1200)));
       expect(d.rebufferDurationMs, 1200);
       d.rebufferStarted(start.add(const Duration(seconds: 10)));
-      d.rebufferEnded(start.add(const Duration(seconds: 10, milliseconds: 800)));
+      d.rebufferEnded(
+        start.add(const Duration(seconds: 10, milliseconds: 800)),
+      );
       expect(d.rebufferDurationMs, 2000);
     });
   });

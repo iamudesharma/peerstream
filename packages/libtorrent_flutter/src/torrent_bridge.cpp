@@ -20,6 +20,7 @@
 #endif
 
 #include "torrent_bridge.h"
+#include "startup_window.h"
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -106,7 +107,7 @@ namespace chr = std::chrono;
 // Bump together with `nativeBridgeVersion` in
 // lib/services/torrent/native_torrent_engine.dart. Runtime diagnostics expose
 // this so platform comparisons only run on identical implementations.
-static constexpr const char* kBridgeVersion = "bridge-1.9.4+lt2.0.11";
+static constexpr const char* kBridgeVersion = "bridge-1.9.7+lt2.0.11";
 
 // Coordinated timeout budget: the player's mpv network-timeout (60s) and the
 // native piece wait must agree so both layers abandon the same request
@@ -1735,6 +1736,11 @@ static void schedule_playback_window(StreamEngine* s, int target,
             s->piece_length, download_rate, buffered_seconds),
         remaining);
     total = std::clamp(total, pipeline_floor, std::min(64, remaining));
+    // Before the container is known, concentrate swarm delivery on the
+    // header. The old large-piece floor queued 128 MiB for an 8 MiB torrent
+    // while its MP4 tail was still needed to open the decoder.
+    total = startup_window_pieces(total, s->piece_length, remaining,
+        s->duration_ms.load() <= 0 && target <= s->head_end_piece);
     int critical = std::min(
         StreamScheduler::critical_count(bitrate, s->piece_length), total);
     int urgent = std::min(
@@ -1793,29 +1799,31 @@ static void schedule_playback_window(StreamEngine* s, int target,
            replace ? 1 : 0, download_rate / 1024.0f, peers, buffered_seconds);
 }
 
-// A tail Range is a container probe, not a viewing-position change. Give its
-// immediate pieces a bounded boost without replacing the active playback
-// window or cancelling the player bytes currently in flight.
-static void schedule_metadata_tail_probe(StreamEngine* s, int target,
-                                         bool is_range_demand) {
+// Container probes block the decoder just like playback reads. Schedule only
+// the immediate bounded bytes without expanding a second 64-piece window at
+// byte zero during resume or replacing the actual playback window.
+static void schedule_container_probe(StreamEngine* s, int target,
+                                     bool is_range_demand, const char* reason) {
     if (!s) return;
     std::lock_guard<std::mutex> schedule_lock(s->scheduler_mu);
     target = std::clamp(target, s->start_piece, s->end_piece);
     if (is_range_demand) latch_first_range_piece(s, target);
-    const int end = std::min(target + 2, s->end_piece);
+    const int probe_count = container_probe_pieces(
+        s->piece_length, s->end_piece - target + 1);
+    const int end = target + probe_count - 1;
     int scheduled = 0;
     for (int piece = target; piece <= end; ++piece) {
         if (stream_has_piece(s, piece)) continue;
         try {
             s->handle.piece_priority(
-                lt::piece_index_t(piece), lt::download_priority_t(6));
+                lt::piece_index_t(piece), lt::top_priority);
             s->handle.set_piece_deadline(
-                lt::piece_index_t(piece), 750 + (piece - target) * 250);
+                lt::piece_index_t(piece), (piece - target) * 50);
             ++scheduled;
         } catch (...) {}
     }
-    TB_LOG("SCHED metadata-tail target=%d..%d scheduled=%d",
-           target, end, scheduled);
+    TB_LOG("SCHED %s target=%d..%d scheduled=%d",
+           reason, target, end, scheduled);
 }
 
 // serve_range — based on lt2http's Reader::read() pattern
@@ -1855,8 +1863,12 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
         // Every player-demanded Range drives scheduling, including cache hits.
         // Without this, a warm first piece is sent immediately but no missing
         // lookahead pieces are queued until playback catches the cache edge.
-        if (is_tail) {
-            schedule_metadata_tail_probe(s, p, true);
+        const int resume_target = s->startup_resume_target_piece.load();
+        const bool head_probe = preserve_active_window &&
+            resume_target > p + 1 && p <= s->head_end_piece;
+        if (is_tail || head_probe) {
+            schedule_container_probe(s, p, true,
+                is_tail ? "metadata-tail" : "startup-head");
         } else {
             latch_first_range_piece(s, p);
             const int last_target = s->last_playback_target_piece.load();
@@ -1999,16 +2011,19 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
             try { s->handle.read_piece(lt::piece_index_t(np)); } catch (...) {}
         }
 
-        if (send_all(cli, rd.data.data() + off, (int)nb) < 0)
-            return false;
-        s->served_bytes.fetch_add(nb);
-        // First payload byte: HTTP headers were already sent, so this is the
-        // true time-to-first-byte for the Range.
-        {
-            int64_t z = 0;
-            int64_t now = StreamEngine::epoch_ms_now();
-            bool was_first = s->first_byte_sent_at_ms.compare_exchange_strong(z, now);
-            if (was_first) {
+        // Count actual socket writes, including partial responses abandoned
+        // by a container probe. Waiting for an entire 8 MiB piece to be sent
+        // used to misreport the later tail response as the first HTTP byte.
+        int64_t sent = 0;
+        while (sent < nb) {
+            const int chunk = (int)std::min<int64_t>(nb - sent, 64 * 1024);
+            const int n = (int)::send(cli, rd.data.data() + off + sent, chunk, 0);
+            if (n <= 0) return false;
+            sent += n;
+            s->served_bytes.fetch_add(n);
+            int64_t zero = 0;
+            const int64_t now = StreamEngine::epoch_ms_now();
+            if (s->first_byte_sent_at_ms.compare_exchange_strong(zero, now)) {
                 TB_LOG("DIAG first_byte_sent at=%lld range_start=%lld",
                        (long long)now, (long long)range_start);
             }
@@ -3278,35 +3293,31 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
         std::vector<lt::download_priority_t> prios(
             (size_t)ti->num_pieces(), lt::dont_download);
 
-        // Critical startup pieces — adaptive count based on bitrate estimate.
-        // These get top_priority + tight deadlines to minimize time-to-first-frame.
-        int crit = s->critical_startup_pieces;
-        for (int p = s->start_piece; p <= std::min(s->start_piece + crit - 1, s->end_piece); ++p)
-            prios[p] = lt::top_priority;
-
-        // Remaining head pieces at lower priority — they'll download after
-        // critical pieces without competing for bandwidth
-        for (int p = s->start_piece + crit; p <= s->head_end_piece; ++p)
-            prios[p] = lt::download_priority_t(4);
-
-        // Tail pieces for moov atom — priority 5 (below head critical,
-        // above remaining head). For large files this prevents tail from
-        // stealing bandwidth that the first frame needs.
-        for (int p = s->tail_start_piece; p <= s->end_piece; ++p)
-            prios[p] = lt::download_priority_t(5);
+        // Cache protection is not a download request. Fetch a small header
+        // and speculative tail, not both entire 8 MiB protected regions.
+        // Demanded container ranges expand these windows when necessary.
+        const int startup_head_end = s->start_piece +
+            container_probe_pieces(s->piece_length, s->total_pieces) - 1;
+        const int startup_tail_start = s->end_piece -
+            speculative_tail_pieces(s->piece_length, s->total_pieces) + 1;
+        const int crit = std::min(s->critical_startup_pieces,
+            startup_head_end - s->start_piece + 1);
+        for (int p = s->start_piece; p <= startup_head_end; ++p)
+            prios[p] = p < s->start_piece + crit
+                ? lt::top_priority : lt::download_priority_t(4);
+        for (int p = startup_tail_start; p <= s->end_piece; ++p)
+            prios[p] = std::max(prios[p], lt::download_priority_t(5));
 
         handle.prioritize_pieces(prios);
-
-        // Deadlines: critical pieces get tight deadlines (0-100ms),
-        // tail gets pushed further back (2000ms) so the time-critical picker
-        // strictly favors head over tail while still fetching tail
-        // concurrently from other peers for container probing. Head must win
-        // first-frame bandwidth; tail must not starve it.
-        for (int i = 0; i < crit && s->start_piece + i <= s->end_piece; ++i)
+        for (int i = 0; i < crit; ++i)
             handle.set_piece_deadline(
                 lt::piece_index_t(s->start_piece + i), i * 50);
-        for (int p = s->tail_start_piece; p <= s->end_piece; ++p)
+        for (int p = startup_tail_start; p <= s->end_piece; ++p) {
+            // Do not postpone a head deadline when a small file's windows
+            // overlap. Tail requests get immediate deadlines on HTTP demand.
+            if (p < s->start_piece + crit) continue;
             handle.set_piece_deadline(lt::piece_index_t(p), 2000);
+        }
         s->active_window_start.store(s->start_piece);
         s->active_window_end.store(
             std::min(s->start_piece + crit - 1, s->end_piece));

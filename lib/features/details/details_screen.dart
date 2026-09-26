@@ -41,10 +41,8 @@ class _DetailsScreenState extends ConsumerState<DetailsScreen> {
   Widget build(BuildContext context) {
     final details = ref.watch(detailsProvider(widget.mediaRef));
     final myList = ref.watch(myListProvider);
-    final isSaved = myList.value?.any(
-          (item) => item.media == widget.mediaRef,
-        ) ??
-        false;
+    final isSaved =
+        myList.value?.any((item) => item.media == widget.mediaRef) ?? false;
     final loadedItem = details.value?.item;
     return Scaffold(
       appBar: AppBar(
@@ -157,8 +155,10 @@ class _DetailsBodyState extends State<_DetailsBody> {
     final wide = MediaQuery.sizeOf(context).width >= 900;
     return ListView(
       children: [
-        AspectRatio(
-          aspectRatio: wide ? 21 / 9 : 16 / 7,
+        SizedBox(
+          height: wide
+              ? 480
+              : 350 + (MediaQuery.textScalerOf(context).scale(30) - 30) * 3,
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -169,9 +169,8 @@ class _DetailsBodyState extends State<_DetailsBody> {
                   memCacheWidth: 1280,
                   maxWidthDiskCache: 1280,
                   fadeInDuration: const Duration(milliseconds: 150),
-                  placeholder: (_, _) => const ColoredBox(
-                    color: DesignTokens.surface2,
-                  ),
+                  placeholder: (_, _) =>
+                      const ColoredBox(color: DesignTokens.surface2),
                   errorWidget: (_, _, _) => const _BackdropFallback(),
                 )
               else
@@ -276,7 +275,9 @@ class _DetailsBodyState extends State<_DetailsBody> {
                           .toList(),
                     ),
                   ],
-                  const SizedBox(height: DesignTokens.space4),
+                  const SizedBox(height: DesignTokens.space6),
+                  Text('The story', style: theme.textTheme.titleLarge),
+                  const SizedBox(height: DesignTokens.space3),
                   if (item.overview.isEmpty)
                     Text(
                       'No overview is available for this title yet.',
@@ -306,9 +307,7 @@ class _DetailsBodyState extends State<_DetailsBody> {
                             padding: EdgeInsets.zero,
                             alignment: Alignment.centerLeft,
                           ),
-                          child: Text(
-                            _expanded ? 'Show less' : 'Show more',
-                          ),
+                          child: Text(_expanded ? 'Show less' : 'Show more'),
                         ),
                       ],
                     ),
@@ -347,17 +346,14 @@ class _MovieActions extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final sources = ref.watch(
-      sourceListProvider(item.ref),
-    );
+    final sources = ref.watch(sourceListProvider(item.ref));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
           width: double.infinity,
           child: FilledButton.icon(
-            onPressed: () =>
-                context.push('/sources/${item.ref.routeKey}'),
+            onPressed: () => context.push('/sources/${item.ref.routeKey}'),
             icon: const Icon(Icons.play_arrow),
             label: const Text('Find sources'),
           ),

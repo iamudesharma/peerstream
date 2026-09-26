@@ -65,8 +65,9 @@ class _CategoryScreenState extends ConsumerState<CategoryScreen> {
     if (_loadingMore || !_hasMore || _pageError != null) return;
     setState(() => _loadingMore = true);
     try {
-      final next =
-          await ref.read(categoryProvider(_request.copyWithPage(_page + 1)).future);
+      final next = await ref.read(
+        categoryProvider(_request.copyWithPage(_page + 1)).future,
+      );
       if (!mounted) return;
       setState(() {
         _page += 1;
@@ -82,12 +83,16 @@ class _CategoryScreenState extends ConsumerState<CategoryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final firstPage = ref.watch(categoryProvider((type: widget.type, genreId: widget.genreId, page: 1)));
+    final firstPage = ref.watch(
+      categoryProvider((type: widget.type, genreId: widget.genreId, page: 1)),
+    );
     return Scaffold(
       appBar: AppBar(
         title: firstPage.when(
           data: (media) => Text(
-            media.isEmpty ? widget.title : '${widget.title} (${_items.isEmpty ? media.length : _items.length})',
+            media.isEmpty
+                ? widget.title
+                : '${widget.title} (${_items.isEmpty ? media.length : _items.length})',
           ),
           loading: () => Text(widget.title),
           error: (_, _) => Text(widget.title),
@@ -134,8 +139,7 @@ class _CategoryScreenState extends ConsumerState<CategoryScreen> {
               },
               child: GridView.builder(
                 padding: const EdgeInsets.all(DesignTokens.pageGutter),
-                gridDelegate:
-                    const SliverGridDelegateWithMaxCrossAxisExtent(
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                   maxCrossAxisExtent: DesignTokens.gridMaxExtent,
                   // 170 * 1.5 (poster) + ~46 (title + meta + spacing) = 301.
                   // 278 overflowed by 16px at 165.5w; 300 fits max extent and

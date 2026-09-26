@@ -77,7 +77,7 @@ class MediaRowSkeleton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 252,
+      height: 310,
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(
           horizontal: DesignTokens.pageGutter,
@@ -85,8 +85,7 @@ class MediaRowSkeleton extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         physics: const NeverScrollableScrollPhysics(),
         itemCount: count,
-        separatorBuilder: (_, _) =>
-            const SizedBox(width: DesignTokens.space3),
+        separatorBuilder: (_, _) => const SizedBox(width: DesignTokens.space3),
         itemBuilder: (_, _) => const MediaCardSkeleton(),
       ),
     );
@@ -220,8 +219,7 @@ class SourceListSkeleton extends StatelessWidget {
           padding: const EdgeInsets.all(DesignTokens.space4),
           decoration: BoxDecoration(
             color: DesignTokens.surface,
-            borderRadius:
-                BorderRadius.circular(DesignTokens.radiusCard),
+            borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
             border: Border.all(color: DesignTokens.line),
           ),
           child: const Column(

@@ -41,8 +41,7 @@ void main() {
       persistState: () =>
           container.read(streamingServiceProvider).persistState(),
       stopPlayer: () => container.read(mediaKitPlayerProvider).stop(),
-      disposeServices: () =>
-          container.read(streamingServiceProvider).dispose(),
+      disposeServices: () => container.read(streamingServiceProvider).dispose(),
     ),
   );
   runApp(

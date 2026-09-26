@@ -52,28 +52,16 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/settings',
         builder: (_, _) => const SettingsScreen(),
         routes: [
-          GoRoute(
-            path: 'addons',
-            builder: (_, _) => const AddonsScreen(),
-          ),
-          GoRoute(
-            path: 'playback',
-            builder: (_, _) => const PlaybackScreen(),
-          ),
+          GoRoute(path: 'addons', builder: (_, _) => const AddonsScreen()),
+          GoRoute(path: 'playback', builder: (_, _) => const PlaybackScreen()),
           GoRoute(
             path: 'subtitles',
             builder: (_, _) => const SubtitlesScreen(),
           ),
-          GoRoute(
-            path: 'about',
-            builder: (_, _) => const AboutScreen(),
-          ),
+          GoRoute(path: 'about', builder: (_, _) => const AboutScreen()),
         ],
       ),
-      GoRoute(
-        path: '/storage',
-        redirect: (_, _) => '/settings/playback',
-      ),
+      GoRoute(path: '/storage', redirect: (_, _) => '/settings/playback'),
       GoRoute(
         path: '/category/:type/:genre',
         builder: (_, state) {

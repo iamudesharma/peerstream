@@ -77,7 +77,9 @@ class MediaItem {
     final moviedbId = _intValue(json['moviedb_id']);
     final stremioId = json['id'] as String? ?? '';
     final imdbId = json['imdb_id'] as String? ?? '';
-    final fallbackId = -(_stableHash(stremioId.isNotEmpty ? stremioId : imdbId));
+    final fallbackId = -(_stableHash(
+      stremioId.isNotEmpty ? stremioId : imdbId,
+    ));
     final id = (moviedbId != null && moviedbId > 0) ? moviedbId : fallbackId;
     return MediaItem(
       id: id,
@@ -95,7 +97,8 @@ class MediaItem {
     final released = json['released'];
     if (released is String && released.isNotEmpty) {
       // "1998-10-16T00:00:00.000Z" -> "1998-10-16"
-      if (released.length >= 10 && RegExp(r'^\d{4}-\d{2}-\d{2}').hasMatch(released)) {
+      if (released.length >= 10 &&
+          RegExp(r'^\d{4}-\d{2}-\d{2}').hasMatch(released)) {
         return released.substring(0, 10);
       }
     }

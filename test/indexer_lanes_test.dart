@@ -55,39 +55,38 @@ void main() {
   });
 
   group('source discovery tabs', () {
-    test('Torrentio expands into indexer tabs in the discovery state',
-        () async {
-      final container = ProviderContainer(
-        overrides: [
-          addonUrlsProvider.overrideWith(_EmptyAddonUrls.new),
-          sourcePolicyProvider.overrideWith(
-            (ref) async => const SourcePolicy(),
-          ),
-          torrentProvider.overrideWithValue(
-            _FakeTorrentio([
-              _src('a' * 40, 'YTS'),
-              _src('b' * 40, '1337x'),
-            ]),
-          ),
-        ],
-      );
-      addTearDown(container.dispose);
-      final request = (media: _movie, season: null, episode: null);
-      final states = <IncrementalDiscoveryState>[];
-      final sub = container.listen(
-        sourceDiscoveryProvider(request),
-        (_, next) => next.whenData(states.add),
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-      sub.close();
-      expect(states, isNotEmpty);
-      expect(states.last.isComplete, isTrue);
-      final lanes = states.last.providers;
-      expect(lanes.containsKey('torrentio.strem.fun'), isFalse);
-      expect(lanes['YTS']?.sources, hasLength(1));
-      expect(lanes['1337x']?.sources, hasLength(1));
-      expect(states.last.allSources, hasLength(2));
-    });
+    test(
+      'Torrentio expands into indexer tabs in the discovery state',
+      () async {
+        final container = ProviderContainer(
+          overrides: [
+            addonUrlsProvider.overrideWith(_EmptyAddonUrls.new),
+            sourcePolicyProvider.overrideWith(
+              (ref) async => const SourcePolicy(),
+            ),
+            torrentProvider.overrideWithValue(
+              _FakeTorrentio([_src('a' * 40, 'YTS'), _src('b' * 40, '1337x')]),
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+        final request = (media: _movie, season: null, episode: null);
+        final states = <IncrementalDiscoveryState>[];
+        final sub = container.listen(
+          sourceDiscoveryProvider(request),
+          (_, next) => next.whenData(states.add),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        sub.close();
+        expect(states, isNotEmpty);
+        expect(states.last.isComplete, isTrue);
+        final lanes = states.last.providers;
+        expect(lanes.containsKey('torrentio.strem.fun'), isFalse);
+        expect(lanes['YTS']?.sources, hasLength(1));
+        expect(lanes['1337x']?.sources, hasLength(1));
+        expect(states.last.allSources, hasLength(2));
+      },
+    );
 
     test('non-Torrentio providers keep their own lane', () async {
       final container = ProviderContainer(

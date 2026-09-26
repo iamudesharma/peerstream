@@ -14,9 +14,8 @@ void main() {
           // The sources screen performs a single incremental discovery pass;
           // override that stream with an immediately-complete empty result.
           sourceDiscoveryProvider.overrideWith(
-            (ref, request) => Stream.value(
-              const IncrementalDiscoveryState(isComplete: true),
-            ),
+            (ref, request) =>
+                Stream.value(const IncrementalDiscoveryState(isComplete: true)),
           ),
         ],
         child: const MaterialApp(

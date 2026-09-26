@@ -44,9 +44,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen> {
   Widget build(BuildContext context) {
     final settings = ref.watch(appSettingsProvider);
     return settings.when(
-      loading: () => const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      ),
+      loading: () =>
+          const Scaffold(body: Center(child: CircularProgressIndicator())),
       error: (_, _) => DefaultPlayerScreen(
         mediaRef: widget.mediaRef,
         sourceId: widget.sourceId,

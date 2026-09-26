@@ -31,15 +31,18 @@ class ExpiringCache<K, V> {
     if (running != null) return running;
     final future = loader();
     _inflight[key] = future;
-    future.then((value) {
-      _inflight.remove(key);
-      _entries[key] = _Entry(value, DateTime.now());
-      while (_entries.length > maxEntries) {
-        _entries.remove(_entries.keys.first);
-      }
-    }, onError: (_) {
-      _inflight.remove(key);
-    });
+    future.then(
+      (value) {
+        _inflight.remove(key);
+        _entries[key] = _Entry(value, DateTime.now());
+        while (_entries.length > maxEntries) {
+          _entries.remove(_entries.keys.first);
+        }
+      },
+      onError: (_) {
+        _inflight.remove(key);
+      },
+    );
     return future;
   }
 
@@ -74,9 +77,12 @@ class SingleFlight {
     if (existing != null) return existing as Future<T>;
     final future = work();
     _running[key] = future;
-    future.then((_) => _running.remove(key), onError: (_) {
-      _running.remove(key);
-    });
+    future.then(
+      (_) => _running.remove(key),
+      onError: (_) {
+        _running.remove(key);
+      },
+    );
     return future;
   }
 

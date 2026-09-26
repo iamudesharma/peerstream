@@ -601,15 +601,6 @@ class StreamingService {
       );
       _diagnostics?.streamCreatedAt = DateTime.now();
       _diagnostics?.nativeBuild = nativeBuildIdentity;
-      try {
-        if (_engine is EngineDiagnosticsProvider) {
-          final d = await (_engine as EngineDiagnosticsProvider)
-              .engineDiagnostics()
-              .timeout(const Duration(seconds: 2));
-          _diagnostics?.cacheCapacityBytes = d.cacheCapacityBytes;
-          _diagnostics?.cacheFilledBytes = d.cacheFilledBytes;
-        }
-      } catch (_) {}
       _emit(
         _state.copyWith(
           phase: StreamingPhase.buffering,
@@ -619,6 +610,8 @@ class StreamingService {
           diagnostics: _diagnostics?.toMap(),
         ),
       );
+      // Telemetry must never delay handing the ready URL to the decoder.
+      unawaited(Future<void>(() => _refreshEngineDiagnostics(generation)));
       unawaited(
         _cache.record(
           source,
@@ -667,6 +660,21 @@ class StreamingService {
     } catch (_) {
       return null;
     }
+  }
+
+  Future<void> _refreshEngineDiagnostics(int generation) async {
+    if (generation != _generation) return;
+    final engine = _engine;
+    if (engine is! EngineDiagnosticsProvider) return;
+    try {
+      final result = await (engine as EngineDiagnosticsProvider)
+          .engineDiagnostics()
+          .timeout(const Duration(seconds: 2));
+      if (generation != _generation) return;
+      _diagnostics?.cacheCapacityBytes = result.cacheCapacityBytes;
+      _diagnostics?.cacheFilledBytes = result.cacheFilledBytes;
+      _emit(_state.copyWith(diagnostics: _diagnostics?.toMap()));
+    } catch (_) {}
   }
 
   /// Verified offline path. Requires ALL of:
@@ -944,7 +952,10 @@ class StreamingService {
   /// Idempotent transition to playing. Repeated position updates must not
   /// emit extra states or cancel startup timers more than once.
   void markPlaying() {
-    if (_state.phase == StreamingPhase.playing) return;
+    if (_state.phase == StreamingPhase.playing &&
+        _diagnostics?.firstFrameAt != null) {
+      return;
+    }
     if (_state.playback == null) return;
     if (_state.phase == StreamingPhase.error) return;
     _stallTimer?.cancel();

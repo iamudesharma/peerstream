@@ -295,7 +295,11 @@ Future<List<ProviderResult>> searchAllProviders(
       );
     } on DioException catch (error) {
       if (error.type == DioExceptionType.cancel) {
-        return ProviderResult(provider.name, [], error: 'Search was cancelled.');
+        return ProviderResult(
+          provider.name,
+          [],
+          error: 'Search was cancelled.',
+        );
       }
       return ProviderResult(
         provider.name,

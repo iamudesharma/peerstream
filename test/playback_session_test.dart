@@ -23,6 +23,23 @@ TorrentSource _source(String id) => TorrentSource(
 );
 
 void main() {
+  test(
+    'buffering completion cannot swallow the first playback timing',
+    () async {
+      final service = StreamingService(_FakeEngine(), _EmptyCache());
+      await service.start(_source('c' * 40));
+      service.reportBuffering(true);
+      service.reportBuffering(false);
+      expect(service.currentDiagnostics?.firstFrameAt, isNull);
+      service.markPlaying();
+      final firstFrame = service.currentDiagnostics?.firstFrameAt;
+      expect(firstFrame, isNotNull);
+      service.markPlaying();
+      expect(service.currentDiagnostics?.firstFrameAt, firstFrame);
+      await service.dispose();
+    },
+  );
+
   test('cancel during metadata lookup abandons stream creation', () async {
     final engine = _ControllableEngine();
     final service = StreamingService(engine, _EmptyCache());

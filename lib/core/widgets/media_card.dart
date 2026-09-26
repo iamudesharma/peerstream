@@ -2,162 +2,193 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/design_tokens.dart';
-import '../../core/image_url.dart';
-import '../../core/widgets/media_meta.dart';
+import '../design_tokens.dart';
+import '../format.dart';
+import '../image_url.dart';
 import '../../models/media_item.dart';
 
-class MediaCard extends StatelessWidget {
+class MediaCard extends StatefulWidget {
   const MediaCard({required this.item, super.key});
   final MediaItem item;
 
   @override
-  Widget build(BuildContext context) {
-    final poster = resolveImageUrl(item.posterPath, tmdbSize: 'w342');
-    final theme = Theme.of(context);
-
-    Widget buildPoster() {
-      return Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(
-            DesignTokens.radiusCard,
-          ),
-          border: Border.all(color: DesignTokens.line),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: poster == null
-            ? _PosterFallback(title: item.title)
-            : CachedNetworkImage(
-                imageUrl: poster,
-                width: double.infinity,
-                height: double.infinity,
-                fit: BoxFit.cover,
-                // Downscale in memory + on disk to poster width to cut
-                // memory and decode cost on low-end devices.
-                memCacheWidth: 342,
-                maxWidthDiskCache: 342,
-                fadeInDuration: const Duration(milliseconds: 150),
-                placeholder: (_, _) => const ColoredBox(
-                  color: DesignTokens.surface2,
-                ),
-                errorWidget: (_, _, _) => _PosterFallback(title: item.title),
-              ),
-      );
-    }
-
-    Widget buildInfo() {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            item.title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.titleSmall
-                ?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: DesignTokens.space2),
-          MediaMeta(
-            year: item.releaseDate,
-            rating: item.rating,
-            typeLabel: item.type == MediaType.movie ? 'Movie' : 'Series',
-          ),
-        ],
-      );
-    }
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final hasBoundedWidth = constraints.maxWidth.isFinite;
-        final hasBoundedHeight = constraints.maxHeight.isFinite;
-        final isGridCell = hasBoundedWidth && hasBoundedHeight;
-
-        // Grid / SliverGrid gives a tight w + h (e.g. 165.5 x 278/300).
-        // Use a flexible layout that always fits the cell height and preserves
-        // 2/3 aspect when possible, shrinking only under textScale.
-        if (isGridCell) {
-          return SizedBox(
-            width: constraints.maxWidth,
-            height: constraints.maxHeight,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
-              onTap: () => context.push('/details/${item.ref.routeKey}'),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Flexible(
-                    child: AspectRatio(
-                      aspectRatio: DesignTokens.cardAspect,
-                      child: buildPoster(),
-                    ),
-                  ),
-                  const SizedBox(height: DesignTokens.space2),
-                  buildInfo(),
-                ],
-              ),
-            ),
-          );
-        }
-
-        // Horizontal ListView (MediaRow) or unconstrained: keep fixed
-        // cardWidth with intrinsic height. Parent SizedBox(height: 252) is
-        // tall enough for 132 * 1.5 = 198 poster + info.
-        return SizedBox(
-          width: DesignTokens.cardWidth,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
-            onTap: () => context.push('/details/${item.ref.routeKey}'),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AspectRatio(
-                  aspectRatio: DesignTokens.cardAspect,
-                  child: buildPoster(),
-                ),
-                const SizedBox(height: DesignTokens.space2),
-                buildInfo(),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
+  State<MediaCard> createState() => _MediaCardState();
 }
 
-class _PosterFallback extends StatelessWidget {
-  const _PosterFallback({required this.title});
-  final String title;
+class _MediaCardState extends State<MediaCard> {
+  bool _hovered = false;
+  bool _focused = false;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
+    final item = widget.item;
+    final poster = resolveImageUrl(item.posterPath, tmdbSize: 'w342');
+    final active = _hovered || _focused;
+    final year = formatYear(item.releaseDate);
+    final metadata = [
+      if (year.isNotEmpty) year,
+      item.type == MediaType.movie ? 'Movie' : 'Series',
+    ].join(' · ');
+    final fallback = ColoredBox(
       color: DesignTokens.surface2,
-      alignment: Alignment.center,
-      padding: const EdgeInsets.all(DesignTokens.space3),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(
-            Icons.movie_filter_outlined,
-            size: 32,
-            color: DesignTokens.textTertiary,
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.movie_outlined,
+                size: 36,
+                color: DesignTokens.textTertiary,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                item.title,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: DesignTokens.textSecondary),
+              ),
+            ],
           ),
-          const SizedBox(height: DesignTokens.space2),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: DesignTokens.textSecondary,
+        ),
+      ),
+    );
+    final artwork = AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
+        border: Border.all(
+          color: active ? DesignTokens.accent : DesignTokens.line,
+          width: 2,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (poster == null)
+            fallback
+          else
+            CachedNetworkImage(
+              imageUrl: poster,
+              fit: BoxFit.cover,
+              memCacheWidth: 342,
+              maxWidthDiskCache: 342,
+              fadeInDuration: const Duration(milliseconds: 150),
+              placeholder: (_, _) =>
+                  const ColoredBox(color: DesignTokens.surface2),
+              errorWidget: (_, _, _) => fallback,
+            ),
+          if (item.rating > 0)
+            Positioned(
+              right: 8,
+              top: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xCC0F0F11),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.star_rounded,
+                      size: 13,
+                      color: DesignTokens.warn,
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      formatRating(item.rating),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          IgnorePointer(
+            child: AnimatedOpacity(
+              opacity: active ? 1 : 0,
+              duration: const Duration(milliseconds: 180),
+              child: const ColoredBox(
+                color: Color(0x55000000),
+                child: Center(
+                  child: CircleAvatar(
+                    radius: 24,
+                    backgroundColor: DesignTokens.accent,
+                    child: Icon(
+                      Icons.arrow_forward_rounded,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         ],
+      ),
+    );
+    return Semantics(
+      button: true,
+      label: 'Explore ${item.title}',
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: InkWell(
+          onFocusChange: (value) => setState(() => _focused = value),
+          borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
+          onTap: () => context.push('/details/${item.ref.routeKey}'),
+          child: SizedBox(
+            width: DesignTokens.cardWidth,
+            child: LayoutBuilder(
+              builder: (context, constraints) => Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (constraints.hasBoundedHeight)
+                    Flexible(
+                      child: AspectRatio(
+                        aspectRatio: DesignTokens.cardAspect,
+                        child: artwork,
+                      ),
+                    )
+                  else
+                    AspectRatio(
+                      aspectRatio: DesignTokens.cardAspect,
+                      child: artwork,
+                    ),
+                  const SizedBox(height: 12),
+                  Text(
+                    item.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    metadata,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: DesignTokens.textTertiary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

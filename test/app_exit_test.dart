@@ -65,8 +65,9 @@ void main() {
   // assertion. A State-owned listener disposed mid-dispatch throws exactly
   // the reported `AppLifecycleListener was used after being disposed` error
   // here instead.
-  testWidgets('exit dispatch survives tree teardown without assertion',
-      (tester) async {
+  testWidgets('exit dispatch survives tree teardown without assertion', (
+    tester,
+  ) async {
     final events = <String>[];
     // Mirrors main(): app-lifetime listener, never disposed.
     AppLifecycleListener(

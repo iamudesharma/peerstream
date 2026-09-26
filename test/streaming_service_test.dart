@@ -21,6 +21,26 @@ final source = TorrentSource(
 );
 
 void main() {
+  test(
+    'slow diagnostics cannot delay the playable URL or revive a session',
+    () async {
+      final engine = _DelayedDiagnosticsEngine();
+      final service = StreamingService(engine, _EmptyCacheStore());
+      await service.start(source).timeout(const Duration(seconds: 1));
+      expect(engine.result.isCompleted, isFalse);
+      expect(service.state.playback?.uri.host, '127.0.0.1');
+      await engine.started.future.timeout(const Duration(seconds: 1));
+      await service.stop();
+      engine.result.complete(
+        const EngineDiagnostics(bridgeVersion: 'test', cacheCapacityBytes: 999),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(service.state.phase, StreamingPhase.stopped);
+      expect(service.state.playback, isNull);
+      await service.dispose();
+    },
+  );
+
   test('slow startup warns early then fails after three minutes', () async {
     final service = StreamingService(FakeTorrentEngine(), _EmptyCacheStore());
     final delays = <Duration>[];
@@ -405,6 +425,19 @@ class FakeTorrentEngine implements TorrentEngine, StreamPositionController {
 
   @override
   Future<void> dispose() async {}
+}
+
+class _DelayedDiagnosticsEngine extends FakeTorrentEngine
+    implements EngineDiagnosticsProvider {
+  final started = Completer<void>();
+  final result = Completer<EngineDiagnostics>();
+  @override
+  String get bridgeVersion => 'test';
+  @override
+  Future<EngineDiagnostics> engineDiagnostics() {
+    started.complete();
+    return result.future;
+  }
 }
 
 class _DelayedAddTorrentEngine extends FakeTorrentEngine {

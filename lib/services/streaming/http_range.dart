@@ -7,8 +7,11 @@
 /// contract without a native binary; the C++ implementation follows the same
 /// table.
 class HttpRangeResult {
-  const HttpRangeResult.satisfiable(this.start, this.end, {this.isPartial = true})
-    : isSatisfiable = true;
+  const HttpRangeResult.satisfiable(
+    this.start,
+    this.end, {
+    this.isPartial = true,
+  }) : isSatisfiable = true;
   const HttpRangeResult.unsatisfiable()
     : isSatisfiable = false,
       start = 0,

@@ -8,7 +8,9 @@ final httpServerInfoProvider = FutureProvider.autoDispose<HttpServerInfo>((
 ) {
   // Follow lifecycle changes without probing on every torrent statistics tick.
   ref.watch(playbackPhaseProvider.select((value) => value.value));
-  ref.watch(streamingStateProvider.select((value) => value.value?.playback?.uri));
+  ref.watch(
+    streamingStateProvider.select((value) => value.value?.playback?.uri),
+  );
   final engine = ref.watch(streamingServiceProvider).engine;
   if (engine is HttpServerDiagnosticsProvider) {
     return (engine as HttpServerDiagnosticsProvider).httpServerInfo();

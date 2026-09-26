@@ -20,7 +20,7 @@ class SettingsSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(4, 16, 4, 8),
+          padding: const EdgeInsets.fromLTRB(4, 24, 4, 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -238,7 +238,20 @@ class SettingsAction extends StatelessWidget {
     final color = destructive ? DesignTokens.danger : DesignTokens.textPrimary;
     return ListTile(
       leading: icon != null
-          ? Icon(icon, color: destructive ? DesignTokens.danger : null)
+          ? Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: DesignTokens.surface2,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                icon,
+                color: destructive
+                    ? DesignTokens.danger
+                    : DesignTokens.textPrimary,
+                size: 22,
+              ),
+            )
           : null,
       title: Text(title, style: TextStyle(color: color)),
       subtitle: subtitle != null

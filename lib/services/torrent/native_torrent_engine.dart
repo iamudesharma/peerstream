@@ -16,7 +16,7 @@ import 'source_policy_loader.dart';
 /// `packages/libtorrent_flutter/src/torrent_bridge.cpp`. Bump both together
 /// so runtime diagnostics can confirm all platforms ship the same native
 /// implementation before comparing performance.
-const nativeBridgeVersion = 'bridge-1.9.4+lt2.0.11';
+const nativeBridgeVersion = 'bridge-1.9.7+lt2.0.11';
 
 class NativeTorrentEngine
     implements

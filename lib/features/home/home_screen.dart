@@ -10,6 +10,7 @@ import '../../core/widgets/section_header.dart';
 import '../../providers/app_providers.dart';
 import '../../services/tmdb/tmdb_service.dart';
 import 'continue_watching_row.dart';
+import 'featured_media.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -18,9 +19,10 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final hasHistory =
         ref.watch(watchHistoryProvider).value?.isNotEmpty ?? false;
-    final hasMyList =
-        ref.watch(myListProvider).value?.isNotEmpty ?? false;
+    final hasMyList = ref.watch(myListProvider).value?.isNotEmpty ?? false;
     final hasToken = AppConfig.hasTmdbToken;
+    final featured =
+        ref.watch(trendingMoviesProvider).value?.firstOrNull ?? demoItems.first;
     return AppScaffold(
       selectedIndex: 0,
       body: RefreshIndicator(
@@ -38,8 +40,7 @@ class HomeScreen extends ConsumerWidget {
         child: CustomScrollView(
           slivers: [
             _HomeSearchBar(onSearch: () => context.go('/search')),
-            if (!hasToken)
-              const SliverToBoxAdapter(child: _ConfigurationNotice()),
+            SliverToBoxAdapter(child: FeaturedMedia(item: featured)),
             const SliverToBoxAdapter(
               child: SizedBox(height: DesignTokens.space6),
             ),
@@ -59,8 +60,8 @@ class HomeScreen extends ConsumerWidget {
                 items: ref.watch(trendingMoviesProvider),
                 onSeeAll: hasToken
                     ? () => context.push(
-                          '/category/movie/0?title=${Uri.encodeComponent('Trending movies')}',
-                        )
+                        '/category/movie/0?title=${Uri.encodeComponent('Trending movies')}',
+                      )
                     : null,
               ),
             ),
@@ -73,8 +74,8 @@ class HomeScreen extends ConsumerWidget {
                 items: ref.watch(trendingSeriesProvider),
                 onSeeAll: hasToken
                     ? () => context.push(
-                          '/category/tv/0?title=${Uri.encodeComponent('Trending series')}',
-                        )
+                        '/category/tv/0?title=${Uri.encodeComponent('Trending series')}',
+                      )
                     : null,
               ),
             ),
@@ -87,8 +88,8 @@ class HomeScreen extends ConsumerWidget {
                 items: ref.watch(popularMoviesProvider),
                 onSeeAll: hasToken
                     ? () => context.push(
-                          '/category/movie/0?title=${Uri.encodeComponent('Popular movies')}',
-                        )
+                        '/category/movie/0?title=${Uri.encodeComponent('Popular movies')}',
+                      )
                     : null,
               ),
             ),
@@ -128,85 +129,42 @@ class _HomeSearchBar extends StatelessWidget {
   final VoidCallback onSearch;
 
   @override
-  Widget build(BuildContext context) {
-    return SliverAppBar(
-      pinned: true,
-      floating: true,
-      snap: false,
-      automaticallyImplyLeading: false,
-      backgroundColor: DesignTokens.surface,
-      surfaceTintColor: Colors.transparent,
-      toolbarHeight: 68,
-      flexibleSpace: SafeArea(
-        bottom: false,
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(
-              maxWidth: DesignTokens.contentMaxWidth,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: DesignTokens.pageGutter,
-                vertical: DesignTokens.space2,
-              ),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final narrow = constraints.maxWidth < 560;
-                  final field = Expanded(
-                    child: GestureDetector(
-                      onTap: onSearch,
-                      child: AbsorbPointer(
-                        child: TextField(
-                          readOnly: true,
-                          decoration: const InputDecoration(
-                            hintText: 'Search movies and series',
-                            prefixIcon: Icon(Icons.search),
-                            isDense: true,
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: DesignTokens.space3,
-                              vertical: DesignTokens.space2,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                  if (narrow) {
-                    return Row(
-                      children: [
-                        const StatusPill(),
-                        const SizedBox(width: DesignTokens.space2),
-                        field,
-                        const SizedBox(width: DesignTokens.space2),
-                        IconButton.filled(
-                          tooltip: 'Search',
-                          onPressed: onSearch,
-                          icon: const Icon(Icons.search),
-                        ),
-                      ],
-                    );
-                  }
-                  return Row(
-                    children: [
-                      const StatusPill(),
-                      const SizedBox(width: DesignTokens.space3),
-                      field,
-                      const SizedBox(width: DesignTokens.space3),
-                      FilledButton.icon(
-                        onPressed: onSearch,
-                        icon: const Icon(Icons.search),
-                        label: const Text('Search'),
-                      ),
-                    ],
-                  );
-                },
+  Widget build(BuildContext context) => SliverToBoxAdapter(
+    child: Padding(
+      padding: const EdgeInsets.all(DesignTokens.pageGutter),
+      child: LayoutBuilder(
+        builder: (context, constraints) => Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Discover',
+                    style: Theme.of(context).textTheme.headlineLarge,
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Find your next great watch.',
+                    style: TextStyle(color: DesignTokens.textSecondary),
+                  ),
+                ],
               ),
             ),
-          ),
+            if (constraints.maxWidth >= 600)
+              SizedBox(
+                width: 300,
+                child: OutlinedButton.icon(
+                  onPressed: onSearch,
+                  icon: const Icon(Icons.search_rounded, size: 20),
+                  label: const Text('Search movies and series'),
+                ),
+              ),
+          ],
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
 class StatusPill extends StatelessWidget {
@@ -219,9 +177,7 @@ class StatusPill extends StatelessWidget {
       decoration: BoxDecoration(
         color: DesignTokens.accentDim,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: DesignTokens.accent.withValues(alpha: 0.5),
-        ),
+        border: Border.all(color: DesignTokens.accent.withValues(alpha: 0.5)),
       ),
       child: const Row(
         mainAxisSize: MainAxisSize.min,
@@ -253,7 +209,9 @@ class _MyListSliver extends ConsumerWidget {
       loading: () => const SliverToBoxAdapter(child: SizedBox.shrink()),
       error: (_, _) => const SliverToBoxAdapter(child: SizedBox.shrink()),
       data: (list) {
-        if (list.isEmpty) return const SliverToBoxAdapter(child: SizedBox.shrink());
+        if (list.isEmpty) {
+          return const SliverToBoxAdapter(child: SizedBox.shrink());
+        }
         final items = AsyncData(
           list.map((entry) => entry.toMediaItem()).toList(),
         );
@@ -263,71 +221,32 @@ class _MyListSliver extends ConsumerWidget {
             items: items,
             seeAllLabel: 'Clear',
             onSeeAll: () async {
-                  final confirmed = await showDialog<bool>(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                      title: const Text('Clear My List?'),
-                      content: const Text(
-                        'This removes every saved title from this device.',
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, false),
-                          child: const Text('Keep'),
-                        ),
-                        FilledButton(
-                          onPressed: () => Navigator.pop(context, true),
-                          child: const Text('Clear'),
-                        ),
-                      ],
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Clear My List?'),
+                  content: const Text(
+                    'This removes every saved title from this device.',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Keep'),
                     ),
-                  );
-                  if (confirmed == true) {
-                    await ref.read(myListProvider.notifier).clear();
-                  }
-                },
+                    FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Clear'),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed == true) {
+                await ref.read(myListProvider.notifier).clear();
+              }
+            },
           ),
         );
       },
-    );
-  }
-}
-
-class _ConfigurationNotice extends StatelessWidget {
-  const _ConfigurationNotice();
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      margin: const EdgeInsets.fromLTRB(
-        DesignTokens.pageGutter,
-        DesignTokens.pageGutter,
-        DesignTokens.pageGutter,
-        0,
-      ),
-      padding: const EdgeInsets.all(DesignTokens.space4),
-      decoration: BoxDecoration(
-        color: DesignTokens.surface,
-        borderRadius:
-            BorderRadius.circular(DesignTokens.radiusCard),
-        border: Border.all(color: DesignTokens.warn.withValues(alpha: 0.4)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.key_outlined, color: DesignTokens.warn),
-          const SizedBox(width: DesignTokens.space3),
-          Expanded(
-            child: Text(
-              'TMDB is not configured. The open movies below still play. '
-              'Relaunch with --dart-define=TMDB_READ_TOKEN=your_token to enable discovery and search.',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: DesignTokens.textSecondary,
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }
@@ -356,10 +275,9 @@ class _StreamingCatalogs extends ConsumerWidget {
                 horizontal: DesignTokens.pageGutter,
               ),
               child: Text(
-                'USA · No API key',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: DesignTokens.textTertiary,
-                ),
+                'Explore collections from your streaming services',
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: DesignTokens.textTertiary),
               ),
             ),
             const SizedBox(height: DesignTokens.space3),
@@ -448,8 +366,8 @@ class _Categories extends StatelessWidget {
                       label: Text(genre.$1),
                       onPressed: enabled
                           ? () => context.push(
-                                '/category/movie/${genre.$2}?title=${Uri.encodeComponent(genre.$1)}',
-                              )
+                              '/category/movie/${genre.$2}?title=${Uri.encodeComponent(genre.$1)}',
+                            )
                           : null,
                     ),
                   ),

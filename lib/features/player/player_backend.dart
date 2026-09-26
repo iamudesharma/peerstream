@@ -19,18 +19,15 @@ import '../../services/settings/settings_store.dart';
 
 /// Playback engine selection. Internal only for now; the user-facing
 /// setting remains the `Use MediaForge Player` boolean.
-enum PlayerBackend {
-  defaultPlayer,
-  mediaForge,
-}
+enum PlayerBackend { defaultPlayer, mediaForge }
 
 /// Single place where the backend is chosen. `true` selects the
 /// experimental MediaForge engine, `false` keeps the existing player
 /// with zero behavior changes.
 PlayerBackend resolveBackend(AppSettings settings) =>
     settings.useMediaForgePlayer
-        ? PlayerBackend.mediaForge
-        : PlayerBackend.defaultPlayer;
+    ? PlayerBackend.mediaForge
+    : PlayerBackend.defaultPlayer;
 
 /// Freezes the backend for one playback session. The first resolved value
 /// wins; later setting changes apply to the next media open, never by
@@ -75,11 +72,7 @@ const mediaForgeDirectTimeout = Duration(seconds: 30);
 /// Decides which network profile/timeouts to request. File URIs open as
 /// local files; loopback HTTP(S) is PeerStream's torrent server;
 /// everything else is a direct remote stream.
-enum MediaForgeSourceType {
-  file,
-  torrentLocalhost,
-  directHttp,
-}
+enum MediaForgeSourceType { file, torrentLocalhost, directHttp }
 
 /// Classifies [uri] without touching MediaForge internals. Pure for tests.
 MediaForgeSourceType classifyMediaForgeSource(Uri uri) {
@@ -503,10 +496,7 @@ class MediaForgeResumeSeekDriver {
     bool current() => isCurrent() && run == _runId;
     var attempt = 0;
     while (current()) {
-      if (mediaForgeResumeSeekLanded(
-        position: position(),
-        target: target,
-      )) {
+      if (mediaForgeResumeSeekLanded(position: position(), target: target)) {
         return true;
       }
       if (++attempt > maxAttempts) {
@@ -587,10 +577,7 @@ class MediaForgeResumeSeekDriver {
       if (latestSettled() == watchGeneration) {
         return _ResumeWaitOutcome.settled;
       }
-      if (mediaForgeResumeSeekLanded(
-        position: position(),
-        target: target,
-      )) {
+      if (mediaForgeResumeSeekLanded(position: position(), target: target)) {
         return _ResumeWaitOutcome.settled;
       }
       if (!DateTime.now().isBefore(deadline)) {
