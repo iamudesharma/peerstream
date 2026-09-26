@@ -180,10 +180,7 @@ class _ContinueCard extends ConsumerWidget {
                               gradient: LinearGradient(
                                 begin: Alignment.topCenter,
                                 end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.transparent,
-                                  Colors.black87,
-                                ],
+                                colors: [Colors.transparent, Colors.black87],
                                 stops: [0.4, 1.0],
                               ),
                             ),
@@ -277,9 +274,8 @@ class _ContinueCard extends ConsumerWidget {
                 height: 48,
                 child: IconButton(
                   tooltip: 'Remove',
-                  onPressed: () => ref
-                      .read(watchHistoryProvider.notifier)
-                      .remove(entry.key),
+                  onPressed: () =>
+                      ref.read(watchHistoryProvider.notifier).remove(entry.key),
                   icon: const Icon(
                     Icons.close,
                     size: 16,

@@ -20,8 +20,7 @@ class TorrentStatistics extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: DesignTokens.surface,
-        borderRadius:
-            BorderRadius.circular(DesignTokens.radiusCard),
+        borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
         border: Border.all(color: DesignTokens.line),
       ),
       padding: const EdgeInsets.all(DesignTokens.space4),
@@ -67,10 +66,7 @@ class TorrentStatistics extends StatelessWidget {
             spacing: DesignTokens.space4,
             runSpacing: DesignTokens.space3,
             children: [
-              _Stat(
-                label: 'Download',
-                value: formatSpeed(stats.downloadRate),
-              ),
+              _Stat(label: 'Download', value: formatSpeed(stats.downloadRate)),
               _Stat(label: 'Upload', value: formatSpeed(stats.uploadRate)),
               _Stat(label: 'Peers', value: stats.peers?.toString() ?? '—'),
               _Stat(label: 'Seeds', value: stats.seeds?.toString() ?? '—'),

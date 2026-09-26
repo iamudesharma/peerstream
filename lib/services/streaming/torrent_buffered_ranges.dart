@@ -33,14 +33,12 @@ List<MediaForgeBufferedRange> torrentAvailabilityToBufferedRanges({
   final aheadSeconds = availability.bufferedSecondsAhead;
   if (!(aheadSeconds > 0) || !aheadSeconds.isFinite) return const [];
   final readHead = availability.readHeadBytes.clamp(0, fileSize);
-  final startMs =
-      (readHead / fileSize * duration.inMilliseconds).round().clamp(
-        0,
-        duration.inMilliseconds,
-      );
+  final startMs = (readHead / fileSize * duration.inMilliseconds).round().clamp(
+    0,
+    duration.inMilliseconds,
+  );
   final start = Duration(milliseconds: startMs);
-  var end =
-      start + Duration(microseconds: (aheadSeconds * 1e6).round());
+  var end = start + Duration(microseconds: (aheadSeconds * 1e6).round());
   if (end > duration) end = duration;
   if (end <= start) return const [];
   return normalizeBufferedRanges([

@@ -45,8 +45,9 @@ class MediaRow extends StatelessWidget {
                 Expanded(
                   child: Text(
                     title,
-                    style: theme.textTheme.titleLarge
-                        ?.copyWith(fontWeight: FontWeight.w700),
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
                 Container(
@@ -86,7 +87,7 @@ class MediaRow extends StatelessWidget {
           ),
         const SizedBox(height: DesignTokens.space3),
         SizedBox(
-          height: 272,
+          height: 340 + (MediaQuery.textScalerOf(context).scale(14) - 14) * 4,
           child: items.when(
             loading: () => const MediaRowSkeleton(),
             error: (error, _) => Padding(
@@ -117,11 +118,9 @@ class MediaRow extends StatelessWidget {
                     ),
                     scrollDirection: Axis.horizontal,
                     itemCount: media.length,
-                    separatorBuilder: (_, _) => const SizedBox(
-                      width: DesignTokens.space3,
-                    ),
-                    itemBuilder: (_, index) =>
-                        MediaCard(item: media[index]),
+                    separatorBuilder: (_, _) =>
+                        const SizedBox(width: DesignTokens.space3),
+                    itemBuilder: (_, index) => MediaCard(item: media[index]),
                   ),
           ),
         ),

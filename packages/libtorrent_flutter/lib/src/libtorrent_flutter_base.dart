@@ -101,6 +101,16 @@ StreamInfo _toStreamInfo(LtStreamStatus s) => StreamInfo(
       readaheadWindow: s.readaheadWindow,
       activePeers: s.activePeers,
       downloadRate: s.downloadRate,
+      activeDeadlines: s.activeDeadlines,
+      targetBufferSeconds: s.targetBufferSeconds,
+      cachedVerifiedBytes: s.cachedVerifiedBytes,
+      newlyDownloadedBytes: s.newlyDownloadedBytes,
+      localRereadBytes: s.localRereadBytes,
+      firstHttpRangeAtMs: s.firstHttpRangeAtMs,
+      firstPieceRequestedAtMs: s.firstPieceRequestedAtMs,
+      firstPieceCompletedAtMs: s.firstPieceCompletedAtMs,
+      firstByteSentAtMs: s.firstByteSentAtMs,
+      lastSeekResponseMs: s.lastSeekResponseMs,
     );
 
 // ─── LibtorrentFlutter ──────────────────────────────────────────────────────
@@ -390,6 +400,25 @@ class LibtorrentFlutter {
 
   /// Recheck torrent integrity.
   void recheckTorrent(int id) => _b.recheckTorrent(_session, id);
+
+  /// Attach a standard BitTorrent web seed (BEP 19 `url-list`) to [id].
+  ///
+  /// Thin wrapper around libtorrent's `add_url_seed`: the URL serves pieces
+  /// over plain HTTP like any other peer. BEP 17 http-seeds embedded in
+  /// .torrent metadata are honored automatically without calling this.
+  /// Returns false when the native symbol is missing (older prebuilt) or the
+  /// attach fails. Never throws.
+  bool addWebSeed(int id, String url) {
+    if (url.isEmpty) return false;
+    final u = url.toNativeUtf8();
+    try {
+      return _b.addWebSeed(_session, id, u) != 0;
+    } catch (_) {
+      return false;
+    } finally {
+      malloc.free(u);
+    }
+  }
 
   // ─── File Enumeration ───────────────────────────────────────────────────────
 

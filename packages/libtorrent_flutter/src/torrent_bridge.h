@@ -87,6 +87,10 @@ typedef struct {
     int64_t       newly_downloaded_bytes; /* verified after this stream began */
     int64_t       local_reread_bytes; /* served from already verified storage */
     int64_t       first_http_range_at_ms; /* epoch ms, 0 until first request */
+    int64_t       first_piece_requested_at_ms; /* epoch ms, 0 until needed */
+    int64_t       first_piece_completed_at_ms; /* epoch ms, 0 until verified */
+    int64_t       first_byte_sent_at_ms; /* epoch ms, 0 until first payload */
+    int32_t       last_seek_response_ms; /* Range change → target ready, -1 unknown */
 } lt_stream_status;
 
 /* ── port of settings/btsets.go BTSets struct ── */
@@ -262,6 +266,14 @@ TORRENT_API int lt_get_cache_state(lt_session_t session,
                                    lt_stream_id stream_id,
                                    int64_t* out_capacity,
                                    int64_t* out_filled);
+
+/* web seeds (BEP 19 / BEP 17): attach a plain-HTTP seed URL to a torrent so
+   pieces can come from a web server as well as peers. Thin wrapper around
+   libtorrent's add_url_seed (BEP 19 url-list); BEP 17 http-seeds embedded in
+   .torrent metadata are honored automatically. Returns 1 on success. */
+TORRENT_API int lt_add_web_seed(lt_session_t session,
+                                lt_torrent_id id,
+                                const char* url);
 
 #ifdef __cplusplus
 }

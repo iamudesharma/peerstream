@@ -121,8 +121,8 @@ final popularMoviesProvider = FutureProvider<List<MediaItem>>(
 // when the UI leaves, cancelling their underlying requests. A short-lived
 // expiring cache in the repository layer (see StremioCatalogService/Tmdb)
 // keeps back-navigation instant without retaining every query forever.
-final detailsProvider =
-    FutureProvider.autoDispose.family<MediaDetails, MediaRef>(
+final detailsProvider = FutureProvider.autoDispose
+    .family<MediaDetails, MediaRef>(
       (ref, mediaRef) => ref.watch(mediaRepositoryProvider).details(mediaRef),
     );
 
@@ -134,11 +134,8 @@ final streamingCatalogsProvider = FutureProvider<List<StremioCatalog>>((ref) {
 
 typedef StreamingCatalogRequest = ({MediaType type, String catalogId});
 
-final streamingCatalogProvider =
-    FutureProvider.autoDispose.family<List<MediaItem>, StreamingCatalogRequest>((
-      ref,
-      request,
-    ) {
+final streamingCatalogProvider = FutureProvider.autoDispose
+    .family<List<MediaItem>, StreamingCatalogRequest>((ref, request) {
       if (!AppConfig.hasStreamingCatalogs) return const [];
       return ref
           .watch(stremioCatalogServiceProvider)
@@ -266,11 +263,10 @@ String _sourceCacheKey(SourceRequest request) =>
 /// Bounded, expiring source-search cache (2-minute TTL, 32 entries) with
 /// request deduplication. Back-navigation and player retry reuse the last
 /// result without hammering addons; changing the query naturally misses.
-final _sourceSearchCache =
-    ExpiringCache<String, List<ProviderResult>>(
-      maxEntries: 32,
-      ttl: const Duration(minutes: 2),
-    );
+final _sourceSearchCache = ExpiringCache<String, List<ProviderResult>>(
+  maxEntries: 32,
+  ttl: const Duration(minutes: 2),
+);
 
 List<ProviderResult> _splitAndRank(
   List<ProviderResult> results,
@@ -282,13 +278,10 @@ List<ProviderResult> _splitAndRank(
     if (r.name != 'torrentio.strem.fun' || r.error != null) {
       return [ProviderResult(r.name, allowed, error: r.error)];
     }
-    final names = {...supportedIndexers.values, ...allowed.map((s) => s.providerName)};
-    return names.map(
-      (name) => ProviderResult(
-        name,
-        allowed.where((s) => s.providerName == name).toList(),
-      ),
-    );
+    return [
+      for (final lane in splitIndexerLanes(r.name, allowed))
+        ProviderResult(lane.name, lane.sources),
+    ];
   }).toList();
   // Rank sources within each lane for instant-start ordering.
   for (final lane in ranked) {
@@ -301,11 +294,8 @@ List<ProviderResult> _splitAndRank(
 /// each provider completes, instead of holding fast sources behind the
 /// slowest 20s timeout. The UI shows usable sources sooner; cancellation is
 /// wired to provider disposal.
-final sourceDiscoveryProvider =
-    StreamProvider.autoDispose.family<IncrementalDiscoveryState, SourceRequest>((
-      ref,
-      request,
-    ) async* {
+final sourceDiscoveryProvider = StreamProvider.autoDispose
+    .family<IncrementalDiscoveryState, SourceRequest>((ref, request) async* {
       final urls = await ref.watch(addonUrlsProvider.future);
       final policy = await ref.watch(sourcePolicyProvider.future);
       final repository = ref.watch(mediaRepositoryProvider);
@@ -346,12 +336,30 @@ final sourceDiscoveryProvider =
       )) {
         final allowed = update.sources.where(policy.allows).toList();
         rankSources(allowed);
-        states[update.name] = IncrementalProviderState(
-          name: update.name,
-          status: update.status,
-          sources: allowed,
-          error: update.error,
-        );
+        if (update.name == 'torrentio.strem.fun' &&
+            update.status == ProviderStatus.ready &&
+            update.error == null &&
+            allowed.isNotEmpty) {
+          // Torrentio aggregates many indexers behind one host. Expand it
+          // into one tab per indexer so each source stays visible instead
+          // of collapsing into a single lane. Errors and empty results keep
+          // the single provider lane below so failures stay visible too.
+          states.remove(update.name);
+          for (final lane in splitIndexerLanes(update.name, allowed)) {
+            states[lane.name] = IncrementalProviderState(
+              name: lane.name,
+              status: update.status,
+              sources: lane.sources,
+            );
+          }
+        } else {
+          states[update.name] = IncrementalProviderState(
+            name: update.name,
+            status: update.status,
+            sources: allowed,
+            error: update.error,
+          );
+        }
         yield IncrementalDiscoveryState(
           providers: Map.of(states),
           isComplete: false,
@@ -410,25 +418,22 @@ final sourceResultsProvider = FutureProvider.autoDispose
       });
     });
 
-final sourceListProvider =
-    FutureProvider.autoDispose.family<List<TorrentSource>, MediaRef>((
-      ref,
-      media,
-    ) async => (await ref.watch(
-      sourceResultsProvider((media: media, season: null, episode: null)).future,
-    )).expand((r) => r.sources).toList());
+final sourceListProvider = FutureProvider.autoDispose
+    .family<List<TorrentSource>, MediaRef>(
+      (ref, media) async => (await ref.watch(
+        sourceResultsProvider((media: media, season: null, episode: null))
+            .future,
+      )).expand((r) => r.sources).toList(),
+    );
 
-final searchResultsProvider =
-    FutureProvider.autoDispose.family<List<MediaItem>, String>(
+final searchResultsProvider = FutureProvider.autoDispose
+    .family<List<MediaItem>, String>(
       (ref, query) => ref.watch(mediaRepositoryProvider).search(query),
     );
 
 typedef CategoryRequest = ({MediaType type, int genreId, int page});
-final categoryProvider =
-    FutureProvider.autoDispose.family<List<MediaItem>, CategoryRequest>((
-      ref,
-      request,
-    ) {
+final categoryProvider = FutureProvider.autoDispose
+    .family<List<MediaItem>, CategoryRequest>((ref, request) {
       final repo = ref.watch(mediaRepositoryProvider);
       if (request.page == 1 && request.genreId == 0) {
         if (request.type == MediaType.movie) return repo.popularMovies();
@@ -438,8 +443,8 @@ final categoryProvider =
     });
 
 typedef SeasonRequest = ({int seriesId, int seasonNumber});
-final episodeListProvider =
-    FutureProvider.autoDispose.family<List<Episode>, SeasonRequest>(
+final episodeListProvider = FutureProvider.autoDispose
+    .family<List<Episode>, SeasonRequest>(
       (ref, request) => ref
           .watch(mediaRepositoryProvider)
           .episodes(request.seriesId, request.seasonNumber),
@@ -454,7 +459,9 @@ final streamingStateProvider = StreamProvider<StreamingState>((ref) {
 });
 
 /// Engine diagnostics for the player diagnostics strip.
-final engineDiagnosticsProvider = FutureProvider<EngineDiagnostics?>((ref) async {
+final engineDiagnosticsProvider = FutureProvider<EngineDiagnostics?>((
+  ref,
+) async {
   final service = ref.watch(streamingServiceProvider);
   final engine = service.engine;
   if (engine is EngineDiagnosticsProvider) {

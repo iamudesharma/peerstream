@@ -26,13 +26,15 @@ class EpisodeSelection extends ConsumerStatefulWidget {
 }
 
 class _EpisodeSelectionState extends ConsumerState<EpisodeSelection> {
-  late final List<SeasonSummary> _regularSeasons =
-      widget.seasons.where((s) => s.number > 0).toList();
-  late final List<SeasonSummary> _specialSeasons =
-      widget.seasons.where((s) => s.number <= 0).toList();
+  late final List<SeasonSummary> _regularSeasons = widget.seasons
+      .where((s) => s.number > 0)
+      .toList();
+  late final List<SeasonSummary> _specialSeasons = widget.seasons
+      .where((s) => s.number <= 0)
+      .toList();
   bool _showSpecials = false;
-  late int? _season = _regularSeasons.firstOrNull?.number ??
-      widget.seasons.firstOrNull?.number;
+  late int? _season =
+      _regularSeasons.firstOrNull?.number ?? widget.seasons.firstOrNull?.number;
 
   List<SeasonSummary> get _visibleSeasons =>
       _showSpecials ? widget.seasons : _regularSeasons;
@@ -47,8 +49,7 @@ class _EpisodeSelectionState extends ConsumerState<EpisodeSelection> {
         hint: 'TMDB has no season data for this series yet.',
       );
     }
-    if (_season == null ||
-        !_visibleSeasons.any((s) => s.number == _season)) {
+    if (_season == null || !_visibleSeasons.any((s) => s.number == _season)) {
       _season = _visibleSeasons.firstOrNull?.number;
     }
     final seasonValue = _season;
@@ -60,9 +61,10 @@ class _EpisodeSelectionState extends ConsumerState<EpisodeSelection> {
       );
     }
     final episodes = ref.watch(
-      episodeListProvider(
-        (seriesId: widget.seriesId, seasonNumber: seasonValue),
-      ),
+      episodeListProvider((
+        seriesId: widget.seriesId,
+        seasonNumber: seasonValue,
+      )),
     );
     final activeSeason = widget.seasons
         .where((s) => s.number == seasonValue)
@@ -74,17 +76,15 @@ class _EpisodeSelectionState extends ConsumerState<EpisodeSelection> {
           children: [
             Text(
               'Episodes',
-              style: theme.textTheme.headlineSmall
-                  ?.copyWith(fontWeight: FontWeight.w700),
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const Spacer(),
             if (_specialSeasons.isNotEmpty)
               TextButton(
-                onPressed: () =>
-                    setState(() => _showSpecials = !_showSpecials),
-                child: Text(
-                  _showSpecials ? 'Hide specials' : 'Show specials',
-                ),
+                onPressed: () => setState(() => _showSpecials = !_showSpecials),
+                child: Text(_showSpecials ? 'Hide specials' : 'Show specials'),
               ),
           ],
         ),
@@ -105,10 +105,8 @@ class _EpisodeSelectionState extends ConsumerState<EpisodeSelection> {
           },
           dropdownMenuEntries: _visibleSeasons
               .map(
-                (season) => DropdownMenuEntry(
-                  value: season.number,
-                  label: season.name,
-                ),
+                (season) =>
+                    DropdownMenuEntry(value: season.number, label: season.name),
               )
               .toList(),
         ),
@@ -121,9 +119,10 @@ class _EpisodeSelectionState extends ConsumerState<EpisodeSelection> {
               title: 'Could not load episodes',
               detail: friendlyError(error),
               onRetry: () => ref.invalidate(
-                episodeListProvider(
-                  (seriesId: widget.seriesId, seasonNumber: seasonValue),
-                ),
+                episodeListProvider((
+                  seriesId: widget.seriesId,
+                  seasonNumber: seasonValue,
+                )),
               ),
               retryLabel: 'Retry',
             ),
@@ -197,9 +196,8 @@ class _EpisodeRow extends StatelessWidget {
                       memCacheWidth: 342,
                       maxWidthDiskCache: 342,
                       fadeInDuration: const Duration(milliseconds: 150),
-                      placeholder: (_, _) => const ColoredBox(
-                        color: DesignTokens.surface2,
-                      ),
+                      placeholder: (_, _) =>
+                          const ColoredBox(color: DesignTokens.surface2),
                       errorWidget: (_, _, _) => const Icon(
                         Icons.image_not_supported_outlined,
                         color: DesignTokens.textTertiary,

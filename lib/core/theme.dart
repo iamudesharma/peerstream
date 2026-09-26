@@ -3,27 +3,24 @@ import 'package:flutter/material.dart';
 import 'design_tokens.dart';
 
 ThemeData buildPeerStreamTheme() {
-  final scheme = ColorScheme.fromSeed(
-    seedColor: DesignTokens.accent,
-    brightness: Brightness.dark,
-    surface: DesignTokens.surface,
-  ).copyWith(
-    primary: DesignTokens.accent,
-    onPrimary: const Color(0xFF06231B),
-    surface: DesignTokens.surface,
-    surfaceContainerHighest: DesignTokens.surface2,
-    error: DesignTokens.danger,
-  );
+  final scheme =
+      ColorScheme.fromSeed(
+        seedColor: DesignTokens.accent,
+        brightness: Brightness.dark,
+        surface: DesignTokens.surface,
+      ).copyWith(
+        primary: DesignTokens.accent,
+        onPrimary: Colors.white,
+        surface: DesignTokens.surface,
+        surfaceContainerHighest: DesignTokens.surface2,
+        error: DesignTokens.danger,
+      );
   const shapeCard = RoundedRectangleBorder(
-    borderRadius: BorderRadius.all(
-      Radius.circular(DesignTokens.radiusCard),
-    ),
+    borderRadius: BorderRadius.all(Radius.circular(DesignTokens.radiusCard)),
     side: BorderSide(color: DesignTokens.line),
   );
   const shapeInput = OutlineInputBorder(
-    borderRadius: BorderRadius.all(
-      Radius.circular(DesignTokens.radiusInput),
-    ),
+    borderRadius: BorderRadius.all(Radius.circular(DesignTokens.radiusInput)),
     borderSide: BorderSide.none,
   );
   return ThemeData(
@@ -31,6 +28,60 @@ ThemeData buildPeerStreamTheme() {
     brightness: Brightness.dark,
     colorScheme: scheme,
     scaffoldBackgroundColor: DesignTokens.background,
+    textTheme: ThemeData.dark().textTheme
+        .apply(
+          bodyColor: DesignTokens.textPrimary,
+          displayColor: DesignTokens.textPrimary,
+        )
+        .copyWith(
+          headlineLarge: const TextStyle(
+            fontSize: 36,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -1.2,
+            height: 1.15,
+          ),
+          headlineMedium: const TextStyle(
+            fontSize: 30,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.8,
+            height: 1.2,
+          ),
+          headlineSmall: const TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.6,
+          ),
+          titleLarge: const TextStyle(
+            fontSize: 21,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.4,
+          ),
+        ),
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+      ),
+    ),
+    outlinedButtonTheme: OutlinedButtonThemeData(
+      style: OutlinedButton.styleFrom(
+        foregroundColor: DesignTokens.textPrimary,
+        side: const BorderSide(color: DesignTokens.lineStrong),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    ),
+    tooltipTheme: const TooltipThemeData(
+      waitDuration: Duration(milliseconds: 450),
+    ),
+    bottomSheetTheme: const BottomSheetThemeData(
+      backgroundColor: DesignTokens.surface,
+      showDragHandle: true,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+    ),
     cardTheme: const CardThemeData(
       color: DesignTokens.surface,
       elevation: 0,
@@ -70,8 +121,10 @@ ThemeData buildPeerStreamTheme() {
       disabledColor: DesignTokens.surface,
       padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       labelStyle: TextStyle(color: DesignTokens.textPrimary, fontSize: 13),
-      secondaryLabelStyle:
-          TextStyle(color: DesignTokens.textSecondary, fontSize: 13),
+      secondaryLabelStyle: TextStyle(
+        color: DesignTokens.textSecondary,
+        fontSize: 13,
+      ),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.all(
           Radius.circular(DesignTokens.radiusInput),

@@ -34,18 +34,15 @@ class AppEmpty extends StatelessWidget {
                   border: Border.all(color: DesignTokens.line),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(
-                  icon,
-                  color: DesignTokens.textSecondary,
-                  size: 28,
-                ),
+                child: Icon(icon, color: DesignTokens.textSecondary, size: 28),
               ),
               const SizedBox(height: DesignTokens.space4),
               Text(
                 title,
                 textAlign: TextAlign.center,
-                style: theme.textTheme.titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w600),
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               if (hint != null) ...[
                 const SizedBox(height: DesignTokens.space2),

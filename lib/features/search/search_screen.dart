@@ -63,6 +63,30 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 DesignTokens.pageGutter,
                 24,
                 DesignTokens.pageGutter,
+                0,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Search',
+                    style: Theme.of(context).textTheme.headlineLarge,
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'A world of stories. Find yours.',
+                    style: TextStyle(color: DesignTokens.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                DesignTokens.pageGutter,
+                24,
+                DesignTokens.pageGutter,
                 DesignTokens.space4,
               ),
               child: TextField(
@@ -90,8 +114,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               child: AppEmpty(
                 icon: Icons.key_outlined,
                 title: 'Search needs a TMDB token',
-                hint:
-                    'Relaunch with --dart-define=TMDB_READ_TOKEN=your_token. The open movies on Home still play.',
+                hint: 'Relaunch with --dart-define=TMDB_READ_TOKEN=your_token. The open movies on Home still play.',
                 action: FilledButton.icon(
                   onPressed: () => context.go('/'),
                   icon: const Icon(Icons.home_outlined),
@@ -109,7 +132,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   DesignTokens.space2,
                 ),
                 child: Text(
-                  'Keyless search via Cinemeta \u00b7 No API key',
+                  'Movies and series from Cinemeta',
                   style: TextStyle(
                     color: DesignTokens.textTertiary,
                     fontSize: 12,
@@ -122,7 +145,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               child: AppEmpty(
                 icon: Icons.search,
                 title: 'Search the catalogue',
-                hint: 'Type at least two characters. Results appear as you type.',
+                hint:
+                    'Type at least two characters. Results appear as you type.',
                 action: Wrap(
                   spacing: 8,
                   runSpacing: 8,
@@ -151,8 +175,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 child: AppError(
                   title: 'Search failed',
                   detail: friendlyError(error),
-                  onRetry: () =>
-                      ref.invalidate(searchResultsProvider(_query)),
+                  onRetry: () => ref.invalidate(searchResultsProvider(_query)),
                   retryLabel: 'Retry search',
                 ),
               ),
@@ -161,22 +184,19 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                       child: AppEmpty(
                         icon: Icons.search_off_outlined,
                         title: 'No results found',
-                        hint:
-                            'Check the spelling or try a different title.',
+                        hint: 'Check the spelling or try a different title.',
                       ),
                     )
                   : SliverPadding(
-                      padding: const EdgeInsets.all(
-                        DesignTokens.pageGutter,
-                      ),
+                      padding: const EdgeInsets.all(DesignTokens.pageGutter),
                       sliver: SliverGrid.builder(
                         gridDelegate:
                             const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: DesignTokens.gridMaxExtent,
-                          mainAxisExtent: 300,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 16,
-                        ),
+                              maxCrossAxisExtent: DesignTokens.gridMaxExtent,
+                              mainAxisExtent: 350,
+                              crossAxisSpacing: 12,
+                              mainAxisSpacing: 16,
+                            ),
                         itemCount: items.length,
                         itemBuilder: (_, index) =>
                             MediaCard(item: items[index]),

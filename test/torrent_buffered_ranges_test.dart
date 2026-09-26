@@ -32,10 +32,7 @@ void main() {
         duration: duration,
       );
       expect(ranges, [
-        const MediaForgeBufferedRange(
-          start: Duration.zero,
-          end: duration,
-        ),
+        const MediaForgeBufferedRange(start: Duration.zero, end: duration),
       ]);
     });
 
@@ -244,10 +241,11 @@ class _BaseFakeEngine implements TorrentEngine {
   Future<TorrentHandle> add(TorrentSource source) async =>
       const TorrentHandle('1');
   @override
-  Future<List<TorrentFileEntry>> waitForFiles(TorrentHandle handle) async =>
-      const [
-        TorrentFileEntry(index: 0, name: 'm.mp4', size: 2000, isStreamable: true),
-      ];
+  Future<List<TorrentFileEntry>> waitForFiles(
+    TorrentHandle handle,
+  ) async => const [
+    TorrentFileEntry(index: 0, name: 'm.mp4', size: 2000, isStreamable: true),
+  ];
   @override
   Stream<TorrentStats> watch(TorrentHandle handle) => const Stream.empty();
   @override

@@ -149,18 +149,15 @@ class AddonsScreen extends ConsumerWidget {
             children: [
               Text(
                 'Addons',
-                style: Theme.of(context)
-                    .textTheme
-                    .headlineSmall
+                style: Theme.of(context).textTheme.headlineSmall
                     ?.copyWith(fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 4),
               Text(
                 'Torrent source addons provide video streams. '
                 'Add or remove Stremio-compatible addons.',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: DesignTokens.textSecondary,
-                    ),
+                style: Theme.of(context).textTheme.bodyMedium
+                    ?.copyWith(color: DesignTokens.textSecondary),
               ),
               const SizedBox(height: 16),
               SettingsSection(

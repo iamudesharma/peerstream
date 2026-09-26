@@ -75,7 +75,10 @@ void main() {
       watchKey(const MediaRef(id: 5, type: MediaType.tv), 1, 2),
       'tv/5/1/2',
     );
-    expect(watchKey(const MediaRef(id: 5, type: MediaType.movie), 1, 2), 'movie/5');
+    expect(
+      watchKey(const MediaRef(id: 5, type: MediaType.movie), 1, 2),
+      'movie/5',
+    );
   });
 
   test('json round trip preserves fields', () {

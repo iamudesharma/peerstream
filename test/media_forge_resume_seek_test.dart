@@ -43,22 +43,10 @@ void main() {
 
   group('mediaForgeResumeSeekDelay', () {
     test('backs off linearly and caps', () {
-      expect(
-        mediaForgeResumeSeekDelay(1),
-        const Duration(milliseconds: 500),
-      );
-      expect(
-        mediaForgeResumeSeekDelay(2),
-        const Duration(milliseconds: 1000),
-      );
-      expect(
-        mediaForgeResumeSeekDelay(4),
-        const Duration(milliseconds: 2000),
-      );
-      expect(
-        mediaForgeResumeSeekDelay(20),
-        const Duration(milliseconds: 2000),
-      );
+      expect(mediaForgeResumeSeekDelay(1), const Duration(milliseconds: 500));
+      expect(mediaForgeResumeSeekDelay(2), const Duration(milliseconds: 1000));
+      expect(mediaForgeResumeSeekDelay(4), const Duration(milliseconds: 2000));
+      expect(mediaForgeResumeSeekDelay(20), const Duration(milliseconds: 2000));
     });
   });
 
@@ -183,29 +171,21 @@ void main() {
       expect(
         resumeMsForSource(
           source: source(),
-          history: [
-            entry(300000).copyWithKey('movie/8'),
-          ],
+          history: [entry(300000).copyWithKey('movie/8')],
         ),
         isNull,
       );
     });
 
     test('null for zero positions', () {
-      expect(
-        resumeMsForSource(source: source(), history: [entry(0)]),
-        isNull,
-      );
+      expect(resumeMsForSource(source: source(), history: [entry(0)]), isNull);
     });
   });
 
   group('MediaForgeResumeSeekDriver', () {
     test('returns immediately when already landed', () async {
-      final backend = _FakeSeekBackend()
-        ..position = const Duration(minutes: 5);
-      final driver = MediaForgeResumeSeekDriver(
-        delayFn: (_) async {},
-      );
+      final backend = _FakeSeekBackend()..position = const Duration(minutes: 5);
+      final driver = MediaForgeResumeSeekDriver(delayFn: (_) async {});
       final ok = await driver.drive(
         reason: 'test',
         target: const Duration(minutes: 5),

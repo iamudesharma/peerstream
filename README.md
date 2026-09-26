@@ -207,3 +207,18 @@ flutter build macos --debug
 ## Notices
 
 The bundled demonstration catalogue includes Big Buck Bunny, Sintel, and Tears of Steel. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [docs/WEBTORRENT_FUTURE.md](docs/WEBTORRENT_FUTURE.md) for source and WebTorrent notes.
+
+### Interface and formatting
+
+PeerStream uses a responsive charcoal theme with a featured discovery shelf,
+artwork cards, and desktop/sidebar or mobile/bottom navigation. The default
+`media_kit` player uses a desktop transport bar with a red seek timeline,
+hover volume, audio and subtitle menus, settings, and fullscreen. Touch devices
+retain center playback controls and double-tap seeking. Playback speed, video
+fit, aspect ratio, shortcuts, and statistics are available inside the player.
+The experimental MediaForge backend remains opt-in.
+
+Use `make format` to apply the Flutter SDK's Dart formatter to `lib` and `test`.
+Use `make format-check` for a non-writing formatting check, `make analyze` for
+static analysis, and `make test` for the test suite. `.editorconfig` supplies
+consistent whitespace defaults to compatible editors.

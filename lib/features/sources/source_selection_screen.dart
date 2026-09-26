@@ -64,19 +64,15 @@ class SourceSelectionScreen extends ConsumerStatefulWidget {
       _SourceSelectionScreenState();
 }
 
-class _SourceSelectionScreenState
-    extends ConsumerState<SourceSelectionScreen> {
+class _SourceSelectionScreenState extends ConsumerState<SourceSelectionScreen> {
   _SortMode _sort = _SortMode.seeds;
   final _savedSourceIds = <String>{};
   bool _directOnly = false;
   String _quality = 'All';
   String? _prefetchedSourceId;
 
-  SourceRequest get _request => (
-        media: widget.mediaRef,
-        season: widget.season,
-        episode: widget.episode,
-      );
+  SourceRequest get _request =>
+      (media: widget.mediaRef, season: widget.season, episode: widget.episode);
 
   String _contextLabel() {
     if (widget.mediaRef.type == MediaType.tv &&
@@ -102,11 +98,8 @@ class _SourceSelectionScreenState
               ? AsyncData(
                   discovery.value!.providers.values
                       .map(
-                        (p) => ProviderResult(
-                          p.name,
-                          p.sources,
-                          error: p.error,
-                        ),
+                        (p) =>
+                            ProviderResult(p.name, p.sources, error: p.error),
                       )
                       .toList(),
                 )
@@ -138,11 +131,7 @@ class _SourceSelectionScreenState
     );
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
             tooltip: 'Providers',
@@ -189,9 +178,7 @@ class _SourceSelectionScreenState
                 final incremental = discovery.value;
                 final fast = incremental?.allSources ?? const [];
                 if (fast.isNotEmpty) {
-                  final lane = [
-                    ProviderResult('Fast results', List.of(fast)),
-                  ];
+                  final lane = [ProviderResult('Fast results', List.of(fast))];
                   return Column(
                     children: [
                       _IncrementalBanner(discovery: incremental),
@@ -242,14 +229,12 @@ class _SourceSelectionScreenState
                 ),
               ),
               data: (providers) {
-                final total =
-                    providers.expand((p) => p.sources).length;
+                final total = providers.expand((p) => p.sources).length;
                 if (total == 0 && providers.every((p) => p.error == null)) {
                   return AppEmpty(
                     icon: Icons.video_library_outlined,
                     title: 'No playable sources found',
-                    hint:
-                        'Try another provider or search again. For a series, choose an episode first.',
+                    hint: 'Try another provider or search again. For a series, choose an episode first.',
                     action: FilledButton.icon(
                       onPressed: () => showDialog<void>(
                         context: context,
@@ -284,9 +269,7 @@ class _SourceSelectionScreenState
                                         : '${p.name} is healthy',
                                   ),
                                   const SizedBox(width: 6),
-                                  Text(
-                                    '${p.name} (${p.sources.length})',
-                                  ),
+                                  Text('${p.name} (${p.sources.length})'),
                                 ],
                               ),
                             ),
@@ -374,9 +357,7 @@ class _ContextBar extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           SegmentedButton<_SortMode>(
-            style: const ButtonStyle(
-              visualDensity: VisualDensity.compact,
-            ),
+            style: const ButtonStyle(visualDensity: VisualDensity.compact),
             segments: const [
               ButtonSegment(
                 value: _SortMode.seeds,
@@ -390,8 +371,7 @@ class _ContextBar extends StatelessWidget {
               ),
             ],
             selected: {sort},
-            onSelectionChanged: (selected) =>
-                onSortChanged(selected.first),
+            onSelectionChanged: (selected) => onSortChanged(selected.first),
           ),
         ],
       ),
@@ -464,8 +444,7 @@ class _SearchingBanner extends StatelessWidget {
       padding: const EdgeInsets.all(DesignTokens.space3),
       decoration: BoxDecoration(
         color: DesignTokens.surface,
-        borderRadius:
-            BorderRadius.circular(DesignTokens.radiusCard),
+        borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
         border: Border.all(color: DesignTokens.line),
       ),
       child: Row(
@@ -531,9 +510,8 @@ class _IncrementalBanner extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: DesignTokens.textSecondary,
-              ),
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: DesignTokens.textSecondary),
             ),
           ),
         ],
@@ -569,9 +547,7 @@ class _Results extends StatelessWidget {
           .toList();
     }
     if (quality != 'All') {
-      sources = sources
-          .where((s) => formatQuality(s.name) == quality)
-          .toList();
+      sources = sources.where((s) => formatQuality(s.name) == quality).toList();
     }
     sources.sort((a, b) => _compareSources(a, b, sort));
     final itemCount = errors.length + (sources.isEmpty ? 1 : sources.length);
@@ -585,8 +561,7 @@ class _Results extends StatelessWidget {
             margin: const EdgeInsets.only(bottom: DesignTokens.space3),
             decoration: BoxDecoration(
               color: DesignTokens.surface,
-              borderRadius:
-                  BorderRadius.circular(DesignTokens.radiusCard),
+              borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
               border: Border.all(
                 color: DesignTokens.danger.withValues(alpha: 0.4),
               ),
@@ -655,8 +630,7 @@ class _SourceCard extends ConsumerWidget {
         path: '/player/${source.content.routeKey}',
         queryParameters: {
           'source': source.id,
-          if (source.seasonNumber != null)
-            'season': '${source.seasonNumber}',
+          if (source.seasonNumber != null) 'season': '${source.seasonNumber}',
           if (source.episodeNumber != null)
             'episode': '${source.episodeNumber}',
           if (resumeMs != null) 'resume': '$resumeMs',
@@ -674,8 +648,7 @@ class _SourceCard extends ConsumerWidget {
       margin: const EdgeInsets.only(bottom: DesignTokens.space3),
       decoration: BoxDecoration(
         color: DesignTokens.surface,
-        borderRadius:
-            BorderRadius.circular(DesignTokens.radiusCard),
+        borderRadius: BorderRadius.circular(DesignTokens.radiusCard),
         border: Border.all(color: DesignTokens.line),
       ),
       padding: const EdgeInsets.all(DesignTokens.space4),
@@ -689,8 +662,9 @@ class _SourceCard extends ConsumerWidget {
                 child: SelectableText(
                   source.name,
                   maxLines: 2,
-                  style: theme.textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w600),
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
               IconButton(
@@ -738,16 +712,10 @@ class _SourceCard extends ConsumerWidget {
                     : Icons.hub_outlined,
               ),
               if (quality != null)
-                Badge(
-                  label: quality,
-                  icon: Icons.high_quality_outlined,
-                ),
+                Badge(label: quality, icon: Icons.high_quality_outlined),
               if (source.inputType != TorrentInputType.directUrl &&
                   source.seeds != null)
-                Badge(
-                  label: 'Seeds ${source.seeds}',
-                  icon: Icons.arrow_upward,
-                ),
+                Badge(label: 'Seeds ${source.seeds}', icon: Icons.arrow_upward),
               if (source.peers != null)
                 Badge(
                   label: 'Peers ${source.peers}',
@@ -809,8 +777,7 @@ class _SourceCard extends ConsumerWidget {
 class _ProviderSettings extends ConsumerStatefulWidget {
   const _ProviderSettings();
   @override
-  ConsumerState<_ProviderSettings> createState() =>
-      _ProviderSettingsState();
+  ConsumerState<_ProviderSettings> createState() => _ProviderSettingsState();
 }
 
 class _ProviderSettingsState extends ConsumerState<_ProviderSettings> {
@@ -842,32 +809,24 @@ class _ProviderSettingsState extends ConsumerState<_ProviderSettings> {
                 child: urls.when(
                   loading: () => const Padding(
                     padding: EdgeInsets.symmetric(vertical: 24),
-                    child:
-                        Center(child: CircularProgressIndicator()),
+                    child: Center(child: CircularProgressIndicator()),
                   ),
                   error: (error, _) => AppError(
                     title: 'Could not load providers',
                     detail: friendlyError(error),
-                    onRetry: () =>
-                        ref.invalidate(addonUrlsProvider),
+                    onRetry: () => ref.invalidate(addonUrlsProvider),
                     retryLabel: 'Retry',
                   ),
                   data: (value) {
-                    _text ??= TextEditingController(
-                      text: value.join('\n'),
-                    );
+                    _text ??= TextEditingController(text: value.join('\n'));
                     return Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           'All saved catalogs are searched together. Put one catalog link per line. Changes stay on this device.',
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodyMedium
-                              ?.copyWith(
-                                color: DesignTokens.textSecondary,
-                              ),
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(color: DesignTokens.textSecondary),
                         ),
                         const SizedBox(height: 12),
                         TextField(
@@ -914,15 +873,30 @@ class _ProviderSettingsState extends ConsumerState<_ProviderSettings> {
                       if (controller == null) {
                         throw StateError('Editor is not ready.');
                       }
+                      // Partition, don't reject wholesale: one bad pasted
+                      // line must not silently discard every valid addon.
+                      // Invalid lines are reported by name below.
+                      final split = splitAddonUrlLines(controller.text);
+                      if (split.valid.isEmpty) {
+                        throw const FormatException('No valid addon links.');
+                      }
                       await ref
                           .read(addonUrlsProvider.notifier)
-                          .save(
-                            controller.text
-                                .split('\n')
-                                .map((s) => s.trim())
-                                .where((s) => s.isNotEmpty)
-                                .toList(),
-                          );
+                          .save(split.valid);
+                      if (!context.mounted) return;
+                      // Keep the bad lines visible for fixing instead of
+                      // closing over them silently.
+                      if (split.invalid.isNotEmpty) {
+                        setState(() {
+                          _saving = false;
+                          _error =
+                              'Saved ${split.valid.length}, skipped '
+                              '${split.invalid.length} invalid: '
+                              '${split.invalid.take(2).join(', ')}'
+                              '${split.invalid.length > 2 ? ', …' : ''}';
+                        });
+                        return;
+                      }
                       if (context.mounted) Navigator.pop(context);
                     } catch (_) {
                       if (mounted) {

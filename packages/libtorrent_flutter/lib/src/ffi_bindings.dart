@@ -90,6 +90,26 @@ final class LtStreamStatus extends Struct {
   external int activePeers;
   @Int32()
   external int downloadRate;
+  @Int32()
+  external int activeDeadlines;
+  @Float()
+  external double targetBufferSeconds;
+  @Int64()
+  external int cachedVerifiedBytes;
+  @Int64()
+  external int newlyDownloadedBytes;
+  @Int64()
+  external int localRereadBytes;
+  @Int64()
+  external int firstHttpRangeAtMs;
+  @Int64()
+  external int firstPieceRequestedAtMs;
+  @Int64()
+  external int firstPieceCompletedAtMs;
+  @Int64()
+  external int firstByteSentAtMs;
+  @Int32()
+  external int lastSeekResponseMs;
 }
 
 // ─── Alert callback ───────────────────────────────────────────────────────────
@@ -322,6 +342,10 @@ typedef _IsFileCompleteN = Int32 Function(
     Pointer<LtSessionOpaque>, Int64, Int32);
 typedef LtIsFileComplete = int Function(Pointer<LtSessionOpaque>, int, int);
 
+typedef _AddWebSeedN = Int32 Function(
+    Pointer<LtSessionOpaque>, Int64, Pointer<Utf8>);
+typedef LtAddWebSeed = int Function(Pointer<LtSessionOpaque>, int, Pointer<Utf8>);
+
 typedef _GetCacheStateN = Int32 Function(
   Pointer<LtSessionOpaque>,
   Int64,
@@ -413,6 +437,7 @@ class TorrentBridgeBindings {
   late final LtIsFileComplete isFileComplete;
   late final LtGetCacheState getCacheState;
   late final LtSetSslCertPath setSslCertPath;
+  late final LtAddWebSeed addWebSeed;
 
   TorrentBridgeBindings(this._lib) {
     createSession = _lib
@@ -527,6 +552,9 @@ class TorrentBridgeBindings {
     isFileComplete = _lib
         .lookup<NativeFunction<_IsFileCompleteN>>('lt_is_file_complete')
         .asFunction<LtIsFileComplete>();
+    addWebSeed = _lib
+        .lookup<NativeFunction<_AddWebSeedN>>('lt_add_web_seed')
+        .asFunction<LtAddWebSeed>();
     getCacheState = _lib
         .lookup<NativeFunction<_GetCacheStateN>>('lt_get_cache_state')
         .asFunction<LtGetCacheState>();
