@@ -40,9 +40,8 @@ class AppScaffold extends StatelessWidget {
               actions: [
                 if (selectedIndex != 1)
                   IconButton(
-                    tooltip: 'Search movies and series',
                     onPressed: () => _navigate(context, 1),
-                    icon: const Icon(Icons.search_rounded),
+                    icon: const Icon(Icons.search),
                   ),
                 const SizedBox(width: 8),
               ],
@@ -91,9 +90,9 @@ class AppScaffold extends StatelessWidget {
                                 'Settings',
                               ][i],
                               icon: const [
-                                Icons.explore_outlined,
-                                Icons.search_rounded,
-                                Icons.tune_rounded,
+                                Icons.home,
+                                Icons.search,
+                                Icons.tune,
                               ][i],
                               selected: selectedIndex == i,
                               extended: extended,
@@ -129,16 +128,16 @@ class AppScaffold extends StatelessWidget {
               onDestinationSelected: (index) => _navigate(context, index),
               destinations: const [
                 NavigationDestination(
-                  icon: Icon(Icons.explore_outlined),
-                  selectedIcon: Icon(Icons.explore),
+                  icon: Icon(Icons.home),
+                  selectedIcon: Icon(Icons.home),
                   label: 'Discover',
                 ),
                 NavigationDestination(
-                  icon: Icon(Icons.search_rounded),
+                  icon: Icon(Icons.search),
                   label: 'Search',
                 ),
                 NavigationDestination(
-                  icon: Icon(Icons.tune_rounded),
+                  icon: Icon(Icons.tune),
                   label: 'Settings',
                 ),
               ],
@@ -163,7 +162,7 @@ class PeerStreamBrand extends StatelessWidget {
           borderRadius: BorderRadius.circular(11),
         ),
         child: const Icon(
-          Icons.play_arrow_rounded,
+          Icons.play_arrow,
           color: Colors.white,
           size: 26,
         ),
@@ -202,50 +201,49 @@ class _NavigationItem extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    selected: selected,
-    child: Tooltip(
-      message: extended ? '' : label,
-      child: Material(
+  Widget build(BuildContext context) => Tooltip(
+    message: extended ? '' : label,
+    child: Container(
+      decoration: BoxDecoration(
         color: selected ? DesignTokens.surface2 : Colors.transparent,
         borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            child: Row(
-              mainAxisAlignment: extended
-                  ? MainAxisAlignment.start
-                  : MainAxisAlignment.center,
-              children: [
-                Icon(
-                  icon,
-                  size: 23,
-                  color: selected
-                      ? DesignTokens.accent
-                      : DesignTokens.textSecondary,
-                ),
-                if (extended) ...[
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontWeight: selected
-                            ? FontWeight.w700
-                            : FontWeight.w500,
-                        color: selected
-                            ? DesignTokens.textPrimary
-                            : DesignTokens.textSecondary,
-                      ),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          child: Row(
+            mainAxisAlignment: extended
+                ? MainAxisAlignment.start
+                : MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 23,
+                color: selected
+                    ? DesignTokens.accent
+                    : DesignTokens.textSecondary,
+              ),
+              if (extended) ...[
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: selected
+                          ? FontWeight.w700
+                          : FontWeight.w500,
+                      color: selected
+                          ? DesignTokens.textPrimary
+                          : DesignTokens.textSecondary,
                     ),
                   ),
-                ],
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ),

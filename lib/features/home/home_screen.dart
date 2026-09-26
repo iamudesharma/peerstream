@@ -149,7 +149,7 @@ class _HomeSearchBar extends StatelessWidget {
             if (constraints.maxWidth >= 600)
               SizedBox(
                 width: 300,
-                child: OutlinedButton.icon(
+                child: outlinedIconButton(
                   onPressed: onSearch,
                   icon: const Icon(Icons.search, size: 20),
                   label: const Text('Search movies and series'),

@@ -158,9 +158,7 @@ class _DetailsBodyState extends State<_DetailsBody> {
     return ListView(
       children: [
         SizedBox(
-          height: wide
-              ? 480
-              : 350 + (MediaQuery.textScalerOf(context).scale(30) - 30) * 3,
+          height: wide ? 480 : 350,
           child: Stack(
             fit: StackFit.expand,
             children: [

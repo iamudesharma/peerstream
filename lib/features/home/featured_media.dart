@@ -1,4 +1,5 @@
 import 'package:dartnative/dartnative.dart';
+import 'package:peerstream/core/gap_widgets.dart';
 import 'package:peerstream/core/icons.dart';
 import 'package:peerstream/core/navigation.dart';
 
@@ -55,6 +56,7 @@ class FeaturedMedia extends StatelessWidget {
                         stops: [0, 0.5, 1],
                       ),
                     ),
+                    child: SizedBox.expand(),
                   ),
                 ),
                 ConstrainedBox(
@@ -112,10 +114,10 @@ class FeaturedMedia extends StatelessWidget {
                             ),
                           ],
                           const SizedBox(height: 24),
-                          FilledButton.icon(
+                          filledIconButton(
                             onPressed: () =>
                                 context.push('/details/${item.ref.routeKey}'),
-                            icon: const Icon(Icons.play_arrow_rounded),
+                            icon: const Icon(Icons.play_arrow),
                             label: const Text('Explore title'),
                           ),
                         ],

@@ -41,7 +41,6 @@ class _QuitObserver with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
       final engine = AppStore.instance.streaming.engine;
       if (engine is TorrentStatePersistence) {

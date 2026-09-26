@@ -1,1 +1,8 @@
 include: package:lints/recommended.yaml
+
+analyzer:
+  # Mirrors the root analysis_options.yaml: Refrence/ is a stale,
+  # incomplete snapshot (missing sibling part files, imports
+  # package:flutter) kept for reference only — never analyzed.
+  exclude:
+    - Refrence/**
