@@ -73,6 +73,18 @@ class NativeTorrentEngine
       fetchTrackers: false,
     );
     _engine = lt.LibtorrentFlutter.instance;
+    // A prebuilt older than the bundled bridge leaves some symbols out. Say so
+    // once, loudly: the affected features (fast resume, web seeds, stream
+    // diagnostics) degrade, everything else keeps working.
+    final missing = _engine!.missingNativeSymbols;
+    if (missing.isNotEmpty) {
+      debugPrint(
+        '[libtorrent] native library is older than this Dart side. '
+        'Missing: ${missing.join(', ')}. '
+        'Fast resume, web seeds and stream diagnostics are unavailable; '
+        'playback, seeking and the loopback server are unaffected.',
+      );
+    }
     _engine!.configureSession(
       const lt.BtConfig(
         cacheSize: 128 * 1024 * 1024,

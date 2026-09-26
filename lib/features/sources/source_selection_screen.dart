@@ -16,6 +16,7 @@ import '../../models/media_item.dart';
 import '../../models/torrent_models.dart';
 import '../../services/streaming/source_ranking.dart';
 import '../../services/torrent/addon_provider.dart';
+import '../../services/torrent/provider_catalog.dart';
 import '../../services/torrent/source_discovery.dart';
 import '../player/resume.dart';
 
@@ -226,15 +227,18 @@ class _SourceSelectionScreenState
                 ),
               ),
               data: (state) {
-                final providers = state.providers.values
-                    .map(
-                      (provider) => ProviderResult(
-                        provider.name,
-                        provider.sources,
-                        error: provider.error,
-                      ),
-                    )
-                    .toList();
+                // Split each provider's sources into per-indexer lanes. Without
+                // this a single aggregating addon (torrentio) hides every
+                // individual indexer behind one tab, so the sources the user
+                // added stay invisible.
+                final providers = [
+                  for (final provider in state.providers.values)
+                    for (final lane in splitIndexerLanes(
+                      provider.name,
+                      provider.sources,
+                    ))
+                      ProviderResult(lane.name, lane.sources, error: provider.error),
+                ];
                 final total =
                     providers.expand((p) => p.sources).length;
                 if (!state.isComplete) {
@@ -256,7 +260,17 @@ class _SourceSelectionScreenState
                       Expanded(
                         child: _Results(
                           providers: [
-                            ProviderResult('Fast results', List.of(fast)),
+                            for (final lane in splitIndexerLanes(
+                              state.providers.keys.firstWhere(
+                                (name) => state
+                                    .providers[name]!
+                                    .sources
+                                    .isNotEmpty,
+                                orElse: () => 'Fast results',
+                              ),
+                              List.of(fast),
+                            ))
+                              ProviderResult(lane.name, List.of(lane.sources)),
                           ],
                           sort: _sort,
                           savedIds: _savedSourceIds,

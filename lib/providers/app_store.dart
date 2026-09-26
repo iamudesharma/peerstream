@@ -208,19 +208,35 @@ class AppStore {
       final urls = await addonUrls.future;
       final activePolicy = await policy.future;
       Future<String>? imdb;
+      // One unparseable stored URL used to throw out of this list and take the
+      // whole search down, so a single bad paste hid every other provider.
+      // Skip it here and report it as its own failed lane instead.
       final providers = <TorrentProvider>[
         torrents,
         for (final url in urls)
-          AddonTorrentProvider(
-            manifestUrl: AddonTorrentProvider.validateUrl(url),
-            resolveImdbId: (mediaRef) => imdb ??= media.imdbId(mediaRef),
-          ),
+          if (_validAddonUrl(url) case final manifest?)
+            AddonTorrentProvider(
+              manifestUrl: manifest,
+              resolveImdbId: (mediaRef) => imdb ??= media.imdbId(mediaRef),
+            ),
       ];
+      final invalidUrls = urls
+          .where((url) => _validAddonUrl(url) == null)
+          .toList();
       final states = <String, IncrementalProviderState>{
         for (final provider in providers)
           provider.name: IncrementalProviderState(
             name: provider.name,
             status: ProviderStatus.loading,
+          ),
+        // Surfaced, not swallowed: the settings screen lists these back.
+        if (invalidUrls.isNotEmpty)
+          'Unusable addon link': IncrementalProviderState(
+            name: 'Unusable addon link',
+            status: ProviderStatus.error,
+            error:
+                'Ignored: ${invalidUrls.join(', ')}. '
+                'A Stremio addon URL must end in /manifest.json.',
           ),
       };
       loadable.setValue(
@@ -615,5 +631,14 @@ class SettingsController extends ChangeNotifier {
   }) {
     if (this.loading && value == null) return loading();
     return data(value ?? const AppSettings());
+  }
+}
+
+/// The parsed manifest for [url], or null when it is not a usable addon link.
+Uri? _validAddonUrl(String url) {
+  try {
+    return AddonTorrentProvider.validateUrl(url);
+  } catch (_) {
+    return null;
   }
 }
