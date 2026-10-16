@@ -3,79 +3,73 @@ import 'package:media_forge_player/media_forge_player.dart'
     show VideoEnhancementCapabilities, VideoEnhancementMode;
 
 import '../core/config.dart';
+import '../services/torrent/torrent_engine.dart';
 import '../providers/app_providers.dart';
 import '../services/settings/settings_store.dart';
 
 class AppSettingsNotifier extends AsyncNotifier<AppSettings> {
+  AppSettingsNotifier({
+    Future<AppSettings> Function()? read,
+    Future<void> Function(AppSettings)? write,
+  }) : _read = read ?? readAppSettings,
+       _write = write ?? writeAppSettings;
+
+  final Future<AppSettings> Function() _read;
+  final Future<void> Function(AppSettings) _write;
+  Future<void> _tail = Future.value();
+
   @override
-  Future<AppSettings> build() => readAppSettings();
+  Future<AppSettings> build() => _read();
 
-  Future<void> _save(AppSettings settings) async {
-    await writeAppSettings(settings);
-    state = AsyncData(settings);
+  Future<void> _change(AppSettings Function(AppSettings) update) {
+    final next = _tail.then((_) async {
+      final current = state.value ?? await _read();
+      final updated = update(current);
+      await _write(updated);
+      state = AsyncData(updated);
+    });
+    _tail = next.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return next;
   }
 
-  Future<void> setSubtitleLanguage(String? language) async {
-    final current = state.value ?? await readAppSettings();
-    final updated = current.copyWith(preferredSubtitleLanguage: language);
-    await _save(updated);
-  }
+  Future<void> setSubtitleLanguage(String? language) => _change(
+    (current) => current.copyWith(preferredSubtitleLanguage: language),
+  );
 
-  Future<void> setAudioLanguage(String? language) async {
-    final current = state.value ?? await readAppSettings();
-    final updated = current.copyWith(preferredAudioLanguage: language);
-    await _save(updated);
-  }
+  Future<void> setAudioLanguage(String? language) =>
+      _change((current) => current.copyWith(preferredAudioLanguage: language));
 
-  Future<void> setAutoLoadSubtitles(bool value) async {
-    final current = state.value ?? await readAppSettings();
-    final updated = current.copyWith(autoLoadSubtitles: value);
-    await _save(updated);
-  }
+  Future<void> setAutoLoadSubtitles(bool value) =>
+      _change((current) => current.copyWith(autoLoadSubtitles: value));
 
-  Future<void> setStreamingCatalogsEnabled(bool value) async {
-    final current = state.value ?? await readAppSettings();
-    final updated = current.copyWith(streamingCatalogsEnabled: value);
-    await _save(updated);
-  }
+  Future<void> setStreamingCatalogsEnabled(bool value) =>
+      _change((current) => current.copyWith(streamingCatalogsEnabled: value));
 
-  Future<void> setUseMediaForgePlayer(bool value) async {
-    final current = state.value ?? await readAppSettings();
-    final updated = current.copyWith(useMediaForgePlayer: value);
-    await _save(updated);
-  }
+  Future<void> setUseMediaForgePlayer(bool value) =>
+      _change((current) => current.copyWith(useMediaForgePlayer: value));
 
-  Future<void> setMediaForgeVideoEnhancementMode(
-    VideoEnhancementMode value,
-  ) async {
-    final current = state.value ?? await readAppSettings();
-    final updated = current.copyWith(mediaForgeVideoEnhancementMode: value);
-    await _save(updated);
-  }
+  Future<void> setMediaForgeVideoEnhancementMode(VideoEnhancementMode value) =>
+      _change(
+        (current) => current.copyWith(mediaForgeVideoEnhancementMode: value),
+      );
 
-  Future<void> setPlayerVolume(double volume) async {
-    final current = state.value ?? await readAppSettings();
-    final updated = current.copyWith(playerVolume: volume);
-    await _save(updated);
-  }
+  Future<void> setResourceProfile(PlaybackResourceProfile profile) =>
+      _change((current) => current.copyWith(resourceProfile: profile));
 
-  Future<void> setPlayerRate(double rate) async {
-    final current = state.value ?? await readAppSettings();
-    final updated = current.copyWith(playerRate: rate);
-    await _save(updated);
-  }
+  Future<void> setAutoplay(bool value) =>
+      _change((current) => current.copyWith(autoplay: value));
 
-  Future<void> setSubtitleTextScale(double scale) async {
-    final current = state.value ?? await readAppSettings();
-    final updated = current.copyWith(subtitleTextScale: scale);
-    await _save(updated);
-  }
+  Future<void> setPlayerVolume(double volume) =>
+      _change((current) => current.copyWith(playerVolume: volume));
 
-  Future<void> setSubtitleBackground(SubtitleBackgroundStyle style) async {
-    final current = state.value ?? await readAppSettings();
-    final updated = current.copyWith(subtitleBackground: style);
-    await _save(updated);
-  }
+  Future<void> setPlayerRate(double rate) =>
+      _change((current) => current.copyWith(playerRate: rate));
+
+  Future<void> setSubtitleTextScale(double scale) =>
+      _change((current) => current.copyWith(subtitleTextScale: scale));
+
+  Future<void> setSubtitleBackground(SubtitleBackgroundStyle style) =>
+      _change((current) => current.copyWith(subtitleBackground: style));
 }
 
 final appSettingsProvider =
