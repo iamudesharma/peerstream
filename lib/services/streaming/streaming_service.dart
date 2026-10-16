@@ -505,31 +505,6 @@ class StreamingService {
       'input=${source.inputType.name} id=${source.id}',
     );
 
-    if (source.inputType == TorrentInputType.directUrl) {
-      _diagnostics?.engineAddAt = DateTime.now();
-      _diagnostics?.streamCreatedAt = DateTime.now();
-      _emit(
-        StreamingState(
-          phase: StreamingPhase.ready,
-          source: source,
-          playback: TorrentPlaybackStream(
-            id: source.id,
-            uri: source.uri,
-            file: TorrentFileEntry(
-              index: 0,
-              name: source.fileNameHint ?? source.name,
-              size: source.sizeBytes ?? 0,
-              isStreamable: true,
-            ),
-          ),
-          sessionId: generation,
-          startedAt: _state.startedAt ?? DateTime.now(),
-          detail: StreamingDetail.none,
-          diagnostics: _diagnostics?.toMap(),
-        ),
-      );
-      return generation;
-    }
     if (!_engine.isSupported) {
       _emit(
         StreamingState(
@@ -564,6 +539,31 @@ class StreamingService {
           startedAt: _state.startedAt,
           detail: StreamingDetail.none,
           diagnostics: diag,
+        ),
+      );
+      return generation;
+    }
+    if (source.inputType == TorrentInputType.directUrl) {
+      _diagnostics?.engineAddAt = DateTime.now();
+      _diagnostics?.streamCreatedAt = DateTime.now();
+      _emit(
+        StreamingState(
+          phase: StreamingPhase.ready,
+          source: source,
+          playback: TorrentPlaybackStream(
+            id: source.id,
+            uri: source.uri,
+            file: TorrentFileEntry(
+              index: 0,
+              name: source.fileNameHint ?? source.name,
+              size: source.sizeBytes ?? 0,
+              isStreamable: true,
+            ),
+          ),
+          sessionId: generation,
+          startedAt: _state.startedAt ?? DateTime.now(),
+          detail: StreamingDetail.none,
+          diagnostics: _diagnostics?.toMap(),
         ),
       );
       return generation;
@@ -842,6 +842,7 @@ class StreamingService {
     if (!entry.complete) return null;
     if (entry.filePath.isEmpty) return null;
     if (entry.file.size <= 0) return null;
+    if (source.inputType == TorrentInputType.directUrl) return entry;
     // Entries are keyed per torrent, but completion is per file: a season
     // pack can have one episode complete while another is requested. Never
     // serve a file the source did not ask for.
@@ -1086,6 +1087,14 @@ class StreamingService {
 
   /// Records the player's `open()` time for tap→open→first-frame breakdowns.
   /// Called by the player screen right after `open()` returns; idempotent.
+  /// Launch Services acknowledged delivery, not a decoded first frame.
+  /// External players own decoder timing, so internal startup watchdogs stop.
+  void externalPlayerOpened() {
+    _stallTimer?.cancel();
+    _slowTimer?.cancel();
+    _postPlayStallTimer?.cancel();
+  }
+
   void reportPlayerOpen() {
     final diag = _diagnostics;
     if (diag == null || diag.playerOpenAt != null) return;
