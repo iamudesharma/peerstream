@@ -134,12 +134,12 @@ The policy runs while listing sources and immediately before native playback. Wh
 2. Torrent metadata exposes available files. The provider file index is used when present; otherwise the app selects the largest non-sample video file.
 3. The native bridge creates a private HTTP range server on `127.0.0.1`.
 4. `media_kit` and libmpv request the byte ranges required to play.
-5. Libtorrent prioritises pieces around the player read position. Seeking sends new range requests and reprioritises the required pieces.
-6. Leaving the player stops the session and clears its temporary data.
+5. Libtorrent prioritises pieces around the player read position. Seeking sends new range requests and reprioritises the required pieces. Metadata preparation retains peers while blocking video piece requests; playback installs deadlines before enabling those requests.
+6. Leaving the player releases streaming work while retaining bounded replay data. Verified cached video can reopen directly; partial video is checked and continues through the native Range server.
 
 ## Player controls
 
-The player overlay provides play/pause, scrubber, and native fullscreen. The control card below the video also provides:
+The video overlay provides play/pause, a scrubber, native fullscreen and compact menus inside the video. Controls include:
 
 - Ten-second rewind and forward buttons.
 - Playback speeds from 0.5× to 2×.
@@ -148,12 +148,20 @@ The player overlay provides play/pause, scrubber, and native fullscreen. The con
 - Original, 4:3, 16:9, and 21:9 viewport ratios.
 - Embedded audio track selection.
 - Embedded subtitle selection, including **Off**.
+- Audio and subtitle timing offsets with reset actions.
+- Add to queue, a sleep timer and a floating mini-player window.
 
 Audio and subtitle choices appear after the selected file has exposed its media tracks. A file with only one audio stream or no subtitle stream presents only the tracks it has.
 
 ## Streaming cache
 
-The native engine is configured for responsive streaming with a 256 MB session cache, 384 MB stream cache ceiling, 85% read-ahead, 8 MB startup preload, up to 32 active stream connections, and a 120-second reader-less transfer timeout. The engine still prioritises the player's current byte range over cache filling.
+The native engine prioritises the player's current byte range. Settings → Playback & Storage offers Balanced (128 MiB bridge piece cache) and Low memory (64 MiB) profiles. These are component budgets, not total application memory limits; decoder buffers, Flutter, native libraries and OS mappings consume additional memory.
+
+Choose a storage folder and cache limit in the same screen. App data and replay files use that folder, with visible errors if the selected SSD is missing, unwritable or full. PeerStream does not silently relocate large data to internal storage. Partial cached data is distinct from a verified offline save. Explicit offline saves count against the limit and are protected from automatic eviction; Clear all cached data also removes protected video. See [storage behavior](docs/STORAGE_DIRECTORY.md).
+
+Autoplay is off by default. Enable it in Playback & Storage for a cancelable ten-second countdown. The Play queue can be reordered, and Library offers watched filters and collections. Continue Watching supports restart, mark watched and removal.
+
+The Rust companion remains an opt-in experiment in isolated storage. The native engine and media_kit player remain the defaults. See the [implementation status and measured acceptance gates](docs/UX_PERFORMANCE_ROADMAP.md) and [native packaging instructions](docs/MACOS_NATIVE_PACKAGING.md).
 
 ## Project layout
 
