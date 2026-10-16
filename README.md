@@ -153,6 +153,18 @@ The video overlay provides play/pause, a scrubber, native fullscreen and compact
 
 Audio and subtitle choices appear after the selected file has exposed its media tracks. A file with only one audio stream or no subtitle stream presents only the tracks it has.
 
+## Downloads and external players
+
+Source cards offer **Download** and, on macOS, **External player**. Downloads has
+pause/resume/cancel controls, offline playback, and **Save file as…** for a
+standalone copy. Torrent saves verify the selected file; direct HTTP video files
+also download to the selected drive. HLS/DASH offline downloads are unsupported.
+
+Choose an installed VLC/IINA/mpv or another compatible application. PeerStream
+keeps torrent streams alive while its external-playback screen stays open; audio,
+subtitles and seeking are controlled in that player. Completed downloads can also
+open externally. See [usage and executed verification](docs/DOWNLOADS_EXTERNAL_PLAYERS.md).
+
 ## Streaming cache
 
 The native engine prioritises the player's current byte range. Settings → Playback & Storage offers Balanced (128 MiB bridge piece cache) and Low memory (64 MiB) profiles. These are component budgets, not total application memory limits; decoder buffers, Flutter, native libraries and OS mappings consume additional memory.

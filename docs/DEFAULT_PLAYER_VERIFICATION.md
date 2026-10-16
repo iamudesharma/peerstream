@@ -1,6 +1,15 @@
 # Default player verification on macOS
 
-## Current verification — 2026-10-16
+## Download and external-player additions — 2026-10-16
+
+The download/external-player release passed 333 Flutter tests (one skipped),
+analysis, a normal macOS build, native torrent/direct downloads with matching
+hashes, and real offline default-player rendering after the source server closed.
+Separate native UI QA verified Pause/Resume, Save file as…, and VLC stream/file
+playback with seeking. See [feature scope and verification](DOWNLOADS_EXTERNAL_PLAYERS.md).
+Earlier performance measurements below retain their original scope.
+
+## Current roadmap verification — 2026-10-16
 
 The loaded bridge is **`bridge-1.9.10+lt2.1.1`**. The native engine and default
 media_kit player remain the production defaults. Streaming preparation now keeps

@@ -16,6 +16,15 @@ Updated 2026-10-16. The native libtorrent engine and default media_kit player re
 
 App data remains under `/Volumes/AppleExpanded/Library/PeerStream`. Native session logs rotate at 4 MiB under the selected session directory. See [storage behavior](STORAGE_DIRECTORY.md).
 
+## Download and external-player extension
+
+Source cards now have Download and External player actions. Downloads manages
+torrent and finite HTTP video saves, offline playback and native Save file as…
+export. macOS can launch installed VLC/IINA/mpv or a manually selected compatible
+app while retaining the owned torrent stream. The extension passed 333 Flutter
+tests and real download/offline/VLC checks; it does not change the failed Rust
+adoption or distribution gates below. See [usage and evidence](DOWNLOADS_EXTERNAL_PLAYERS.md).
+
 ## Native startup fix
 
 Bridge **`1.9.10+lt2.1.1`** replaces `stop_when_ready` during streaming preparation. That flag force-pauses a torrent, including metadata downloading, and can introduce reconnection delays. The bridge now uses an `upload_mode` guard to forbid piece requests while retaining metadata peers. It clears the guard after installing selected-piece priorities/deadlines or explicit offline file priorities. Deadline-based streaming remains in place; the full file is not required before playback.
