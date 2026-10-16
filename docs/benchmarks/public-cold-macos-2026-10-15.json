@@ -1,0 +1,76 @@
+{
+  "date": "2026-10-15",
+  "scope": "Separate external-network legal public-source observations, not controlled p95.",
+  "observations": [
+    {
+      "exitCode": 1,
+      "changedMetadataFiles": [],
+      "playerMetrics": [
+        {
+          "firstFrameMs": 503,
+          "visiblePlaybackMs": 503,
+          "playerWarmUpMs": 265,
+          "fileCompleteAtFirstFrame": null,
+          "downloadedBytesAtFirstFrame": 0,
+          "selectedFileBytes": 0,
+          "sourceLookups": 0
+        },
+        {
+          "firstFrameMs": 11031,
+          "visiblePlaybackMs": 11031,
+          "playerWarmUpMs": 110,
+          "fileCompleteAtFirstFrame": false,
+          "downloadedBytesAtFirstFrame": 1835008,
+          "selectedFileBytes": 276134947,
+          "sourceLookups": 0
+        },
+        {
+          "firstFrameMs": 11031,
+          "visiblePlaybackMs": 11031,
+          "playerWarmUpMs": 110,
+          "fileCompleteAtFirstFrame": false,
+          "downloadedBytesAtFirstFrame": 1835008,
+          "selectedFileBytes": 276134947,
+          "sourceLookups": 0,
+          "bridgeVersion": "bridge-1.9.10+lt2.1.1"
+        }
+      ],
+      "verification": []
+    },
+    {
+      "exitCode": 0,
+      "changedMetadataFiles": [],
+      "playerMetrics": [
+        {
+          "firstFrameMs": 426,
+          "visiblePlaybackMs": 426,
+          "playerWarmUpMs": 216,
+          "fileCompleteAtFirstFrame": null,
+          "downloadedBytesAtFirstFrame": 0,
+          "selectedFileBytes": 0,
+          "sourceLookups": 0
+        },
+        {
+          "firstFrameMs": 6435,
+          "visiblePlaybackMs": 6435,
+          "playerWarmUpMs": 120,
+          "fileCompleteAtFirstFrame": false,
+          "downloadedBytesAtFirstFrame": 3145728,
+          "selectedFileBytes": 276134947,
+          "sourceLookups": 0
+        },
+        {
+          "firstFrameMs": 6435,
+          "visiblePlaybackMs": 6435,
+          "playerWarmUpMs": 120,
+          "fileCompleteAtFirstFrame": false,
+          "downloadedBytesAtFirstFrame": 3145728,
+          "selectedFileBytes": 276134947,
+          "sourceLookups": 0,
+          "bridgeVersion": "bridge-1.9.10+lt2.1.1"
+        }
+      ],
+      "verification": []
+    }
+  ]
+}

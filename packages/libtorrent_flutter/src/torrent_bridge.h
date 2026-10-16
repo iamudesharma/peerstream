@@ -253,6 +253,9 @@ TORRENT_API const char* lt_version(void);
    Dart reports it at runtime before comparing platform performance. */
 TORRENT_API const char* lt_bridge_version(void);
 TORRENT_API int         lt_get_active_streams(lt_session_t session);
+/* Current process footprint and resident bytes (not a component cache budget). */
+TORRENT_API int lt_get_process_memory(uint64_t* footprint, uint64_t* resident);
+
 
 /* selected-file verification: 1 when every piece of [file_index] is
    downloaded and hash-verified, 0 otherwise. Rejects sparse preallocated

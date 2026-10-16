@@ -1,3 +1,5 @@
+import '../../core/image_cache.dart';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -191,6 +193,7 @@ class _EpisodeRow extends StatelessWidget {
                 children: [
                   if (still != null)
                     CachedNetworkImage(
+                      cacheManager: artworkCacheManager,
                       imageUrl: still,
                       fit: BoxFit.cover,
                       memCacheWidth: 342,

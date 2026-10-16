@@ -1,3 +1,5 @@
+import '../../core/widgets/storage_feedback.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -241,7 +243,12 @@ class _MyListSliver extends ConsumerWidget {
                 ),
               );
               if (confirmed == true) {
-                await ref.read(myListProvider.notifier).clear();
+                if (context.mounted) {
+                  await runStorageAction(
+                    context,
+                    () => ref.read(myListProvider.notifier).clear(),
+                  );
+                }
               }
             },
           ),

@@ -73,6 +73,28 @@ class SettingsScreen extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: 8),
+          SettingsSection(
+            title: 'Library',
+            children: [
+              SettingsAction(
+                title: 'Organize saved titles',
+                subtitle: 'Collections and watched filters',
+                icon: Icons.video_library_outlined,
+                onTap: () => context.push('/library'),
+              ),
+            ],
+          ),
+          SettingsSection(
+            title: 'Play queue',
+            children: [
+              SettingsAction(
+                title: 'Manage queue',
+                subtitle: 'Reorder upcoming videos',
+                icon: Icons.queue_play_next,
+                onTap: () => context.push('/queue'),
+              ),
+            ],
+          ),
           const HttpServerSection(),
           SettingsSection(
             title: 'About',

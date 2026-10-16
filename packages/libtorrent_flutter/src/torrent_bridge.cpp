@@ -92,6 +92,14 @@
 #include <vector>
 #include <deque>
 #include <memory>
+#include <random>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <dlfcn.h>
+#include <limits.h>
+#include <cstdlib>
+#include <openssl/ssl.h>
+#endif
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -107,7 +115,7 @@ namespace chr = std::chrono;
 // Bump together with `nativeBridgeVersion` in
 // lib/services/torrent/native_torrent_engine.dart. Runtime diagnostics expose
 // this so platform comparisons only run on identical implementations.
-static constexpr const char* kBridgeVersion = "bridge-1.9.7+lt2.0.11";
+static constexpr const char* kBridgeVersion = "bridge-1.9.10+lt2.1.1";
 
 // Coordinated timeout budget: the player's mpv network-timeout (60s) and the
 // native piece wait must agree so both layers abandon the same request
@@ -120,15 +128,23 @@ static constexpr int64_t kStartupResumeProbeGraceMs = 15000;
 
 // ── debug logging ───────────────────────────────────────────────────────────────
 static FILE* g_logfile = nullptr;
+static std::string g_log_path;
+static std::string g_log_override;
 static std::mutex g_log_mu;
 
 static void tb_log_init() {
+    if (g_logfile && std::ftell(g_logfile) >= 4 * 1024 * 1024) {
+        std::fclose(g_logfile); g_logfile = nullptr;
+        std::remove((g_log_path + ".1").c_str());
+        std::rename(g_log_path.c_str(), (g_log_path + ".1").c_str());
+    }
     if (!g_logfile) {
 #ifdef _WIN32
         char tmp[MAX_PATH];
         GetTempPathA(MAX_PATH, tmp);
         std::string path = std::string(tmp) + "torrent_bridge.log";
-        g_logfile = fopen(path.c_str(), "w");
+        g_log_path = g_log_override.empty() ? path : g_log_override;
+        g_logfile = fopen(g_log_path.c_str(), "a");
 #elif defined(__ANDROID__)
         g_logfile = nullptr; // Android uses __android_log_print instead
 #else
@@ -137,7 +153,8 @@ static void tb_log_init() {
         const char* tmp = getenv("TMPDIR");
         std::string path = (tmp && *tmp) ? std::string(tmp) + "torrent_bridge.log"
                                          : std::string("/tmp/torrent_bridge.log");
-        g_logfile = fopen(path.c_str(), "w");
+        g_log_path = g_log_override.empty() ? path : g_log_override;
+        g_logfile = fopen(g_log_path.c_str(), "a");
 #endif
         if (g_logfile) {
             setvbuf(g_logfile, nullptr, _IONBF, 0);
@@ -158,6 +175,38 @@ static void tb_log_init() {
 // ── error handling ──────────────────────────────────────────────────────────────
 static thread_local std::string g_last_error;
 static void set_err(const std::string& s) { g_last_error = s; }
+
+#ifdef __APPLE__
+// The framework can be loaded by either Flutter or the bundled helper. Resolve
+// trust beside the framework rather than relying on Homebrew's build-host path.
+static void configure_macos_ca_bundle() {
+    static std::mutex ca_mutex;
+    std::lock_guard<std::mutex> lock(ca_mutex);
+    if (std::getenv("SSL_CERT_FILE") != nullptr) return;
+    Dl_info info {};
+    if (dladdr(reinterpret_cast<const void*>(&configure_macos_ca_bundle), &info) == 0
+        || !info.dli_fname) return;
+    char canonical[PATH_MAX];
+    if (!realpath(info.dli_fname, canonical)) return;
+    std::string directory(canonical);
+    while (true) {
+        const auto slash = directory.find_last_of('/');
+        if (slash == std::string::npos) return;
+        directory.resize(slash);
+        if (directory.size() >= 9 && directory.compare(directory.size() - 9, 9, "/Contents") == 0) break;
+    }
+    const auto path = directory + "/Resources/NativeTrust/cacert.pem";
+    SSL_CTX* context = SSL_CTX_new(TLS_client_method());
+    if (!context) throw std::runtime_error("Could not initialize native TLS trust");
+    const int loaded = SSL_CTX_load_verify_locations(context, path.c_str(), nullptr);
+    SSL_CTX_free(context);
+    if (loaded != 1) throw std::runtime_error("Bundled native TLS certificates are missing or invalid");
+    if (setenv("SSL_CERT_FILE", path.c_str(), 0) != 0) {
+        throw std::runtime_error("Could not configure native TLS trust");
+    }
+    TB_LOG("Validated bundled macOS public CA certificates");
+}
+#endif
 
 #ifdef __ANDROID__
 static std::string android_openssl_error() {
@@ -1001,6 +1050,14 @@ struct StreamEngine {
     std::atomic<int32_t> seek_generation{0};
 
     // readahead fixed at 16MB like TorrServer — port of torrent.go updateRA()
+    // Per-stream capability; never logged or persisted. Generated before the listener starts.
+    const std::string capability = [] {
+        std::random_device random;
+        std::ostringstream out;
+        for (int i = 0; i < 8; ++i)
+            out << std::hex << std::setw(8) << std::setfill('0') << random();
+        return out.str();
+    }();
     static constexpr int64_t FIXED_READAHEAD = 16 * 1024 * 1024;
 
     // 8MB head/tail for container metadata — port of isIdInFileBE's FileRangeNotDelete
@@ -1157,7 +1214,7 @@ struct StreamEngine {
             }
         } catch (...) {}
         return "http://127.0.0.1:" + std::to_string(server_port)
-             + "/stream/" + hash + "/" + std::to_string(file_index);
+             + "/stream/" + hash + "/" + std::to_string(file_index) + "/" + capability;
     }
 
     // signal piece_finished from alert thread
@@ -2101,13 +2158,15 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
     ::setsockopt(cli, SOL_SOCKET, SO_SNDBUF, (const char*)&sndbuf, sizeof(sndbuf));
 
 #ifdef _WIN32
+    DWORD receive_timeout = 5000;
     DWORD tv = 36000000;
-    ::setsockopt(cli, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+    ::setsockopt(cli, SOL_SOCKET, SO_RCVTIMEO, (const char*)&receive_timeout, sizeof(receive_timeout));
     ::setsockopt(cli, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
 #else
     struct timeval tv;
     tv.tv_sec = 36000; tv.tv_usec = 0;
-    ::setsockopt(cli, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    struct timeval receive_timeout{5, 0};
+    ::setsockopt(cli, SOL_SOCKET, SO_RCVTIMEO, &receive_timeout, sizeof(receive_timeout));
     ::setsockopt(cli, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 #endif
 
@@ -2130,6 +2189,21 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
 
         {
             std::string req(buf, (size_t)total);
+            std::string lower_req = req;
+            std::transform(lower_req.begin(), lower_req.end(), lower_req.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+            const auto first_space = req.find(' ');
+            const auto second_space = req.find(' ', first_space + 1);
+            const std::string expected_url = s->make_url();
+            const auto path_start = expected_url.find('/', 7);
+            if (first_space == std::string::npos || second_space == std::string::npos ||
+                path_start == std::string::npos ||
+                req.substr(first_space + 1, second_space - first_space - 1) != expected_url.substr(path_start) ||
+                lower_req.find("\r\norigin:") != std::string::npos) {
+                const char* denied = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                send_all(cli, denied, (int)strlen(denied));
+                goto cleanup;
+            }
+
 
             bool is_options = req.find("OPTIONS ") != std::string::npos;
             bool is_head    = req.find("HEAD ") != std::string::npos;
@@ -2437,6 +2511,10 @@ static void run_http_server(SessionWrapper* /*sw*/, StreamEngine* stream) {
             socket_t cli = ::accept(sock, (sockaddr*)&ca, (socklen_t*)&cl);
             if (cli == SOCKET_INVALID) continue;
 
+            // Bound sockets, reader state, and thread stacks per video.
+            { std::lock_guard<std::mutex> lock(stream->clients_mu);
+              if (stream->client_sockets.size() >= 8) { CLOSESOCKET(cli); continue; } }
+
             // each new connection gets its own reader — port of TorrServer model
             // TorrServer does NOT kill old connections; it supports concurrent readers
             int rid = stream->next_reader_id.fetch_add(1);
@@ -2569,7 +2647,55 @@ static void preload_stream(StreamEngine* s, int64_t preload_bytes) {
 
 // ── C API ───────────────────────────────────────────────────────────────────────
 
+static std::mutex g_session_path_mutex;
+static std::string g_session_state_path;
 extern "C" {
+
+TORRENT_API int lt_get_process_memory(uint64_t* footprint, uint64_t* resident) {
+    if (!footprint || !resident) return 0;
+    *footprint = 0; *resident = 0;
+#ifdef __APPLE__
+    task_vm_info_data_t info{};
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS) return 0;
+    *footprint = info.phys_footprint;
+    *resident = info.resident_size;
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+TORRENT_API void lt_set_session_state_path(const char* path) {
+    std::lock_guard<std::mutex> lock(g_session_path_mutex);
+    g_session_state_path = path ? path : "";
+    const auto slash = g_session_state_path.find_last_of('/');
+    if (slash != std::string::npos) {
+        std::lock_guard<std::mutex> log_lock(g_log_mu);
+        if (g_logfile) { std::fclose(g_logfile); g_logfile = nullptr; }
+        g_log_override = g_session_state_path.substr(0, slash + 1) + "torrent_bridge.log";
+    }
+}
+
+TORRENT_API int lt_save_session_state(lt_session_t session, const char* path) {
+    if (!session || !path) return 0;
+    try {
+        auto params = to_sw(session)->session.session_state(lt::session_handle::save_dht_state);
+        auto bytes = lt::write_session_params_buf(params, lt::session_handle::save_dht_state);
+        const std::string temporary = std::string(path) + ".tmp";
+        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+        out.write(bytes.data(), (std::streamsize)bytes.size());
+        out.flush();
+        if (!out.good()) return 0;
+        out.close();
+        if (out.fail()) return 0;
+#ifdef _WIN32
+        return MoveFileExA(temporary.c_str(), path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) ? 1 : 0;
+#else
+        return std::rename(temporary.c_str(), path) == 0 ? 1 : 0;
+#endif
+    } catch (...) { return 0; }
+}
 
 TORRENT_API void lt_set_ssl_cert_path(const char* path) {
 #ifdef __ANDROID__
@@ -2589,6 +2715,9 @@ TORRENT_API void lt_set_ssl_cert_path(const char* path) {
 
 TORRENT_API lt_session_t lt_create_session(const char* iface, int dl, int ul) {
     try {
+#ifdef __APPLE__
+        configure_macos_ca_bundle();
+#endif
 #ifdef __ANDROID__
         // Fail early with a useful Logcat/lt_last_error message instead of
         // allowing every wss:// tracker to time out ambiguously.
@@ -2754,6 +2883,19 @@ TORRENT_API lt_session_t lt_create_session(const char* iface, int dl, int ul) {
         // Use posix on Android (most reliable per LibreTorrent findings),
         // mmap on desktop (the proven 2.0.x default).
         lt::session_params params(std::move(sp));
+        {
+            std::string path;
+            { std::lock_guard<std::mutex> lock(g_session_path_mutex); path = g_session_state_path; }
+            if (!path.empty()) try {
+                std::ifstream input(path, std::ios::binary | std::ios::ate);
+                if (input && input.tellg() > 0 && input.tellg() <= 4 * 1024 * 1024) {
+                    const auto size = (std::size_t)input.tellg(); input.seekg(0);
+                    std::vector<char> bytes(size); input.read(bytes.data(), (std::streamsize)bytes.size());
+                    auto restored = lt::read_session_params(lt::span<char const>(bytes.data(), bytes.size()), lt::session_handle::save_dht_state);
+                    params.dht_state = std::move(restored.dht_state);
+                }
+            } catch (...) { TB_LOG("session state unavailable; bootstrap normally"); }
+        }
 #ifdef __ANDROID__
         params.disk_io_constructor = lt::posix_disk_io_constructor;
 #else
@@ -2879,7 +3021,10 @@ TORRENT_API lt_torrent_id lt_add_magnet(lt_session_t session,
 
         if (stream_only) {
             atp.storage_mode = lt::storage_mode_sparse;
-            atp.flags |= lt::torrent_flags::stop_when_ready;
+            // Keep metadata peers connected while forbidding payload requests.
+            // stop_when_ready force-pauses the torrent and adds a reconnect.
+            atp.flags &= ~lt::torrent_flags::stop_when_ready;
+            atp.flags |= lt::torrent_flags::upload_mode;
         }
 
         lt::torrent_handle h = sw->session.add_torrent(std::move(atp), ec);
@@ -2911,7 +3056,10 @@ TORRENT_API lt_torrent_id lt_add_torrent_file(lt_session_t session,
 
         if (stream_only) {
             atp.storage_mode = lt::storage_mode_sparse;
-            atp.flags |= lt::torrent_flags::stop_when_ready;
+            // Keep metadata peers connected while forbidding payload requests.
+            // stop_when_ready force-pauses the torrent and adds a reconnect.
+            atp.flags &= ~lt::torrent_flags::stop_when_ready;
+            atp.flags |= lt::torrent_flags::upload_mode;
         }
 
         lt::torrent_handle h = sw->session.add_torrent(std::move(atp), ec);
@@ -2953,6 +3101,10 @@ TORRENT_API int lt_save_torrent_state(lt_session_t session,
         // flush_disk_cache keeps file timestamps consistent.
         auto atp = h.get_resume_data(lt::torrent_handle::save_info_dict
                                      | lt::torrent_handle::flush_disk_cache);
+        // This healthy metadata-only guard is transient policy, not saved
+        // download intent. Old bridges do not clear upload_mode on playback.
+        // Preserve real disk-error upload mode, but keep healthy resumes portable.
+        if (!st.errc) atp.flags &= ~lt::torrent_flags::upload_mode;
         auto buf = lt::write_resume_data_buf(atp);
         if (buf.empty()) { set_err("empty resume data"); return 0; }
 
@@ -2961,10 +3113,16 @@ TORRENT_API int lt_save_torrent_state(lt_session_t session,
             std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
             if (!out) { set_err("cannot open state file"); return 0; }
             out.write(buf.data(), static_cast<std::streamsize>(buf.size()));
+            out.flush();
             if (!out.good()) { set_err("state write failed"); return 0; }
+            out.close();
+            if (out.fail()) { set_err("state close failed"); return 0; }
         }
-        std::remove(state_path);
+#ifdef _WIN32
+        if (!MoveFileExA(tmp.c_str(), state_path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+#else
         if (std::rename(tmp.c_str(), state_path) != 0) {
+#endif
             set_err("state rename failed");
             return 0;
         }
@@ -3002,7 +3160,10 @@ TORRENT_API lt_torrent_id lt_add_torrent_with_state(lt_session_t session,
         add_default_trackers_if_empty(atp);
         if (stream_only) {
             atp.storage_mode = lt::storage_mode_sparse;
-            atp.flags |= lt::torrent_flags::stop_when_ready;
+            // Keep metadata peers connected while forbidding payload requests.
+            // stop_when_ready force-pauses the torrent and adds a reconnect.
+            atp.flags &= ~lt::torrent_flags::stop_when_ready;
+            atp.flags |= lt::torrent_flags::upload_mode;
         }
 
         lt::torrent_handle h = sw->session.add_torrent(std::move(atp), ec);
@@ -3171,7 +3332,7 @@ TORRENT_API void lt_set_file_priorities(lt_session_t session, lt_torrent_id id,
         for (int i = 0; i < nf; ++i)
             p.push_back((i < count && priorities[i]) ? lt::default_priority : lt::dont_download);
         it->second.prioritize_files(p);
-        it->second.unset_flags(lt::torrent_flags::stop_when_ready);
+        it->second.unset_flags(lt::torrent_flags::stop_when_ready | lt::torrent_flags::upload_mode);
         it->second.resume();
     } catch (...) {}
 }
@@ -3332,7 +3493,8 @@ TORRENT_API lt_stream_id lt_start_stream(lt_session_t session,
                (long long)torrent_id, file_index, s->start_piece, s->end_piece,
                crit, (long long)s->created_at_ms.load());
 
-        // NOW resume — priorities are already set, no random downloads
+        // NOW allow payload — priorities/deadlines are already set.
+        handle.unset_flags(lt::torrent_flags::upload_mode);
         handle.resume();
 
         // Do NOT use sequential_download — let deadlines drive piece order.
@@ -3968,11 +4130,17 @@ TORRENT_API int lt_is_file_complete(lt_session_t session,
             }
             return 1;
         }
-        // No active stream: fall back to torrent-level finished + progress.
+        // Selected-file verification also applies without an HTTP reader.
+        // is_finished only covers wanted files, so it cannot prove another
+        // episode in a season pack is complete.
         try {
-            auto st = handle.status();
-            if (st.is_finished && st.progress >= 0.999f) return 1;
+            const auto status = handle.status(lt::torrent_handle::query_pieces);
+            if (status.pieces.size() <= end_p) return 0;
+            for (int piece = start_p; piece <= end_p; ++piece)
+                if (!status.pieces[lt::piece_index_t(piece)]) return 0;
+            return 1;
         } catch (...) {}
+
         return 0;
     } catch (...) { return 0; }
 }
@@ -4026,7 +4194,7 @@ TORRENT_API int lt_add_web_seed(lt_session_t session,
         h.add_url_seed(std::string(url));
         // Web seeds only help if the torrent is running.
         try { h.resume(); } catch (...) {}
-        TB_LOG("web_seed attached torrent=%lld url=%s", (long long)id, url);
+        TB_LOG("web_seed attached torrent=%lld", (long long)id);
         set_err("");
         return 1;
     } catch (const std::exception& e) { set_err(e.what()); return 0; }

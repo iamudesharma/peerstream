@@ -144,6 +144,29 @@ class LibtorrentFlutter {
   static const _maxStreams = 64;
 
   LibtorrentFlutter._();
+  Map<String, int>? processMemory() {
+    final footprint = calloc<Uint64>();
+    final resident = calloc<Uint64>();
+    try {
+      if (_b.getProcessMemory(footprint, resident) != 1) return null;
+      return {
+        'physicalFootprintBytes': footprint.value,
+        'residentBytes': resident.value
+      };
+    } finally {
+      calloc.free(footprint);
+      calloc.free(resident);
+    }
+  }
+
+  bool saveSessionState(String path) {
+    final pointer = path.toNativeUtf8();
+    try {
+      return _b.saveSessionState(_session, pointer) == 1;
+    } finally {
+      malloc.free(pointer);
+    }
+  }
 
   /// The singleton instance. Only available after [init] completes.
   static LibtorrentFlutter get instance {
@@ -170,6 +193,7 @@ class LibtorrentFlutter {
     Duration pollInterval = const Duration(milliseconds: 600),
     bool fetchTrackers = true,
     String? defaultSavePath,
+    String? sessionStatePath,
   }) async {
     if (_instance != null) return;
     final engine = LibtorrentFlutter._();
@@ -234,6 +258,12 @@ class LibtorrentFlutter {
       }
     }
 
+    final statePath = (sessionStatePath ?? '').toNativeUtf8();
+    try {
+      engine._b.setSessionStatePath(statePath);
+    } finally {
+      malloc.free(statePath);
+    }
     final iface = listenInterface.toNativeUtf8();
     try {
       final session = engine._b.createSession(

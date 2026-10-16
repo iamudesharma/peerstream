@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform;
@@ -28,12 +30,17 @@ import '../../services/streaming/source_ranking.dart';
 import '../../services/streaming/streaming_service.dart';
 import '../../services/subtitles/subtitle_provider.dart';
 import '../../services/subtitles/subtitle_store.dart';
-import '../../services/torrent/native_torrent_engine.dart';
+import '../../services/torrent/torrent_engine.dart';
 import '../statistics/torrent_statistics.dart';
 import 'live_player_tracks.dart';
+import 'playback_startup_panel.dart';
+import 'player_timing_controls.dart';
+import '../../services/experience/playback_queue.dart';
+import '../../services/playback/torrent_cache_identity.dart';
 import 'player_track_selectors.dart';
 import 'player_shortcuts.dart';
 import 'player_settings_menu.dart';
+import 'player_control_menu.dart';
 
 class DefaultPlayerScreen extends ConsumerStatefulWidget {
   const DefaultPlayerScreen({
@@ -90,6 +97,7 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
   Duration _buffered = Duration.zero;
   bool _isBuffering = false;
   Timer? _saveTimer;
+  bool _watchedRecorded = false;
   Timer? _byteObservationTimer;
   Duration? _pendingSeek;
   int _seekAttempts = 0;
@@ -111,8 +119,80 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
   String? _detailsBackdropPath;
   double _lastVolume = 100;
   SubtitleTrack? _lastSubtitleTrack;
+  bool _miniPlayer = false;
+  Future<void> _toggleMiniPlayer() async {
+    try {
+      await const MethodChannel('dev.peerstream/window')
+          .invokeMethod<void>('miniPlayer', !_miniPlayer);
+      if (mounted) setState(() => _miniPlayer = !_miniPlayer);
+    } catch (_) {
+      _showHud(
+        'Leave fullscreen to use mini-player',
+        icon: Icons.picture_in_picture_alt,
+      );
+    }
+  }
+
   bool _completed = false;
+  Timer? _autoplayTimer;
+  int? _autoplaySeconds;
+  Timer? _sleepTimer;
+  bool _sleepAfterEpisode = false;
+
+  void _cancelAutoplay() {
+    _autoplayTimer?.cancel();
+    _autoplayTimer = null;
+    if (mounted) setState(() => _autoplaySeconds = null);
+  }
+
+  Future<void> _onCompleted() async {
+    await _resolveNextEpisode();
+    if (!mounted ||
+        !_completed ||
+        _sleepAfterEpisode ||
+        ref.read(appSettingsProvider).value?.autoplay != true ||
+        (_nextEpisodeNumber == null &&
+            (ref.read(playbackQueueProvider).value ?? []).isEmpty)) {
+      return;
+    }
+    _autoplayTimer?.cancel();
+    setState(() => _autoplaySeconds = 10);
+    _autoplayTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || !_completed) {
+        timer.cancel();
+        return;
+      }
+      final seconds = (_autoplaySeconds ?? 1) - 1;
+      setState(() => _autoplaySeconds = seconds);
+      if (seconds <= 0) {
+        timer.cancel();
+        unawaited(_playNextEpisode());
+      }
+    });
+  }
+
+  void _setSleep(Duration? duration, {bool afterEpisode = false}) {
+    _sleepTimer?.cancel();
+    _sleepAfterEpisode = afterEpisode;
+    if (duration != null) {
+      _sleepTimer = Timer(duration, () {
+        _cancelAutoplay();
+        unawaited(_player.pause());
+        _showHud('Sleep timer', icon: Icons.bedtime_outlined);
+      });
+    }
+    _showHud(
+      afterEpisode
+          ? 'Stop after episode'
+          : duration == null
+          ? 'Sleep timer off'
+          : 'Sleep in ${duration.inMinutes} minutes',
+      icon: Icons.bedtime_outlined,
+    );
+  }
+
   bool _showStats = false;
+  bool _shortcutsHelpVisible = false;
   bool _storedPrefsApplied = false;
   bool _resumeGated = false;
   String? _hudLabel;
@@ -135,7 +215,9 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     _player = ref.read(mediaKitPlayerProvider);
     _errorSubscription = _player.stream.error.listen((error) {
       if (mounted) {
-        _service.reportError('Playback failed. Try another source or retry.');
+        _service.reportPlayerError(
+          'Playback failed. Try another source or retry.',
+        );
       }
     });
     _videoController = ref.read(mediaKitVideoControllerProvider);
@@ -179,7 +261,8 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     _completedSubscription = _player.stream.completed.listen((completed) {
       if (!mounted) return;
       setState(() => _completed = completed);
-      if (completed) unawaited(_resolveNextEpisode());
+      if (completed) unawaited(_onCompleted());
+      if (!completed) _cancelAutoplay();
     });
     _positionSubscription = _player.stream.position.listen((position) {
       _position = position;
@@ -194,6 +277,24 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
               _service.state.phase != StreamingPhase.playing)) {
         if (!_hasStartedPlayback) {
           setState(() => _hasStartedPlayback = true);
+          final key = QueueItem(
+            media: widget.mediaRef,
+            title: '',
+            season: widget.season,
+            episode: widget.episode,
+          ).key;
+          if (ref
+                  .read(playbackQueueProvider)
+                  .value
+                  ?.any((item) => item.key == key) ==
+              true) {
+            unawaited(
+              ref
+                  .read(playbackQueueProvider.notifier)
+                  .remove(key)
+                  .catchError((Object _) {}),
+            );
+          }
         }
         _service.markPlaying();
         _updatePolling();
@@ -214,12 +315,13 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
   void _updatePolling() {
     // Fast polling during startup/seeking, relaxed during steady playback.
     final engine = _service.engine;
-    if (engine is! NativeTorrentEngine) return;
+    if (engine is! EnginePollingController) return;
+    final polling = engine as EnginePollingController;
     final phase = _service.state.phase;
     if (phase == StreamingPhase.playing && !_isBuffering) {
-      engine.useSteadyPolling();
+      polling.useSteadyPolling();
     } else {
-      engine.useStartupPolling();
+      polling.useStartupPolling();
     }
   }
 
@@ -248,6 +350,8 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
         _nextEpisodeSeason = null;
         _nextEpisodeNumber = null;
       });
+      _resumeGateTimer?.cancel();
+      _resumeGateTimer = null;
       _openedUri = null;
       _hasStartedPlayback = false;
       _pendingSeek = preservePosition ?? _positionOrExplicit();
@@ -410,6 +514,24 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     return null;
   }
 
+  void _switchSource() {
+    final position = _position > Duration.zero
+        ? _position.inMilliseconds
+        : widget.resumeMs;
+    unawaited(_persistProgress());
+    _stopOwnedSession();
+    context.go(
+      Uri(
+        path: '/sources/${widget.mediaRef.routeKey}',
+        queryParameters: {
+          if (widget.season != null) 'season': '${widget.season}',
+          if (widget.episode != null) 'episode': '${widget.episode}',
+          if (position != null) 'resume': '$position',
+        },
+      ).toString(),
+    );
+  }
+
   Future<void> _retry() async {
     // Preserve viewing position across retry; refresh expired direct URLs
     // via a fresh discovery round instead of reusing the stale route source.
@@ -436,6 +558,7 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
   }
 
   Future<void> _openIfNeeded(StreamingState state) async {
+    final attempt = _startAttempt;
     final uri = state.playback?.uri.toString();
     if (!mounted ||
         uri == null ||
@@ -448,16 +571,29 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
       return;
     }
     _openedUri = uri;
+    final selectedSource = state.source;
+    final selectedFile = state.playback?.file;
+    if (selectedSource != null && selectedFile != null) {
+      try {
+        await restorePlayerTiming(
+          _player,
+          timingKey(torrentCacheKey(selectedSource), selectedFile.index),
+          _service.experience,
+        );
+      } catch (_) {}
+    }
     _trackPreferencesApplied = false;
     // Resolve the resume position *before* opening so playback never starts
     // from zero and then jumps. The history prompt (only when the route has
     // no explicit `resume`) is answered while the source is still loading.
     final resumeStart = await _resolveResumeStart();
-    if (!mounted || _openedUri != uri) return;
+    if (!mounted || attempt != _startAttempt || _openedUri != uri) return;
     if (_sessionToken != null && state.sessionId != _sessionToken!.id) {
       return;
     }
     _openedAt = DateTime.now();
+    _position = Duration.zero;
+    _duration = Duration.zero;
     debugPrint(
       '[Playback] Opening ${state.origin.name} source'
       '${resumeStart == null ? '' : ' at ${resumeStart.inMilliseconds}ms'}',
@@ -483,6 +619,15 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
         // never visibly play from zero.
         play: resumeStart == null,
       );
+      if (!mounted ||
+          attempt != _startAttempt ||
+          _openedUri != uri ||
+          state.sessionId != _sessionToken?.id) {
+        return;
+      }
+      // Read the new media's state, never a queued event from the old URI.
+      _position = _player.state.position;
+      _duration = _player.state.duration;
       // Player-open timing for tap→open→first-frame diagnostics.
       _service.reportPlayerOpen();
       if (resumeStart != null) {
@@ -494,7 +639,12 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
         // reports no position/duration events at all.
         _resumeGateTimer?.cancel();
         _resumeGateTimer = Timer(const Duration(seconds: 45), () {
-          if (!mounted || !_resumeGated) return;
+          if (!mounted ||
+              attempt != _startAttempt ||
+              _openedUri != uri ||
+              !_resumeGated) {
+            return;
+          }
           debugPrint('[Playback] Resume gate watchdog fired');
           _pendingSeek = null;
           _finishResume(resumeStart, landed: false);
@@ -597,7 +747,22 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
 
   void _settlePendingSeek() {
     final target = _pendingSeek;
-    if (target == null || !mounted) return;
+    // Stop/load events from the previous media must not consume a pending
+    // resume before this attempt has actually opened its replacement URI.
+    if (target == null ||
+        !mounted ||
+        !_resumeGated ||
+        _openedAt == null ||
+        _openedUri == null) {
+      return;
+    }
+    final attempt = _startAttempt;
+    final uri = _openedUri;
+    bool current() =>
+        mounted &&
+        attempt == _startAttempt &&
+        uri == _openedUri &&
+        _resumeGated;
     // Serialize resume operations: one seek in flight at a time.
     if (_seekInFlight) return;
 
@@ -648,13 +813,14 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
           .seek(target)
           .then(
             (_) {
+              if (!current()) return;
               _seekInFlight = false;
               // Acknowledged completion before retrying: re-enter settlement
               // which either clears (within tolerance) or issues the next attempt.
               if (mounted) _settlePendingSeek();
             },
             onError: (_) {
-              _seekInFlight = false;
+              if (current()) _seekInFlight = false;
             },
           ),
     );
@@ -683,6 +849,19 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
   }
 
   Future<void> _persistProgress({bool forceAnchor = false}) async {
+    try {
+      await _writeProgress(forceAnchor: forceAnchor);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not save playback progress. Check storage.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _writeProgress({bool forceAnchor = false}) async {
     final positionMs = _position.inMilliseconds;
     if (positionMs <= 0) return;
     // Uses captured dependencies only: this also runs from dispose(), where
@@ -714,6 +893,10 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
       updatedAt: DateTime.now(),
     );
     if (entry.isFinished) {
+      if (!_watchedRecorded) {
+        await _service.experience.markWatched(key, widget.mediaRef.routeKey);
+        _watchedRecorded = true;
+      }
       await notifier.remove(key);
       return;
     }
@@ -742,7 +925,11 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
       final settings = ref.read(appSettingsProvider).value;
       if (settings == null) return;
       if ((settings.playerVolume - volume).abs() < 0.01) return;
-      unawaited(ref.read(appSettingsProvider.notifier).setPlayerVolume(volume));
+      unawaited(
+        _savePlayerPreference(
+          () => ref.read(appSettingsProvider.notifier).setPlayerVolume(volume),
+        ),
+      );
     });
   }
 
@@ -753,8 +940,22 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
       final settings = ref.read(appSettingsProvider).value;
       if (settings == null) return;
       if ((settings.playerRate - rate).abs() < 0.001) return;
-      unawaited(ref.read(appSettingsProvider.notifier).setPlayerRate(rate));
+      unawaited(
+        _savePlayerPreference(
+          () => ref.read(appSettingsProvider.notifier).setPlayerRate(rate),
+        ),
+      );
     });
+  }
+
+  Future<void> _savePlayerPreference(Future<void> Function() save) async {
+    try {
+      await save();
+    } catch (_) {
+      if (mounted) {
+        _showMessage('Could not save player preferences. Check storage.');
+      }
+    }
   }
 
   Future<void> _togglePlayPause() async {
@@ -927,6 +1128,11 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
   }
 
   void _handleShortcut(PlayerShortcut shortcut, BuildContext context) {
+    if (_shortcutsHelpVisible &&
+        shortcut.action == PlayerShortcutAction.exitFullscreen) {
+      setState(() => _shortcutsHelpVisible = false);
+      return;
+    }
     switch (shortcut.action) {
       case PlayerShortcutAction.playPause:
         unawaited(_togglePlayPause());
@@ -1012,15 +1218,11 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
   }
 
   void _showShortcutsHelp() {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => const _ShortcutsSheet(),
-    );
+    setState(() => _shortcutsHelpVisible = true);
   }
 
   Future<void> _replay() async {
+    _cancelAutoplay();
     setState(() {
       _completed = false;
       _nextEpisodeSeason = null;
@@ -1088,6 +1290,16 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
   }
 
   Future<void> _playNextEpisode() async {
+    _cancelAutoplay();
+    final queue = ref.read(playbackQueueProvider).value ?? [];
+    if (queue.isNotEmpty) {
+      final item = queue.first;
+      if (!mounted) return;
+      unawaited(_persistProgress());
+      _stopOwnedSession();
+      context.go(item.route);
+      return;
+    }
     final season = _nextEpisodeSeason;
     final episode = _nextEpisodeNumber;
     if (season == null || episode == null) return;
@@ -1105,6 +1317,11 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
   Future<void> _selectAudio(AudioTrack track) async {
     try {
       await _player.setAudioTrack(track);
+    } catch (_) {
+      _showMessage('Could not change the audio track.');
+      return;
+    }
+    try {
       if (track.id != 'auto' && track.id != 'no' && track.language != null) {
         final cache = ref.read(playbackCacheProvider);
         final preferences = await cache.preferences();
@@ -1113,7 +1330,9 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
         );
       }
     } catch (_) {
-      _showMessage('Could not change the audio track.');
+      _showMessage(
+        'Audio changed, but the preference could not be saved. Check storage.',
+      );
     }
   }
 
@@ -1123,6 +1342,11 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     }
     try {
       await _player.setSubtitleTrack(track);
+    } catch (_) {
+      _showMessage('Could not change subtitles.');
+      return;
+    }
+    try {
       if (track.id != 'auto' && track.id != 'no' && track.language != null) {
         final cache = ref.read(playbackCacheProvider);
         final preferences = await cache.preferences();
@@ -1131,7 +1355,9 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
         );
       }
     } catch (_) {
-      _showMessage('Could not change subtitles.');
+      _showMessage(
+        'Subtitles changed, but the preference could not be saved. Check storage.',
+      );
     }
   }
 
@@ -1141,7 +1367,13 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     final subtitles = realSubtitleTracks(tracks);
     if (audio.isEmpty && subtitles.isEmpty) return;
     _trackPreferencesApplied = true;
-    final preferences = await ref.read(playbackCacheProvider).preferences();
+    PlaybackPreferences preferences;
+    try {
+      preferences = await ref.read(playbackCacheProvider).preferences();
+    } catch (_) {
+      _showMessage('Saved track preferences are unavailable. Check storage.');
+      return;
+    }
     final preferredAudio = preferences.preferredAudioLanguage?.toLowerCase();
     if (preferredAudio != null) {
       final track = audio
@@ -1183,7 +1415,7 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     }
   }
 
-  Future<void> _findOnlineSubtitles() async {
+  Future<void> _findOnlineSubtitles(BuildContext menuContext) async {
     final stream = ref.read(streamingServiceProvider).state;
     final source = stream.source;
     if (source == null || _subtitleSearching) return;
@@ -1193,34 +1425,41 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
       final choices = await ref
           .read(addonSubtitleProvider)
           .find(urls, source: source, file: stream.playback?.file);
-      if (!mounted) return;
+      if (!mounted ||
+          !menuContext.mounted ||
+          _service.state.sessionId != stream.sessionId) {
+        return;
+      }
       if (choices.isEmpty) {
         _showMessage('No online subtitles were offered by your providers.');
         return;
       }
-      final selected = await showModalBottomSheet<OnlineSubtitle>(
-        context: context,
-        showDragHandle: true,
-        builder: (context) => SafeArea(
-          child: ListView(
-            shrinkWrap: true,
-            children: [
-              const ListTile(title: Text('Online subtitles')),
-              for (final item in choices)
-                ListTile(
-                  title: Text(item.language),
-                  subtitle: Text(item.provider),
-                  onTap: () => Navigator.pop(context, item),
-                ),
-            ],
-          ),
+      final selected = await PlayerMenuOverlay.showChoices<OnlineSubtitle>(
+        context: menuContext,
+        title: 'Online subtitles',
+        builder: (context, select) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(title: Text('Online subtitles')),
+            for (final item in choices)
+              ListTile(
+                title: Text(item.language),
+                subtitle: Text(item.provider),
+                onTap: () => select(item),
+              ),
+          ],
         ),
       );
-      if (selected == null) return;
+      if (selected == null ||
+          !mounted ||
+          _service.state.sessionId != stream.sessionId) {
+        return;
+      }
       final path = await _subtitleFiles.download(
         selected.url,
         name: '${selected.provider}_${selected.language}.srt',
       );
+      if (!mounted || _service.state.sessionId != stream.sessionId) return;
       await _selectSubtitle(
         SubtitleTrack.uri(
           Uri.file(path).toString(),
@@ -1261,11 +1500,13 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
       mainAxisSize: MainAxisSize.min,
       children: [
         AudioTrackSelector(
+          player: _player,
           tracks: tracks,
           selectedId: selected.audio.id,
           onSelected: _selectAudio,
         ),
         SubtitleTrackSelector(
+          player: _player,
           tracks: tracks,
           selectedId: selected.subtitle.id,
           onSelected: _selectSubtitle,
@@ -1281,6 +1522,63 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     stream: _player.stream.rate,
     initialData: _player.state.rate,
     builder: (context, snapshot) => PlayerSettingsMenu(
+      additionalControls: [
+        if (defaultTargetPlatform == TargetPlatform.macOS)
+          ListTile(
+            title: Text(_miniPlayer ? 'Restore window' : 'Mini-player'),
+            leading: const Icon(Icons.picture_in_picture_alt),
+            onTap: _toggleMiniPlayer,
+          ),
+        ListTile(
+          leading: const Icon(Icons.playlist_add),
+          title: const Text('Add to queue'),
+          onTap: () async {
+            try {
+              await ref
+                  .read(playbackQueueProvider.notifier)
+                  .add(
+                    QueueItem(
+                      media: widget.mediaRef,
+                      title:
+                          _detailsTitle ??
+                          _service.state.source?.name ??
+                          'Video',
+                      season: widget.season,
+                      episode: widget.episode,
+                    ),
+                  );
+              _showHud('Added to queue', icon: Icons.playlist_add_check);
+            } catch (_) {
+              _showHud('Could not add to queue', icon: Icons.error_outline);
+            }
+          },
+        ),
+
+        if (_service.state.source != null && _service.state.playback != null)
+          PlayerTimingControls(
+            player: _player,
+            experience: _service.experience,
+            fileKey: timingKey(
+              torrentCacheKey(_service.state.source!),
+              _service.state.playback!.file.index,
+            ),
+          ),
+        ExpansionTile(
+          title: const Text('Sleep timer'),
+          children: [
+            for (final minutes in [15, 30, 60])
+              ListTile(
+                title: Text('$minutes minutes'),
+                onTap: () => _setSleep(Duration(minutes: minutes)),
+              ),
+            ListTile(
+              title: const Text('After this episode'),
+              onTap: () => _setSleep(null, afterEpisode: true),
+            ),
+            ListTile(title: const Text('Off'), onTap: () => _setSleep(null)),
+          ],
+        ),
+      ],
       rate: snapshot.data ?? 1,
       onRateSelected: _setRate,
       fit: _fit,
@@ -1494,9 +1792,14 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
   /// Controls builder shared by the embedded and fullscreen [Video]s. The
   /// fullscreen route reuses this builder, so shortcuts, the HUD, and the
   /// end-of-playback card work in both modes.
-  Widget _videoControls(VideoState state) => ValueListenableBuilder<int>(
-    valueListenable: _controlsRevision,
-    builder: (context, revision, child) => _buildVideoControls(state),
+  Widget _videoControls(VideoState state) => PlayerShortcuts(
+    onAction: _handleShortcut,
+    child: PlayerMenuOverlay(
+      child: ValueListenableBuilder<int>(
+        valueListenable: _controlsRevision,
+        builder: (context, revision, child) => _buildVideoControls(state),
+      ),
+    ),
   );
 
   Widget _buildVideoControls(VideoState state) {
@@ -1506,42 +1809,98 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
             widget.episode != null
         ? 'S${widget.season} E${widget.episode}'
         : null;
-    final nextEpisode = _nextEpisodeSeason == null || _nextEpisodeNumber == null
+    final queued = ref.watch(playbackQueueProvider).value ?? [];
+    final nextEpisode = queued.isNotEmpty
+        ? queued.first.title
+        : _nextEpisodeSeason == null || _nextEpisodeNumber == null
         ? null
         : 'S$_nextEpisodeSeason E$_nextEpisodeNumber';
-    return PlayerShortcuts(
-      onAction: _handleShortcut,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          if (_touchControls)
-            MaterialVideoControlsTheme(
-              normal: _videoControlsTheme(fullscreen: false),
-              fullscreen: _videoControlsTheme(fullscreen: true),
-              child: MaterialVideoControls(state),
-            )
-          else
-            MaterialDesktopVideoControlsTheme(
-              normal: _desktopControlsTheme(),
-              fullscreen: _desktopControlsTheme(),
-              child: MaterialDesktopVideoControls(state),
-            ),
-          if (_completed)
-            _EndOfPlaybackOverlay(
-              episodeLabel: episodeLabel,
-              nextEpisodeLabel: nextEpisode,
-              onReplay: () => unawaited(_replay()),
-              onNextEpisode: nextEpisode == null
-                  ? null
-                  : () => unawaited(_playNextEpisode()),
-            ),
-          IgnorePointer(
-            child: _PlayerHud(label: _hudLabel, icon: _hudIcon),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (_touchControls)
+          MaterialVideoControlsTheme(
+            normal: _videoControlsTheme(fullscreen: false),
+            fullscreen: _videoControlsTheme(fullscreen: true),
+            child: MaterialVideoControls(state),
+          )
+        else
+          MaterialDesktopVideoControlsTheme(
+            normal: _desktopControlsTheme(),
+            fullscreen: _desktopControlsTheme(),
+            child: MaterialDesktopVideoControls(state),
           ),
-          if (_showStats)
-            IgnorePointer(child: _PlayerStatsOverlay(player: _player)),
-        ],
-      ),
+        if (_completed)
+          _EndOfPlaybackOverlay(
+            episodeLabel: episodeLabel,
+            nextEpisodeLabel: nextEpisode,
+            onReplay: () => unawaited(_replay()),
+            onNextEpisode: nextEpisode == null
+                ? null
+                : () => unawaited(_playNextEpisode()),
+          ),
+        if (_autoplaySeconds != null)
+          Align(
+            alignment: Alignment.topCenter,
+            child: Material(
+              color: Colors.black87,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Next episode in $_autoplaySeconds seconds'),
+                  TextButton(
+                    onPressed: _cancelAutoplay,
+                    child: const Text('Cancel autoplay'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        IgnorePointer(
+          child: _PlayerHud(label: _hudLabel, icon: _hudIcon),
+        ),
+        if (_showStats)
+          IgnorePointer(child: _PlayerStatsOverlay(player: _player)),
+        if (_shortcutsHelpVisible)
+          Positioned.fill(
+            child: LayoutBuilder(
+              builder: (context, constraints) => Stack(
+                children: [
+                  Positioned.fill(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () =>
+                          setState(() => _shortcutsHelpVisible = false),
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.bottomRight,
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: SizedBox(
+                        width: (constraints.maxWidth - 24)
+                            .clamp(0, 320)
+                            .toDouble(),
+                        height: (constraints.maxHeight - 24)
+                            .clamp(0, 450)
+                            .toDouble(),
+                        child: Material(
+                          color: const Color(0xf2232328),
+                          borderRadius: BorderRadius.circular(12),
+                          clipBehavior: Clip.antiAlias,
+                          child: _ShortcutsSheet(
+                            onClose: () =>
+                                setState(() => _shortcutsHelpVisible = false),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -1556,6 +1915,15 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     _positionSubscription?.cancel();
     _durationSubscription?.cancel();
     _errorSubscription?.cancel();
+    if (_miniPlayer) {
+      unawaited(
+        const MethodChannel('dev.peerstream/window')
+            .invokeMethod<void>('miniPlayer', false)
+            .catchError((Object _) {}),
+      );
+    }
+    _autoplayTimer?.cancel();
+    _sleepTimer?.cancel();
     _completedSubscription?.cancel();
     _saveTimer?.cancel();
     _byteObservationTimer?.cancel();
@@ -1616,7 +1984,22 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
           ),
           actions: [_StreamStatusMenu(state: state)],
         ),
-        body: state.phase == StreamingPhase.unsupported
+        body: _miniPlayer
+            ? Stack(
+                children: [
+                  Positioned.fill(child: _inPlayerControls()),
+                  Positioned(
+                    top: 4,
+                    right: 4,
+                    child: IconButton(
+                      tooltip: 'Restore window',
+                      onPressed: _toggleMiniPlayer,
+                      icon: const Icon(Icons.open_in_full),
+                    ),
+                  ),
+                ],
+              )
+            : state.phase == StreamingPhase.unsupported
             ? _Unsupported(message: state.message)
             : ScrollConfiguration(
                 behavior: ScrollConfiguration.of(context)
@@ -1643,8 +2026,9 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
                                 aspectRatio: _aspectRatio ?? 16 / 9,
                                 maxHeight: constraints.maxHeight * 0.78,
                                 child: state.playback == null
-                                    ? _LoadingState(
+                                    ? PlaybackStartupPanel(
                                         state: state,
+                                        onSwitchSource: _switchSource,
                                         onCancel: () {
                                           _stopOwnedSession();
                                           if (context.mounted) context.pop();
@@ -1682,20 +2066,7 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
               message: state.message,
               onRetry: _retry,
               onBack: () => context.pop(),
-              onSwitchSource: () {
-                unawaited(_persistProgress());
-                _stopOwnedSession();
-                context.go(
-                  Uri(
-                    path: '/sources/${widget.mediaRef.routeKey}',
-                    queryParameters: {
-                      if (widget.season != null) 'season': '${widget.season}',
-                      if (widget.episode != null)
-                        'episode': '${widget.episode}',
-                    },
-                  ).toString(),
-                );
-              },
+              onSwitchSource: _switchSource,
             )
           else ...[
             if (episodeLabel != null)
@@ -1893,134 +2264,6 @@ class _StreamStatusMenu extends StatelessWidget {
   }
 }
 
-class _LoadingState extends StatelessWidget {
-  const _LoadingState({required this.state, required this.onCancel});
-  final StreamingState state;
-  final VoidCallback onCancel;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final stats = state.stats;
-    final determinate = stats.totalBytes > 0 && stats.progress > 0;
-    final bufferPct = stats.bufferProgress;
-    final hasLiveStats =
-        stats.downloadRate > 0 ||
-        (stats.peers ?? 0) > 0 ||
-        stats.downloadedBytes > 0;
-    final elapsed = state.startedAt == null
-        ? null
-        : DateTime.now().difference(state.startedAt!);
-    final elapsedLabel = elapsed == null ? null : '${elapsed.inSeconds}s';
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (determinate)
-              SizedBox(
-                width: 220,
-                child: Column(
-                  children: [
-                    LinearProgressIndicator(
-                      value: stats.progress.clamp(0.0, 1.0),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${(stats.progress.clamp(0.0, 1.0) * 100).toStringAsFixed(0)}% · ${formatBytes(stats.downloadedBytes)} of ${formatBytes(stats.totalBytes)}',
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: DesignTokens.textSecondary,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                    if (bufferPct > 0) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        'Buffer ${(bufferPct.clamp(0.0, 100.0)).toStringAsFixed(0)}% ready',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: DesignTokens.textTertiary,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              )
-            else if (bufferPct > 0)
-              SizedBox(
-                width: 220,
-                child: Column(
-                  children: [
-                    LinearProgressIndicator(
-                      value: (bufferPct / 100).clamp(0.0, 1.0),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Buffer ${bufferPct.toStringAsFixed(0)}% ready',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: DesignTokens.textSecondary,
-                        fontFeatures: const [FontFeature.tabularFigures()],
-                      ),
-                    ),
-                  ],
-                ),
-              )
-            else
-              const CircularProgressIndicator(),
-            const SizedBox(height: 16),
-            Text(switch ((state.phase, state.detail)) {
-              (StreamingPhase.resolving, StreamingDetail.findingSources) =>
-                'Finding sources${elapsedLabel == null ? '' : ' ($elapsedLabel)'}',
-              (StreamingPhase.resolving, _) =>
-                elapsed != null && elapsed.inSeconds > 10
-                    ? 'Connecting to peers ($elapsedLabel elapsed)'
-                    : 'Connecting to the source',
-              (StreamingPhase.buffering, _) =>
-                state.isBuffering
-                    ? 'Buffering the video'
-                    : 'Buffering the video',
-              (StreamingPhase.seeking, _) => 'Loading the new position',
-              (_, StreamingDetail.reconnecting) => 'Reconnecting',
-              _ => 'Preparing the local stream',
-            }, style: theme.textTheme.bodyMedium),
-            const SizedBox(height: 4),
-            Text(
-              state.phase == StreamingPhase.resolving
-                  ? 'The first playback may need torrent information.'
-                  : hasLiveStats
-                  ? '${formatSpeed(stats.downloadRate)} · ${stats.peers ?? 0} peers${elapsedLabel == null ? '' : ' · $elapsedLabel'}'
-                  : 'Playback begins as soon as enough video is ready.',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: DesignTokens.textSecondary,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            ),
-            if (state.message != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                state.message!,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: DesignTokens.textSecondary,
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: onCancel,
-              icon: const Icon(Icons.close),
-              label: const Text('Cancel'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 /// YouTube-style skip button used in the center controls bar.
 class _SeekButton extends StatelessWidget {
   const _SeekButton({required this.forward, required this.onPressed});
@@ -2160,39 +2403,48 @@ class _DiagnosticsStrip extends ConsumerWidget {
   }
 }
 
-/// Modal sheet listing every shortcut in [playerShortcuts] that opts into help.
+/// In-video panel listing shortcuts that opt into help.
 class _ShortcutsSheet extends StatelessWidget {
-  const _ShortcutsSheet();
+  const _ShortcutsSheet({required this.onClose});
+
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
     final entries = playerShortcuts
         .where((shortcut) => shortcut.helpKeys != null)
         .toList(growable: false);
-    return SafeArea(
-      child: ListView(
-        shrinkWrap: true,
+    return ListTileTheme(
+      textColor: Colors.white,
+      iconColor: Colors.white,
+      child: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 4),
-            child: Text(
-              'Keyboard shortcuts',
-              style: Theme.of(context).textTheme.titleLarge
-                  ?.copyWith(fontWeight: FontWeight.w700),
+          ListTile(
+            title: const Text('Keyboard shortcuts'),
+            trailing: IconButton(
+              tooltip: 'Close shortcuts',
+              icon: const Icon(Icons.close),
+              onPressed: onClose,
             ),
           ),
-          for (final shortcut in entries)
-            ListTile(
-              dense: true,
-              title: Text(shortcut.helpDescription ?? ''),
-              trailing: _KeyChip(label: shortcut.helpKeys!),
+          Expanded(
+            child: ListView(
+              children: [
+                for (final shortcut in entries)
+                  ListTile(
+                    dense: true,
+                    title: Text(shortcut.helpDescription ?? ''),
+                    trailing: _KeyChip(label: shortcut.helpKeys!),
+                  ),
+                const ListTile(
+                  dense: true,
+                  title: Text('Back or forward 10 seconds'),
+                  trailing: _KeyChip(label: 'Double-tap'),
+                ),
+                const SizedBox(height: 8),
+              ],
             ),
-          const ListTile(
-            dense: true,
-            title: Text('Back or forward 10 seconds'),
-            trailing: _KeyChip(label: 'Double-tap'),
           ),
-          const SizedBox(height: 8),
         ],
       ),
     );
@@ -2348,7 +2600,10 @@ class _PlayerStatsOverlayState extends ConsumerState<_PlayerStatsOverlay> {
   void initState() {
     super.initState();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
+      if (mounted) {
+        ref.invalidate(engineDiagnosticsProvider);
+        setState(() {});
+      }
     });
   }
 
@@ -2371,6 +2626,7 @@ class _PlayerStatsOverlayState extends ConsumerState<_PlayerStatsOverlay> {
         ref.watch(streamingStateProvider).value ??
         ref.read(streamingServiceProvider).state;
     final bridge = ref.watch(bridgeVersionProvider);
+    final engineMemory = ref.watch(engineDiagnosticsProvider).value;
     final player = widget.player;
     final diag = streaming.diagnostics;
     final video = player.state.videoParams;
@@ -2378,6 +2634,10 @@ class _PlayerStatsOverlayState extends ConsumerState<_PlayerStatsOverlay> {
     final lines = <String>[
       'phase ${streaming.phase.name}',
       'native $bridge',
+      if (engineMemory?.processMemoryBytes case final bytes?)
+        'engine process footprint ${formatBytes(bytes)}',
+      if (engineMemory?.cacheCapacityBytes case final bytes?)
+        'piece cache budget ${formatBytes(bytes)}',
       if (diag?['tapToFirstFrameMs'] != null)
         'first frame ${diag!['tapToFirstFrameMs']}ms',
       if (diag?['bufferingEvents'] != null)

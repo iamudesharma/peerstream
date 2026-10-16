@@ -1,0 +1,154 @@
+{
+  "date": "2026-10-14",
+  "verificationHost": "macOS 27.0.1 arm64",
+  "bridgeVersion": "bridge-1.9.9+lt2.1.1",
+  "sourceBuild": {
+    "architecture": "arm64",
+    "minimumMacOS": "12.0",
+    "versions": {
+      "libtorrent": "2.1.1",
+      "openssl": "3.6.4",
+      "boostHeaders": "1.88.0"
+    },
+    "libtorrentABI": 2,
+    "webtorrentRTC": true,
+    "sources": {
+      "openssl-3.6.4.tar.gz": {
+        "url": "https://github.com/openssl/openssl/releases/download/openssl-3.6.4/openssl-3.6.4.tar.gz",
+        "sha256": "9bffaa1ad1e07b354c21bd3324ec02fa15579f45a7d0494b3e74bc449b7333ef"
+      },
+      "libtorrent-rasterbar-2.1.1.tar.gz": {
+        "url": "https://github.com/arvidn/libtorrent/releases/download/v2.1.1/libtorrent-rasterbar-2.1.1.tar.gz",
+        "sha256": "0f163516ecef2e3331500266751de3098835a3c3ae0c2290448046c632bc0e93"
+      },
+      "boost-error_code.cpp": {
+        "url": "https://raw.githubusercontent.com/boostorg/system/boost-1.88.0/src/error_code.cpp",
+        "sha256": "4e3e95f1e90a76e0bfc32f03510c54b7a81ff0a2ab7da20f93315e84384c4e75"
+      }
+    },
+    "libraries": [
+      {
+        "name": "libboost_system.dylib",
+        "minimumMacOS": "12.0",
+        "sha256": "15c516f79fc4db228b9b697c4ecb97c07f6ade4088b4ebb0d08eddddb2c40d7a"
+      },
+      {
+        "name": "libssl.3.dylib",
+        "minimumMacOS": "12.0",
+        "sha256": "649fb97c1b83e9dcc88a3f1f5e84459b6e91d3fe9b714f2a3193d7a917100a16"
+      },
+      {
+        "name": "libcrypto.3.dylib",
+        "minimumMacOS": "12.0",
+        "sha256": "129e8829f85121344c14362d634936aacd7b8e4ea672233038e86a0db7b0ead8"
+      },
+      {
+        "name": "libtorrent-rasterbar.2.1.1.dylib",
+        "minimumMacOS": "12.0",
+        "sha256": "84bdd99508b38f36627445929e5c2328f0616985f15b966a0f0b51976031ee83"
+      }
+    ],
+    "oldestOSRuntimeVerified": false
+  },
+  "packageAudit": {
+    "scope": "Source-built torrent bridge, its transitive libraries, bundled service helper and app signature",
+    "externalOrMissingDependencies": [],
+    "nativeLibraries": [
+      {
+        "name": "libboost_system.dylib",
+        "minimumMacOS": "12.0"
+      },
+      {
+        "name": "libcrypto.3.dylib",
+        "minimumMacOS": "12.0"
+      },
+      {
+        "name": "libssl.3.dylib",
+        "minimumMacOS": "12.0"
+      },
+      {
+        "name": "libtorrent-rasterbar.2.1.1.dylib",
+        "minimumMacOS": "12.0"
+      },
+      {
+        "name": "libtorrent_flutter",
+        "minimumMacOS": "12.0"
+      },
+      {
+        "name": "peerstream-service",
+        "minimumMacOS": "11.0"
+      }
+    ],
+    "requestedMinimumMacOS": "12.0",
+    "incompatibleMinimumOSLibraries": [],
+    "deepSignatureValid": true,
+    "adHocSignature": true,
+    "helperInheritsSandbox": true,
+    "bundledPublicTrustMatchesSource": true,
+    "publicTrustSHA256": "a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505",
+    "notarizationVerified": false,
+    "distributionReady": false,
+    "reason": "Developer ID/notarization and oldest-supported-OS runtime checks are required independently of local ad-hoc signing."
+  },
+  "nativeRangeRoundsPassed": 2,
+  "nativeFaults": {
+    "corruptSeedRejected": true,
+    "suffixAndOpenEndedTailProbes": true,
+    "cancelledReadersRecover": true,
+    "incompleteHeadersBounded": true,
+    "fullDiskPreservesPreviousResumeAndReportsFailure": true,
+    "releaseStillStopsSessionOnFullDisk": true,
+    "fullDiskAtomicIndexAndRecovery": true,
+    "privateVolumeRemovalDetected": true,
+    "volumeReconnectResumeAndExactBytes": true,
+    "cancelBlockedMissingPieceReaderWithinFiveSeconds": true
+  },
+  "nativeTLS": {
+    "bundledRejectsUntrustedHTTPSWebSeed": true,
+    "frameworkRelativeBundledTrustValidated": true,
+    "untrustedRejectsUntrustedHTTPSWebSeed": true,
+    "explicitTrustedCAAllowsVerifiedHTTPSWebSeed": true
+  },
+  "scope": "Verified isolated source-built libraries in a signed app copy on the current host. Native probes use the unsigned standalone helper; this does not establish independent sandbox authorization, all-plugin portability, macOS 12 runtime support, Developer ID signing or notarization.",
+  "packagingRollback": {
+    "normalToPortableToNormalRestored": true,
+    "originalLinkerInputsRemembered": 4,
+    "normalLibraries": [
+      {
+        "name": "libboost_system.dylib",
+        "minimumMacOS": "15.0"
+      },
+      {
+        "name": "libcrypto.3.dylib",
+        "minimumMacOS": "27.0"
+      },
+      {
+        "name": "libssl.3.dylib",
+        "minimumMacOS": "27.0"
+      },
+      {
+        "name": "libtorrent-rasterbar.2.1.1.dylib",
+        "minimumMacOS": "26.0"
+      }
+    ],
+    "portableLibraries": [
+      {
+        "name": "libboost_system.dylib",
+        "minimumMacOS": "12.0"
+      },
+      {
+        "name": "libcrypto.3.dylib",
+        "minimumMacOS": "12.0"
+      },
+      {
+        "name": "libssl.3.dylib",
+        "minimumMacOS": "12.0"
+      },
+      {
+        "name": "libtorrent-rasterbar.2.1.1.dylib",
+        "minimumMacOS": "12.0"
+      }
+    ],
+    "scope": "Owned development app copy only; no global dependency files changed."
+  }
+}

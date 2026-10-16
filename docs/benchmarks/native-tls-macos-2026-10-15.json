@@ -1,0 +1,11 @@
+{
+  "date": "2026-10-15",
+  "bridgeVersion": "bridge-1.9.10+lt2.1.1",
+  "scope": "Final normal macOS debug packaged bridge, standalone Rust native probes; not signed-independent-helper or oldest-OS runtime acceptance. Generated original sources and owned disposable filesystem only.",
+  "checks": {
+    "bundledRejectsUntrustedHTTPSWebSeed": true,
+    "frameworkRelativeBundledTrustValidated": true,
+    "untrustedRejectsUntrustedHTTPSWebSeed": true,
+    "explicitTrustedCAAllowsVerifiedHTTPSWebSeed": true
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "date": "2026-10-14",
+  "platform": "macOS arm64 profile",
+  "bridgeVersion": "bridge-1.9.8+lt2.1.1",
+  "fixture": "Generated original MP3/AC3 audio and English/Hindi subtitles, 320x180",
+  "defaultLocalFirstFrameMs": 681,
+  "serviceLocalFirstFrameMs": 408,
+  "servicePhysicalFootprintBytes": 21955304,
+  "resourceCycles": {
+    "count": 30,
+    "warmedPhysicalFootprintBytes": 325911704.0,
+    "settledPhysicalFootprintBytes": 350979248.0,
+    "growthRatio": 1.0769151389543223
+  },
+  "publicColdTorrent": {
+    "firstFrameSamplesMs": [
+      7066,
+      10623
+    ],
+    "targetMs": 10000,
+    "targetMetForAllSamples": false,
+    "downloadedBytesAtLatestFirstFrame": 2359296,
+    "selectedFileBytes": 276134947,
+    "fullDownloadRequired": false
+  },
+  "metadataChangesAfterIsolationFix": [],
+  "twoHourSoakPassed": true,
+  "serviceAdoptionGatePassed": false,
+  "currentBridgeVersion": "bridge-1.9.9+lt2.1.1",
+  "earlierShortSoak": {
+    "minutes": 5,
+    "nativeAudioAndSubtitleChangesVerified": true,
+    "testPassed": true
+  },
+  "soak": {
+    "elapsedSeconds": 7200,
+    "nativeTrackChanges": 470,
+    "playingAtEnd": true
+  },
+  "latestLocalOpenCloseCycles": {
+    "cycles": 30,
+    "warmedFootprintBytes": 326321304.0,
+    "settledFootprintBytes": 358242821.3333333,
+    "growthRatio": 1.097822351596552
+  },
+  "latestSoakRunPassed": true,
+  "latestPublicColdRunPassed": false,
+  "latestPublicColdFailure": "Public cold torrent first frame took 10623 ms, exceeding the 10000 ms assertion. Controls, cycles, five-minute soak and service playback cases passed.",
+  "latestChecks": {
+    "flutterTestsPassed": 310,
+    "flutterTestsSkipped": 1,
+    "realFullVolumeTestSeparatelyPassed": true,
+    "flutterAnalyzeClean": true,
+    "macOSDebugBuildPassed": true,
+    "rustCoreTestsPassed": 3,
+    "rustFormattingAndClippyPassed": true
+  }
+}

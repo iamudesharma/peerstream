@@ -1,0 +1,57 @@
+{
+  "scope": "Source-built torrent bridge, its transitive libraries, bundled service helper and app signature",
+  "externalOrMissingDependencies": [],
+  "nativeLibraries": [
+    {
+      "name": "libboost_system.dylib",
+      "minimumMacOS": "15.0"
+    },
+    {
+      "name": "libcrypto.3.dylib",
+      "minimumMacOS": "27.0"
+    },
+    {
+      "name": "libssl.3.dylib",
+      "minimumMacOS": "27.0"
+    },
+    {
+      "name": "libtorrent-rasterbar.2.1.1.dylib",
+      "minimumMacOS": "26.0"
+    },
+    {
+      "name": "libtorrent_flutter",
+      "minimumMacOS": "12.0"
+    },
+    {
+      "name": "peerstream-service",
+      "minimumMacOS": "11.0"
+    }
+  ],
+  "requestedMinimumMacOS": "12.0",
+  "incompatibleMinimumOSLibraries": [
+    {
+      "name": "libtorrent-rasterbar.2.1.1.dylib",
+      "minimumMacOS": "26.0"
+    },
+    {
+      "name": "libcrypto.3.dylib",
+      "minimumMacOS": "27.0"
+    },
+    {
+      "name": "libssl.3.dylib",
+      "minimumMacOS": "27.0"
+    },
+    {
+      "name": "libboost_system.dylib",
+      "minimumMacOS": "15.0"
+    }
+  ],
+  "deepSignatureValid": true,
+  "adHocSignature": true,
+  "helperInheritsSandbox": true,
+  "bundledPublicTrustMatchesSource": true,
+  "publicTrustSHA256": "a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505",
+  "notarizationVerified": false,
+  "distributionReady": false,
+  "reason": "Developer ID/notarization and oldest-supported-OS runtime checks are required independently of local ad-hoc signing."
+}

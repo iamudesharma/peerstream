@@ -1,3 +1,6 @@
+import '../../core/widgets/storage_feedback.dart';
+import '../../core/image_cache.dart';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart' hide Badge;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +14,7 @@ import '../../core/widgets/section_header.dart';
 import '../../models/media_item.dart';
 import '../../models/watch_progress.dart';
 import '../../providers/app_providers.dart';
+import '../../services/experience/playback_experience.dart';
 
 class ContinueWatchingRow extends ConsumerWidget {
   const ContinueWatchingRow({super.key});
@@ -20,7 +24,21 @@ class ContinueWatchingRow extends ConsumerWidget {
     final history = ref.watch(watchHistoryProvider);
     return history.when(
       loading: () => const SizedBox.shrink(),
-      error: (_, _) => const SizedBox.shrink(),
+      error: (_, _) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: ListTile(
+          leading: const Icon(Icons.folder_off_outlined),
+          title: const Text('Continue Watching unavailable'),
+          subtitle: const Text(
+            'Check storage and retry. Saved history has not been cleared.',
+          ),
+          trailing: IconButton(
+            tooltip: 'Retry loading history',
+            onPressed: () => ref.invalidate(watchHistoryProvider),
+            icon: const Icon(Icons.refresh),
+          ),
+        ),
+      ),
       data: (entries) {
         if (entries.isEmpty) return const SizedBox.shrink();
         return Column(
@@ -52,7 +70,12 @@ class ContinueWatchingRow extends ConsumerWidget {
                   ),
                 );
                 if (confirmed == true) {
-                  await ref.read(watchHistoryProvider.notifier).clear();
+                  if (context.mounted) {
+                    await runStorageAction(
+                      context,
+                      () => ref.read(watchHistoryProvider.notifier).clear(),
+                    );
+                  }
                 }
               },
             ),
@@ -104,8 +127,12 @@ class _ContinueCard extends ConsumerWidget {
   }
 
   Future<void> _resume(BuildContext context, WidgetRef ref) async {
-    final cached = await ref.read(playbackCacheProvider).lookupWatch(entry);
-    if (cached != null) {
+    var cached = false;
+    final available = await runStorageAction(context, () async {
+      cached = await ref.read(playbackCacheProvider).lookupWatch(entry) != null;
+    }, failureMessage: 'Saved video is unavailable. Check storage and retry.');
+    if (!context.mounted || !available) return;
+    if (cached) {
       if (!context.mounted) return;
       context.push(_playerRoute());
       return;
@@ -272,15 +299,57 @@ class _ContinueCard extends ConsumerWidget {
               SizedBox(
                 width: 48,
                 height: 48,
-                child: IconButton(
-                  tooltip: 'Remove',
-                  onPressed: () =>
-                      ref.read(watchHistoryProvider.notifier).remove(entry.key),
-                  icon: const Icon(
-                    Icons.close,
-                    size: 16,
-                    color: DesignTokens.textTertiary,
-                  ),
+                child: PopupMenuButton<String>(
+                  tooltip: 'History actions',
+                  onSelected: (action) async {
+                    final history = ref.read(watchHistoryProvider.notifier);
+                    try {
+                      switch (action) {
+                        case 'restart':
+                          context.push(
+                            Uri(
+                              path: '/player/${entry.media.routeKey}',
+                              queryParameters: {
+                                'source': entry.sourceId,
+                                'resume': '0',
+                                if (entry.season != null)
+                                  'season': '${entry.season}',
+                                if (entry.episode != null)
+                                  'episode': '${entry.episode}',
+                              },
+                            ).toString(),
+                          );
+                        case 'watched':
+                          await playbackExperience.markWatched(
+                            entry.key,
+                            entry.media.routeKey,
+                          );
+                          await history.remove(entry.key);
+                        case 'remove':
+                          await history.remove(entry.key);
+                      }
+                    } catch (_) {
+                      if (!context.mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Could not save this history change. Check storage and retry.',
+                          ),
+                        ),
+                      );
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'restart', child: Text('Restart')),
+                    PopupMenuItem(
+                      value: 'watched',
+                      child: Text('Mark watched'),
+                    ),
+                    PopupMenuItem(
+                      value: 'remove',
+                      child: Text('Remove from history'),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -300,6 +369,7 @@ class _Backdrop extends StatelessWidget {
     final backdrop = resolveImageUrl(entry.backdropPath, tmdbSize: 'w780');
     if (backdrop != null) {
       return CachedNetworkImage(
+        cacheManager: artworkCacheManager,
         imageUrl: backdrop,
         fit: BoxFit.cover,
         memCacheWidth: 780,
@@ -312,6 +382,7 @@ class _Backdrop extends StatelessWidget {
     final poster = resolveImageUrl(entry.posterPath, tmdbSize: 'w342');
     if (poster != null) {
       return CachedNetworkImage(
+        cacheManager: artworkCacheManager,
         imageUrl: poster,
         fit: BoxFit.cover,
         memCacheWidth: 342,

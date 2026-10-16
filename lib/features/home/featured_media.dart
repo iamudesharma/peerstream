@@ -1,3 +1,5 @@
+import '../../core/image_cache.dart';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -35,6 +37,7 @@ class FeaturedMedia extends StatelessWidget {
                     child: image == null
                         ? const SizedBox.shrink()
                         : CachedNetworkImage(
+                            cacheManager: artworkCacheManager,
                             imageUrl: image,
                             fit: BoxFit.cover,
                             alignment: Alignment.centerRight,

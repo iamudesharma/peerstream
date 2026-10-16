@@ -1,9 +1,10 @@
+import 'empty_playback_cache.dart';
+
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:peerstream/models/media_item.dart';
 import 'package:peerstream/models/torrent_models.dart';
-import 'package:peerstream/services/playback/playback_cache.dart';
 import 'package:peerstream/services/playback/playback_cache_models.dart';
 import 'package:peerstream/services/streaming/streaming_service.dart';
 import 'package:peerstream/services/torrent/torrent_engine.dart';
@@ -21,6 +22,134 @@ final source = TorrentSource(
 );
 
 void main() {
+  test('decoder diagnostics recover only on playback and cannot mask transport errors', () async {
+    final service = StreamingService(FakeTorrentEngine(), _EmptyCacheStore());
+    try {
+      await service.start(source);
+      service.reportPlayerError('Decoder failed before fallback');
+      service.reportBuffering(true);
+      service.reportBuffering(false);
+      expect(service.state.phase, StreamingPhase.error);
+      service.markPlaying();
+      expect(service.state.phase, StreamingPhase.playing);
+      expect(service.state.message, isEmpty);
+      service.reportError('Helper stopped');
+      service.reportPlayerError('Late decoder diagnostic');
+      service.markPlaying();
+      expect(service.state.phase, StreamingPhase.error);
+      expect(service.state.message, 'Helper stopped');
+    } finally {
+      await service.dispose();
+    }
+  });
+
+  test(
+    'late decoder buffering cannot erase a terminal transfer failure',
+    () async {
+      final service = StreamingService(FakeTorrentEngine(), _EmptyCacheStore());
+      try {
+        await service.start(source);
+        service.markPlaying();
+        service.reportError('Streaming service stopped. Retry.');
+        service.reportBuffering(true, bufferedPositionMs: 42000);
+        service.reportBuffering(false, bufferedPositionMs: 43000);
+        service.markPlaying();
+        service.reportSeekStarted();
+        service.reportSeekSettled();
+        expect(service.state.phase, StreamingPhase.error);
+        expect(service.state.message, 'Streaming service stopped. Retry.');
+        await service.start(source);
+        expect(service.state.phase, isNot(StreamingPhase.error));
+      } finally {
+        await service.dispose();
+      }
+    },
+  );
+
+  test(
+    'cache clear drains prefetch before deleting and allows a fresh prefetch',
+    () async {
+      final engine = _MaintenanceEngine();
+      final held = Completer<TorrentHandle>();
+      engine.nextAdd = held;
+      final service = StreamingService(engine, _EmptyCacheStore());
+      final prefetch = service.prefetchSource(source);
+      await engine.addStarted.future;
+      final clearing = service.clearCache(
+        () async => engine.events.add('delete'),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(engine.events, isNot(contains('dispose')));
+      expect(engine.events, isNot(contains('delete')));
+      engine.nextAdd = null;
+      held.complete(const TorrentHandle('old'));
+      await Future.wait([prefetch, clearing]);
+      expect(
+        engine.events.indexOf('dispose'),
+        lessThan(engine.events.indexOf('delete')),
+      );
+      await service.prefetchSource(source);
+      expect(engine.addCalls, 2);
+      await service.dispose();
+    },
+  );
+
+  test('new playback waits for cache deletion and repeated clear requests share work', () async {
+    final engine = _MaintenanceEngine();
+    final service = StreamingService(engine, _EmptyCacheStore());
+    final deleting = Completer<void>();
+    final entered = Completer<void>();
+    var deletes = 0;
+    final first = service.clearCache(() async {
+      deletes++;
+      entered.complete();
+      await deleting.future;
+    });
+    await entered.future;
+    final second = service.clearCache(() async => deletes++);
+    expect(identical(first, second), isTrue);
+    final playback = service.start(source);
+    await Future<void>.delayed(Duration.zero);
+    expect(engine.addCalls, 0);
+    deleting.complete();
+    await Future.wait([first, second, playback]);
+    expect(deletes, 1);
+    expect(engine.addCalls, 1);
+    expect(service.state.playback?.uri.host, '127.0.0.1');
+    await service.dispose();
+  });
+
+  test(
+    'failed cache deletion releases the barrier for retry and playback',
+    () async {
+      final engine = _MaintenanceEngine();
+      final service = StreamingService(engine, _EmptyCacheStore());
+      await expectLater(
+        service.clearCache(() async => throw StateError('disk unavailable')),
+        throwsStateError,
+      );
+      await service.clearCache(() async {});
+      await service.start(source);
+      expect(service.state.playback?.uri.host, '127.0.0.1');
+      await service.dispose();
+    },
+  );
+
+  test(
+    'concurrent disposal shares one teardown while a subscriber is paused',
+    () async {
+      final service = StreamingService(FakeTorrentEngine(), _EmptyCacheStore());
+      final subscription = service.states.listen((_) {});
+      subscription.pause();
+      final first = service.dispose();
+      final second = service.dispose();
+      expect(identical(first, second), isTrue);
+      await subscription.cancel();
+      await Future.wait([first, second]).timeout(const Duration(seconds: 1));
+      await service.dispose();
+    },
+  );
+
   test(
     'slow diagnostics cannot delay the playable URL or revive a session',
     () async {
@@ -84,7 +213,7 @@ void main() {
 
   test('coordinates metadata, stream creation, and cleanup', () async {
     final engine = FakeTorrentEngine();
-    final service = StreamingService(engine);
+    final service = StreamingService(engine, _EmptyCacheStore());
     await service.start(source);
     expect(service.state.phase, StreamingPhase.buffering);
     expect(service.state.playback?.uri.host, '127.0.0.1');
@@ -120,7 +249,7 @@ void main() {
 
   test('reports unsupported platforms without adding a torrent', () async {
     final engine = FakeTorrentEngine(supported: false);
-    final service = StreamingService(engine);
+    final service = StreamingService(engine, _EmptyCacheStore());
     await service.start(source);
     expect(service.state.phase, StreamingPhase.unsupported);
     expect(engine.added, isFalse);
@@ -129,7 +258,7 @@ void main() {
 
   test('stop keeps downloaded files for faster replay', () async {
     final engine = FakeTorrentEngine();
-    final service = StreamingService(engine);
+    final service = StreamingService(engine, _EmptyCacheStore());
     await service.start(source);
     await service.stop();
     expect(engine.deleteFilesFlag, isFalse);
@@ -173,7 +302,7 @@ void main() {
 
   test('hints the resume region before the player seeks', () async {
     final engine = FakeTorrentEngine();
-    final service = StreamingService(engine);
+    final service = StreamingService(engine, _EmptyCacheStore());
     await service.start(source, startPositionMs: 30000, durationMs: 60000);
     // Halfway through a 1000-byte file.
     expect(engine.hintedByteOffset, 500);
@@ -182,7 +311,7 @@ void main() {
 
   test('prefers learned anchors over the bitrate estimate', () async {
     final engine = FakeTorrentEngine();
-    final service = StreamingService(engine);
+    final service = StreamingService(engine, _EmptyCacheStore());
     await service.start(
       source,
       startPositionMs: 30000,
@@ -279,7 +408,7 @@ void main() {
 
   test('skips the resume hint when duration is unknown', () async {
     final engine = FakeTorrentEngine();
-    final service = StreamingService(engine);
+    final service = StreamingService(engine, _EmptyCacheStore());
     await service.start(source, startPositionMs: 30000);
     expect(engine.hintedByteOffset, isNull);
     await service.dispose();
@@ -325,7 +454,25 @@ class _CapturedTimer implements Timer {
   void cancel() => isActive = false;
 }
 
-class _EmptyCacheStore extends PlaybackCacheStore {
+class _MaintenanceEngine extends FakeTorrentEngine {
+  final events = <String>[];
+  final addStarted = Completer<void>();
+  Completer<TorrentHandle>? nextAdd;
+  int addCalls = 0;
+  @override
+  Future<TorrentHandle> add(TorrentSource source) async {
+    addCalls++;
+    if (!addStarted.isCompleted) addStarted.complete();
+    final held = nextAdd;
+    if (held != null) return held.future;
+    return TorrentHandle('$addCalls');
+  }
+
+  @override
+  Future<void> dispose() async => events.add('dispose');
+}
+
+class _EmptyCacheStore extends EmptyPlaybackCache {
   @override
   Future<PlaybackCacheEntry?> completeFile(TorrentSource source) async => null;
 
@@ -339,7 +486,7 @@ class _EmptyCacheStore extends PlaybackCacheStore {
   }) async {}
 }
 
-class _CachedPlaybackStore extends PlaybackCacheStore {
+class _CachedPlaybackStore extends EmptyPlaybackCache {
   _CachedPlaybackStore(this.entry);
   final PlaybackCacheEntry entry;
 

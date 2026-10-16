@@ -1,3 +1,6 @@
+import '../../core/widgets/storage_feedback.dart';
+import '../../core/image_cache.dart';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart' hide Badge;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -68,9 +71,13 @@ class _DetailsScreenState extends ConsumerState<DetailsScreen> {
                     final wasSaved = ref
                         .read(myListProvider.notifier)
                         .isSaved(widget.mediaRef);
-                    await ref
-                        .read(myListProvider.notifier)
-                        .toggle(SavedItem.fromMediaItem(loadedItem));
+                    if (!await runStorageAction(context, () async {
+                      await ref
+                          .read(myListProvider.notifier)
+                          .toggle(SavedItem.fromMediaItem(loadedItem));
+                    })) {
+                      return;
+                    }
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(context)
                       ..hideCurrentSnackBar()
@@ -84,9 +91,13 @@ class _DetailsScreenState extends ConsumerState<DetailsScreen> {
                           action: SnackBarAction(
                             label: 'Undo',
                             onPressed: () {
-                              ref
-                                  .read(myListProvider.notifier)
-                                  .toggle(SavedItem.fromMediaItem(loadedItem));
+                              runStorageAction(context, () async {
+                                await ref
+                                    .read(myListProvider.notifier)
+                                    .toggle(
+                                      SavedItem.fromMediaItem(loadedItem),
+                                    );
+                              });
                             },
                           ),
                         ),
@@ -164,6 +175,7 @@ class _DetailsBodyState extends State<_DetailsBody> {
             children: [
               if (backdrop != null)
                 CachedNetworkImage(
+                  cacheManager: artworkCacheManager,
                   imageUrl: backdrop,
                   fit: BoxFit.cover,
                   memCacheWidth: 1280,

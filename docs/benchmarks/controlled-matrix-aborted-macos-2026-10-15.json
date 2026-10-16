@@ -1,0 +1,132 @@
+{
+  "date": "2026-10-15",
+  "exitCode": 1,
+  "completedTrials": 99,
+  "failedCase": "service:warm",
+  "failedTrial": 100,
+  "changedMetadataFiles": [],
+  "benchmarkUsableForAdoption": false,
+  "failure": "After intentional helper SIGKILL, late decoder buffering overwrote the terminal error and hid Retry. The wait for StreamingPhase.error timed out.",
+  "reproduction": "New terminal-error unit regression failed before the fix with actual phase playing; passed after reportBuffering began preserving StreamingPhase.error.",
+  "action": "Kept failed run; restarted all comparison samples after the production fix. No timeout or performance threshold was relaxed.",
+  "partialSummary": {
+    "groups": {
+      "native:local": {
+        "samples": 12,
+        "requestedSamples": 20,
+        "firstFrameMedianMs": 530.0,
+        "firstFrameP95Ms": 588,
+        "cachedPositionSeekSamples": 12,
+        "cachedPositionSeekP95Ms": 116,
+        "audioChangeP95Ms": 98,
+        "subtitleChangeP95Ms": 34,
+        "combinedPhysicalFootprintMedianBytes": 322225328.0
+      },
+      "service:warm": {
+        "samples": 12,
+        "requestedSamples": 20,
+        "firstFrameMedianMs": 529.0,
+        "firstFrameP95Ms": 580,
+        "cachedPositionSeekSamples": 12,
+        "cachedPositionSeekP95Ms": 116,
+        "audioChangeP95Ms": 64,
+        "subtitleChangeP95Ms": 31,
+        "combinedPhysicalFootprintMedianBytes": 317294464.0
+      },
+      "native:partial": {
+        "samples": 12,
+        "requestedSamples": 20,
+        "firstFrameMedianMs": 534.0,
+        "firstFrameP95Ms": 612,
+        "cachedPositionSeekSamples": 12,
+        "cachedPositionSeekP95Ms": 283,
+        "audioChangeP95Ms": 32,
+        "subtitleChangeP95Ms": 42,
+        "combinedPhysicalFootprintMedianBytes": 313558240.0
+      },
+      "service:partial": {
+        "samples": 13,
+        "requestedSamples": 20,
+        "firstFrameMedianMs": 544,
+        "firstFrameP95Ms": 607,
+        "cachedPositionSeekSamples": 12,
+        "cachedPositionSeekP95Ms": 116,
+        "audioChangeP95Ms": 51,
+        "subtitleChangeP95Ms": 31,
+        "combinedPhysicalFootprintMedianBytes": 318556032
+      },
+      "native:warm": {
+        "samples": 12,
+        "requestedSamples": 20,
+        "firstFrameMedianMs": 501.0,
+        "firstFrameP95Ms": 556,
+        "cachedPositionSeekSamples": 12,
+        "cachedPositionSeekP95Ms": 116,
+        "audioChangeP95Ms": 61,
+        "subtitleChangeP95Ms": 31,
+        "combinedPhysicalFootprintMedianBytes": 300115132.0
+      },
+      "native:http": {
+        "samples": 12,
+        "requestedSamples": 20,
+        "firstFrameMedianMs": 546.5,
+        "firstFrameP95Ms": 593,
+        "cachedPositionSeekSamples": 0,
+        "cachedPositionSeekP95Ms": null,
+        "audioChangeP95Ms": 31,
+        "subtitleChangeP95Ms": 31,
+        "combinedPhysicalFootprintMedianBytes": 320939184.0
+      },
+      "service:cold": {
+        "samples": 13,
+        "requestedSamples": 20,
+        "firstFrameMedianMs": 1251,
+        "firstFrameP95Ms": 1699,
+        "cachedPositionSeekSamples": 1,
+        "cachedPositionSeekP95Ms": 116,
+        "audioChangeP95Ms": 34,
+        "subtitleChangeP95Ms": 33,
+        "combinedPhysicalFootprintMedianBytes": 318654384
+      },
+      "native:cold": {
+        "samples": 13,
+        "requestedSamples": 20,
+        "firstFrameMedianMs": 1246,
+        "firstFrameP95Ms": 1694,
+        "cachedPositionSeekSamples": 13,
+        "cachedPositionSeekP95Ms": 281,
+        "audioChangeP95Ms": 53,
+        "subtitleChangeP95Ms": 33,
+        "combinedPhysicalFootprintMedianBytes": 313738488
+      }
+    },
+    "predeclaredBottleneck": "Cold selected-source tap to first rendered frame on the shared 1 MiB/s original local seed, Balanced profile.",
+    "predeclaredRegressionBudgets": {
+      "combinedMemoryRatio": 1.1,
+      "startupP95": "No increase exceeding both 10 percent and 250 ms",
+      "cachedPositionSeekP95Ms": 1000,
+      "trackAcknowledgementP95Ms": 500,
+      "minimumSamplesPerCase": 20
+    },
+    "coldMedianImprovementFraction": -0.0040128410914928025,
+    "serviceCombinedMemoryRatio": 1.0572424718657638,
+    "serviceCombinedMemoryRatiosByCase": {
+      "cold": 1.0156687693350521,
+      "warm": 1.0572424718657638,
+      "partial": 1.015938959218549
+    },
+    "helperCrashIsolationAndPositionRecoveryPassed": true,
+    "controlledStartupTargetsMet": false,
+    "noMaterialRegressionObserved": false,
+    "cachedPositionSeekTargetMet": false,
+    "trackAcknowledgementTargetMet": false,
+    "performanceOrIsolationGateMet": false,
+    "visualSeekLatencyVerified": false,
+    "serviceAdoptionAllowed": false,
+    "remainingAdoptionGates": [
+      "Signed distribution and oldest-supported-OS runtime checks",
+      "Compositor-frame seek validation",
+      "Independent SSD authorization for persistent background mode"
+    ]
+  }
+}

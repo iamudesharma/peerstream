@@ -2,6 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:peerstream/features/player/player_track_selectors.dart';
+import 'package:peerstream/features/player/player_control_menu.dart';
+
+Widget _inVideo(Widget child) => PlayerMenuOverlay(
+  child: Align(alignment: Alignment.bottomRight, child: child),
+);
 
 void main() {
   const audioTracks = Tracks(
@@ -21,10 +26,12 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: AudioTrackSelector(
-            tracks: audioTracks,
-            selectedId: '1',
-            onSelected: (track) async => selected = track,
+          body: _inVideo(
+            AudioTrackSelector(
+              tracks: audioTracks,
+              selectedId: '1',
+              onSelected: (track) async => selected = track,
+            ),
           ),
         ),
       ),
@@ -48,13 +55,15 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: SubtitleTrackSelector(
-              tracks: subtitleTracks,
-              selectedId: 'no',
-              onSelected: (track) async => selected = track,
-              onLoadLocal: () async {},
-              onFindOnline: () async {},
-              loadingOnline: false,
+            body: _inVideo(
+              SubtitleTrackSelector(
+                tracks: subtitleTracks,
+                selectedId: 'no',
+                onSelected: (track) async => selected = track,
+                onLoadLocal: () async {},
+                onFindOnline: (_) async {},
+                loadingOnline: false,
+              ),
             ),
           ),
         ),
@@ -93,13 +102,15 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: SubtitleTrackSelector(
-            tracks: subtitleTracks,
-            selectedId: 'no',
-            onSelected: (track) async => selected.add(track.id),
-            onLoadLocal: () async => localLoads++,
-            onFindOnline: () async => onlineSearches++,
-            loadingOnline: false,
+          body: _inVideo(
+            SubtitleTrackSelector(
+              tracks: subtitleTracks,
+              selectedId: 'no',
+              onSelected: (track) async => selected.add(track.id),
+              onLoadLocal: () async => localLoads++,
+              onFindOnline: (_) async => onlineSearches++,
+              loadingOnline: false,
+            ),
           ),
         ),
       ),

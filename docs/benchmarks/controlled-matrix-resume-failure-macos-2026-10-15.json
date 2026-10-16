@@ -1,0 +1,19 @@
+{
+  "date": "2026-10-15",
+  "completedTrials": 31,
+  "exitCode": 1,
+  "failedCase": "service:warm",
+  "failure": "Retry recovered playing state but restarted at zero: a late old-media position event cleared pending resume before the replacement URI opened.",
+  "bootstrapFailures": [
+    {
+      "trial": 26,
+      "case": "native:partial",
+      "log": "matrix-03-native-partial.log",
+      "scope": "No test body entered; Flutter Driver extension unavailable until the unchanged 180-second timeout. Root cause unresolved. Not a playback timing sample."
+    }
+  ],
+  "changedMetadataFiles": [],
+  "binaryUnchangedAtCompletion": true,
+  "benchmarkUsableForAdoption": false,
+  "action": "Resume settlement now requires the replacement media to be open and gated; asynchronous seek completions and watchdogs are scoped to the opening attempt. Fresh acceptance follows."
+}

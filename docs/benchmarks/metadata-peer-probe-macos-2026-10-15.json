@@ -1,0 +1,20 @@
+{
+  "date": "2026-10-15",
+  "scope": "One isolated original loopback peer sample per bridge; native metadata and exact HTTP Range byte verification, not compositor first frame or p95. One-second metadata-only payload observation excluded from reported startup totals.",
+  "results": [
+    {
+      "bridgeVersion": "bridge-1.9.9+lt2.1.1",
+      "metadataMs": 6419,
+      "metadataOnlyPayloadBytes": 0,
+      "rangeToBytesMs": 5484,
+      "totalMsExcludingOneSecondObservation": 11922
+    },
+    {
+      "bridgeVersion": "bridge-1.9.9-upload-probe+lt2.1.1",
+      "metadataMs": 666,
+      "metadataOnlyPayloadBytes": 0,
+      "rangeToBytesMs": 459,
+      "totalMsExcludingOneSecondObservation": 1138
+    }
+  ]
+}

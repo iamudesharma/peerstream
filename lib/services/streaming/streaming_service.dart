@@ -9,6 +9,8 @@ import '../playback/torrent_cache_identity.dart';
 import '../torrent/provider_cache.dart';
 import '../torrent/torrent_engine.dart';
 import 'playback_config.dart';
+import 'offline_download.dart';
+import '../experience/playback_experience.dart';
 import 'playback_session.dart';
 
 enum StreamingPhase {
@@ -94,13 +96,36 @@ class StreamingState {
 
 class StreamingService {
   StreamingService(this._engine, [PlaybackCacheStore? cache])
-    : _cache = cache ?? PlaybackCacheStore();
+    : _cache = cache ?? PlaybackCacheStore(),
+      _experience = playbackExperience;
+  StreamingService.withExperience(this._engine, this._cache, this._experience);
+  final PlaybackExperience _experience;
+  PlaybackExperience get experience => _experience;
   final TorrentEngine _engine;
   final PlaybackCacheStore _cache;
+  late final OfflineDownload offline = OfflineDownload(
+    _engine,
+    _cache,
+    journal: _experience,
+  );
+  bool get playbackActive => ![
+    StreamingPhase.idle,
+    StreamingPhase.stopped,
+    StreamingPhase.error,
+    StreamingPhase.unsupported,
+  ].contains(_state.phase);
+  Future<void> saveOffline(TorrentSource source) async {
+    final maintenance = _cacheMaintenance;
+    if (maintenance != null) await maintenance;
+    await releasePrefetch();
+    await offline.save(source, playbackActive: playbackActive);
+  }
+
   final _controller = StreamController<StreamingState>.broadcast();
   StreamingState _state = const StreamingState();
   TorrentHandle? _handle;
   int _generation = 0;
+  bool _playerErrorCanRecover = false;
   StreamSubscription<TorrentStats>? _statsSubscription;
   Timer? _stallTimer;
   Timer? _slowTimer;
@@ -120,6 +145,11 @@ class StreamingService {
   // it ahead of the next start so an old asynchronous teardown cannot pause a
   // newly reopened stream that reuses the same native handle.
   Future<void> _cleanupTail = Future<void>.value();
+  Future<void>? _disposing;
+  Future<void>? _cacheMaintenance;
+  int _prefetchGeneration = 0;
+  String? _requestedPrefetchKey;
+  final Set<Future<void>> _prefetchTasks = {};
 
   // ---- MediaForge player hooks (additive; default player untouched) ----
   //
@@ -160,9 +190,57 @@ class StreamingService {
     return 'unknown';
   }
 
+  Timer? _prefetchExpiry;
+  PlaybackResourceProfile resourceProfile = PlaybackResourceProfile.balanced;
+  void setResourceProfile(PlaybackResourceProfile profile) {
+    resourceProfile = profile;
+    final engine = _engine;
+    if (engine is ResourceProfileController) {
+      (engine as ResourceProfileController).setResourceProfile(profile);
+    }
+    if (profile == PlaybackResourceProfile.lowMemory) {
+      unawaited(releasePrefetch().catchError((Object _) {}));
+    }
+  }
+
+  Future<void> releasePrefetch() async {
+    _prefetchExpiry?.cancel();
+    _prefetchExpiry = null;
+    ++_prefetchGeneration;
+    _requestedPrefetchKey = null;
+    final tasks = _prefetchTasks.toList();
+    await Future.wait(tasks);
+    final handle = _prefetchHandle;
+    _prefetchHandle = null;
+    _lastPrefetchKey = null;
+    if (handle != null && handle.id != _handle?.id) {
+      await _releaseUnused(handle);
+    }
+  }
+
+  Future<void> _releaseUnused(TorrentHandle handle) async {
+    await _engine.stop(handle, deleteFiles: false);
+    final engine = _engine;
+    if (engine is InactiveHandleReleaser) {
+      await (engine as InactiveHandleReleaser).releaseInactive(handle);
+    }
+  }
+
+  Future<void> handleMemoryPressure() async {
+    if (_disposing != null) return;
+    await releasePrefetch();
+    final engine = _engine;
+    if (engine is MemoryPressureController) {
+      await (engine as MemoryPressureController).handleMemoryPressure();
+    }
+  }
+
   Future<void> warmUp() async {
     try {
+      final maintenance = _cacheMaintenance;
+      if (maintenance != null) await maintenance;
       await _engine.initialize();
+      await offline.restoreIntent();
     } catch (_) {}
   }
 
@@ -186,6 +264,13 @@ class StreamingService {
   /// a [PlaybackSessionToken] whose [PlaybackSessionToken.id] is the
   /// generation used by [start] and [cancelSession].
   PlaybackSessionToken beginSession(TorrentSource source) {
+    _playerErrorCanRecover = false;
+    final configured = _engine;
+    if (configured is ResourceProfileController) {
+      (configured as ResourceProfileController).setResourceProfile(
+        resourceProfile,
+      );
+    }
     final generation = ++_generation;
     final token = PlaybackSessionToken(generation, source, DateTime.now());
     _diagnostics = PlaybackDiagnostics(sessionId: generation)
@@ -227,6 +312,30 @@ class StreamingService {
   /// one future (deduplication); a different key releases the previous
   /// unused prefetch handle.
   Future<void> prefetchSource(TorrentSource source) async {
+    if (offline.state.value?.phase == OfflinePhase.downloading ||
+        resourceProfile == PlaybackResourceProfile.lowMemory ||
+        _disposing != null) {
+      return;
+    }
+    try {
+      final maintenance = _cacheMaintenance;
+      if (maintenance != null) await maintenance;
+    } catch (_) {}
+    final requested = torrentCacheKey(source);
+    if (_requestedPrefetchKey != requested) {
+      _requestedPrefetchKey = requested;
+      ++_prefetchGeneration;
+    }
+    final task = _prefetchSource(source, _prefetchGeneration);
+    _prefetchTasks.add(task);
+    try {
+      await task;
+    } finally {
+      _prefetchTasks.remove(task);
+    }
+  }
+
+  Future<void> _prefetchSource(TorrentSource source, int generation) async {
     if (source.inputType == TorrentInputType.directUrl) return;
     if (!_engine.isSupported) {
       await warmUp();
@@ -243,26 +352,37 @@ class StreamingService {
       try {
         // Only release if it is not the active playback handle.
         if (_handle?.id != oldHandle.id) {
-          await _engine.stop(oldHandle, deleteFiles: false);
+          await _releaseUnused(oldHandle);
         }
       } catch (_) {}
     }
     try {
       await _engine.initialize();
+      if (generation != _prefetchGeneration) return;
       final handle = await _prefetchFlight.run<TorrentHandle>(
         key,
         () => _engine.add(source),
       );
+      if (generation != _prefetchGeneration) {
+        if (_handle?.id != handle.id) {
+          await _releaseUnused(handle);
+        }
+        return;
+      }
       // Keep the most recent candidate; an older racing completion that is
       // no longer wanted is released immediately.
       if (_lastPrefetchKey != null && _lastPrefetchKey != key) {
         try {
-          await _engine.stop(handle, deleteFiles: false);
+          await _releaseUnused(handle);
         } catch (_) {}
         return;
       }
       _lastPrefetchKey = key;
       _prefetchHandle = handle;
+      _prefetchExpiry?.cancel();
+      _prefetchExpiry = Timer(const Duration(seconds: 30), () {
+        unawaited(releasePrefetch().catchError((Object _) {}));
+      });
     } catch (_) {}
   }
 
@@ -351,6 +471,8 @@ class StreamingService {
     int? durationMs,
     List<TimeBytePoint>? timeBytePoints,
   }) async {
+    final maintenance = _cacheMaintenance;
+    if (maintenance != null) await maintenance;
     final int generation;
     if (claimed != null && claimed.id == _generation) {
       generation = claimed.id;
@@ -368,6 +490,12 @@ class StreamingService {
     // `beginSession` emitted resolving synchronously, while the old native
     // stream may still be stopping. Wait for that exact queued cleanup before
     // touching a retained torrent handle.
+    if (offline.state.value != null) {
+      await offline.pause(
+        byUser: offline.userPaused,
+        message: 'Paused while playing video',
+      );
+    }
     final priorCleanup = _cleanupTail;
     await priorCleanup;
     if (stale()) return generation;
@@ -484,6 +612,7 @@ class StreamingService {
       // A prefetched handle for the same source is now owned by playback.
       try {
         if (_prefetchHandle?.id == handle.id) {
+          _prefetchExpiry?.cancel();
           _prefetchHandle = null;
           _lastPrefetchKey = null;
         }
@@ -613,17 +742,32 @@ class StreamingService {
       // Telemetry must never delay handing the ready URL to the decoder.
       unawaited(Future<void>(() => _refreshEngineDiagnostics(generation)));
       unawaited(
-        _cache.record(
-          source,
-          selected,
-          complete: false,
-          byteSize: 0,
-          preserveComplete: true,
-        ),
+        _cache
+            .record(
+              source,
+              selected,
+              complete: false,
+              byteSize: 0,
+              preserveComplete: true,
+            )
+            .catchError((Object error) {
+              if (generation == _generation) {
+                _emit(
+                  _state.copyWith(
+                    message: 'Could not update saved video. Check storage in Playback & Storage.',
+                  ),
+                );
+              }
+            }),
       );
       _startStallCheck(generation, _state.stats.downloadedBytes);
     } catch (error) {
       if (stale()) return generation;
+      unawaited(
+        _experience
+            .observe(torrentCacheKey(source), success: false)
+            .catchError((Object _) {}),
+      );
       await _queueSessionClear();
       if (stale()) return generation;
       _emit(
@@ -957,7 +1101,9 @@ class StreamingService {
       return;
     }
     if (_state.playback == null) return;
-    if (_state.phase == StreamingPhase.error) return;
+    if (_state.phase == StreamingPhase.error && !_playerErrorCanRecover) return;
+    final recoveringPlayerError = _state.phase == StreamingPhase.error;
+    _playerErrorCanRecover = false;
     _stallTimer?.cancel();
     _stallTimer = null;
     _slowTimer?.cancel();
@@ -973,6 +1119,18 @@ class StreamingService {
     }
     if (first) {
       debugPrint('[Diag] first frame ${_diagnostics?.startupSummary()}');
+      final source = _state.source;
+      if (source != null) {
+        unawaited(
+          _experience
+              .observe(
+                torrentCacheKey(source),
+                success: true,
+                startupMs: _diagnostics?.tapToFirstFrame?.inMilliseconds ?? 0,
+              )
+              .catchError((Object _) {}),
+        );
+      }
     }
     _lastProgressAt = DateTime.now();
     _startPostPlayStallMonitor();
@@ -980,6 +1138,7 @@ class StreamingService {
       _state.copyWith(
         phase: StreamingPhase.playing,
         detail: StreamingDetail.none,
+        message: recoveringPlayerError ? '' : _state.message,
         isBuffering: false,
         diagnostics: _diagnostics?.toMap(),
       ),
@@ -989,6 +1148,9 @@ class StreamingService {
   /// Accurate buffering state from media_kit `stream.buffering`.
   /// Idempotent: duplicate events do not re-emit.
   void reportBuffering(bool buffering, {int? bufferedPositionMs}) {
+    // Decoder events can arrive after a transport failure while buffered media
+    // drains. Only an explicit retry/new session may leave the terminal state.
+    if (_state.phase == StreamingPhase.error) return;
     if (buffering == _state.isBuffering &&
         bufferedPositionMs == _state.bufferedPositionMs) {
       return;
@@ -1006,6 +1168,14 @@ class StreamingService {
       if (_diagnostics?.firstFrameAt != null && wasPlayingForRebuffer) {
         _diagnostics?.rebufferEvents = (_diagnostics?.rebufferEvents ?? 0) + 1;
         debugPrint('[Diag] rebuffer #${_diagnostics?.rebufferEvents} started');
+        final source = _state.source;
+        if (source != null) {
+          unawaited(
+            _experience
+                .recordStall(torrentCacheKey(source))
+                .catchError((Object _) {}),
+          );
+        }
       }
     }
     if (!buffering && _state.isBuffering) {
@@ -1101,8 +1271,30 @@ class StreamingService {
     }
   }
 
-  void reportError(String message) =>
-      _emit(_state.copyWith(phase: StreamingPhase.error, message: message));
+  /// mpv can report decoder fallback diagnostics and then continue playing.
+  /// Only real playback progress may recover these; buffering events cannot.
+  void reportPlayerError(String message) {
+    if (_state.phase == StreamingPhase.error && !_playerErrorCanRecover) return;
+    _reportError(message, recoverableOnPlayback: true);
+  }
+
+  void reportError(String message) => _reportError(message);
+
+  void _reportError(String message, {bool recoverableOnPlayback = false}) {
+    _playerErrorCanRecover = recoverableOnPlayback;
+    final source = _state.source;
+    if (source != null &&
+        !recoverableOnPlayback &&
+        _state.phase != StreamingPhase.error &&
+        _diagnostics?.firstFrameAt == null) {
+      unawaited(
+        _experience
+            .observe(torrentCacheKey(source), success: false)
+            .catchError((Object _) {}),
+      );
+    }
+    _emit(_state.copyWith(phase: StreamingPhase.error, message: message));
+  }
 
   /// User-visible reconnecting state that keeps the last playback URI so
   /// the player does not tear down while the engine re-establishes peers.
@@ -1123,6 +1315,14 @@ class StreamingService {
     await _queueSessionClear(keepFiles: true);
     if (generation == _generation) {
       _emit(const StreamingState(phase: StreamingPhase.stopped));
+      if (_disposing == null &&
+          _cacheMaintenance == null &&
+          offline.state.value?.phase == OfflinePhase.paused &&
+          !offline.userPaused) {
+        unawaited(
+          offline.resume(playbackActive: false).catchError((Object _) {}),
+        );
+      }
     }
   }
 
@@ -1182,10 +1382,43 @@ class StreamingService {
     }
   }
 
-  Future<void> dispose() async {
+  Future<void> dispose() => _disposing ??= _dispose();
+
+  Future<void> _dispose() async {
+    await releasePrefetch();
+    await offline.dispose();
+    try {
+      await _cacheMaintenance;
+    } catch (_) {}
     await stop();
     await _engine.dispose();
     await _controller.close();
+  }
+
+  /// Serializes cache deletion with native source preparation. New playback
+  /// waits until old handles are released and files have finished clearing.
+  Future<void> clearCache(Future<void> Function() clearFiles) {
+    final active = _cacheMaintenance;
+    if (active != null) return active;
+    final work = _clearCache(clearFiles);
+    _cacheMaintenance = work;
+    work.then<void>(
+      (_) => _cacheMaintenance = null,
+      onError: (Object _, StackTrace _) => _cacheMaintenance = null,
+    );
+    return work;
+  }
+
+  Future<void> _clearCache(Future<void> Function() clearFiles) async {
+    await offline.cancel();
+    ++_prefetchGeneration;
+    final prefetching = _prefetchTasks.toList();
+    await stop();
+    await Future.wait([...prefetching, _playbackAddFlight.drain()]);
+    _prefetchHandle = null;
+    _lastPrefetchKey = null;
+    await _engine.dispose();
+    await clearFiles();
   }
 
   void _startStallCheck(int generation, int initialDownloadedBytes) {

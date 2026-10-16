@@ -44,10 +44,18 @@ key.properties
 **/*.keystore
 **/*.jks
 **/*.p12
+**/*.pfx
+**/*.p8
+**/*.key
+credentials.json
+secrets.json
+keys.json
 **/*.pem
 # Public Mozilla CA bundle vendored with libtorrent_flutter; required at build
 # time even though it is only loaded at runtime on Android.
 !packages/libtorrent_flutter/assets/cacert.pem
+# Public certificate trust store used by the packaged native bridge.
+!resources/native-trust/cacert.pem
 local.properties
 google-services.json
 GoogleService-Info.plist
@@ -73,4 +81,5 @@ app.*.map.json
 
 .commandcode/taste/
 
-
+# Rust service build artifacts
+native/peerstream-service/target/

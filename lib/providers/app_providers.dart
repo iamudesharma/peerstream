@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'settings_providers.dart';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -59,7 +61,7 @@ final sourcePolicyProvider = FutureProvider<SourcePolicy>(
   (ref) => loadSourcePolicy(),
 );
 final playbackCacheProvider = Provider<PlaybackCacheStore>(
-  (ref) => PlaybackCacheStore(),
+  (ref) => createPlaybackCache(),
 );
 final playbackCacheSummaryProvider = FutureProvider(
   (ref) => ref.watch(playbackCacheProvider).summary(),
@@ -72,6 +74,10 @@ final streamingServiceProvider = Provider<StreamingService>((ref) {
     createTorrentEngine(),
     ref.watch(playbackCacheProvider),
   );
+  ref.listen(appSettingsProvider, (_, next) {
+    final settings = next.value;
+    if (settings != null) service.setResourceProfile(settings.resourceProfile);
+  }, fireImmediately: true);
   ref.onDispose(service.dispose);
   unawaited(service.warmUp());
   return service;
@@ -205,14 +211,28 @@ final watchHistoryProvider =
     AsyncNotifierProvider<WatchHistory, List<WatchEntry>>(WatchHistory.new);
 
 class MyList extends AsyncNotifier<List<SavedItem>> {
-  @override
-  Future<List<SavedItem>> build() => readMyList();
+  MyList({
+    Future<List<SavedItem>> Function()? read,
+    Future<void> Function(List<SavedItem>)? write,
+  }) : _read = read ?? readMyList,
+       _write = write ?? writeMyList;
+  final Future<List<SavedItem>> Function() _read;
+  final Future<void> Function(List<SavedItem>) _write;
+  Future<void> _tail = Future.value();
+  Future<T> _locked<T>(Future<T> Function() action) {
+    final next = _tail.then((_) => action());
+    _tail = next.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return next;
+  }
 
-  Future<bool> toggle(SavedItem item) async {
-    final current = state.value ?? await readMyList();
+  @override
+  Future<List<SavedItem>> build() => _read();
+
+  Future<bool> toggle(SavedItem item) => _locked(() async {
+    final current = state.value ?? await _read();
     if (current.any((entry) => entry.key == item.key)) {
       final next = current.where((entry) => entry.key != item.key).toList();
-      await writeMyList(next);
+      await _write(next);
       state = AsyncData(next);
       return false;
     }
@@ -220,32 +240,32 @@ class MyList extends AsyncNotifier<List<SavedItem>> {
       item.copyWithAddedAt(DateTime.now()),
       ...current,
     ]);
-    await writeMyList(next);
+    await _write(next);
     state = AsyncData(next);
     return true;
-  }
+  });
 
-  Future<void> add(SavedItem item) async {
-    final current = state.value ?? await readMyList();
+  Future<void> add(SavedItem item) => _locked(() async {
+    final current = state.value ?? await _read();
     final next = normalizeMyList([
       item.copyWithAddedAt(DateTime.now()),
       ...current,
     ]);
-    await writeMyList(next);
+    await _write(next);
     state = AsyncData(next);
-  }
+  });
 
-  Future<void> remove(String key) async {
-    final current = state.value ?? await readMyList();
+  Future<void> remove(String key) => _locked(() async {
+    final current = state.value ?? await _read();
     final next = current.where((entry) => entry.key != key).toList();
-    await writeMyList(next);
+    await _write(next);
     state = AsyncData(next);
-  }
+  });
 
-  Future<void> clear() async {
-    await writeMyList(const []);
+  Future<void> clear() => _locked(() async {
+    await _write(const []);
     state = const AsyncData([]);
-  }
+  });
 
   bool isSaved(MediaRef media) {
     return state.value?.any((entry) => entry.media == media) ?? false;

@@ -1,7 +1,8 @@
 import 'dart:io';
 
 import 'package:dio/dio.dart';
-import 'package:path_provider/path_provider.dart';
+
+import '../storage/app_storage.dart';
 
 class SubtitleFileStore {
   final Dio _dio = Dio(
@@ -31,7 +32,7 @@ class SubtitleFileStore {
   }
 
   Future<File> _target(String name) async {
-    final support = await getApplicationSupportDirectory();
+    final support = Directory(await appStorage.dataDirectoryPath());
     final directory = Directory(
       '${support.path}${Platform.pathSeparator}subtitles',
     );

@@ -88,4 +88,14 @@ class SingleFlight {
 
   bool get isEmpty => _running.isEmpty;
   int get length => _running.length;
+
+  /// Wait for currently owned additions before releasing their native engine.
+  Future<void> drain() async {
+    await Future.wait(
+      _running.values.toList().map(
+        (future) =>
+            future.then<void>((_) {}, onError: (Object _, StackTrace _) {}),
+      ),
+    );
+  }
 }

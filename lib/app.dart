@@ -18,6 +18,8 @@ import 'features/settings/playback_screen.dart';
 import 'features/settings/settings_screen.dart';
 import 'features/settings/subtitles_screen.dart';
 import 'features/sources/source_selection_screen.dart';
+import 'features/queue/queue_screen.dart';
+import 'features/library/library_screen.dart';
 import 'models/media_item.dart';
 import 'models/torrent_models.dart';
 
@@ -47,6 +49,8 @@ final routerProvider = Provider<GoRouter>((ref) {
     errorBuilder: (_, state) => _NotFound(path: state.uri.toString()),
     routes: [
       GoRoute(path: '/', builder: (_, _) => const HomeScreen()),
+      GoRoute(path: '/library', builder: (_, _) => const LibraryScreen()),
+      GoRoute(path: '/queue', builder: (_, _) => const QueueScreen()),
       GoRoute(path: '/search', builder: (_, _) => const SearchScreen()),
       GoRoute(
         path: '/settings',
@@ -86,6 +90,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/sources/:type/:id',
         builder: (_, state) => SourceSelectionScreen(
+          resumeMs: int.tryParse(state.uri.queryParameters['resume'] ?? ''),
           season: int.tryParse(state.uri.queryParameters['season'] ?? ''),
           episode: int.tryParse(state.uri.queryParameters['episode'] ?? ''),
           mediaRef: MediaRef(

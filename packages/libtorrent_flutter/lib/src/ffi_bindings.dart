@@ -344,7 +344,8 @@ typedef LtIsFileComplete = int Function(Pointer<LtSessionOpaque>, int, int);
 
 typedef _AddWebSeedN = Int32 Function(
     Pointer<LtSessionOpaque>, Int64, Pointer<Utf8>);
-typedef LtAddWebSeed = int Function(Pointer<LtSessionOpaque>, int, Pointer<Utf8>);
+typedef LtAddWebSeed = int Function(
+    Pointer<LtSessionOpaque>, int, Pointer<Utf8>);
 
 typedef _GetCacheStateN = Int32 Function(
   Pointer<LtSessionOpaque>,
@@ -396,9 +397,22 @@ DynamicLibrary _openNativeLib() {
 }
 
 // ─── Binding loader ─────────────────────────────────────────────────────────
+typedef _GetProcessMemoryN = Int32 Function(Pointer<Uint64>, Pointer<Uint64>);
+typedef LtGetProcessMemory = int Function(Pointer<Uint64>, Pointer<Uint64>);
+
+typedef _SetSessionStatePathN = Void Function(Pointer<Utf8>);
+typedef LtSetSessionStatePath = void Function(Pointer<Utf8>);
+typedef _SaveSessionStateN = Int32 Function(
+    Pointer<LtSessionOpaque>, Pointer<Utf8>);
+typedef LtSaveSessionState = int Function(
+    Pointer<LtSessionOpaque>, Pointer<Utf8>);
+
 class TorrentBridgeBindings {
   final DynamicLibrary _lib;
 
+  late final LtGetProcessMemory getProcessMemory;
+  late final LtSetSessionStatePath setSessionStatePath;
+  late final LtSaveSessionState saveSessionState;
   late final LtCreateSession createSession;
   late final LtDestroySession destroySession;
   late final LtPollAlerts pollAlerts;
@@ -440,6 +454,15 @@ class TorrentBridgeBindings {
   late final LtAddWebSeed addWebSeed;
 
   TorrentBridgeBindings(this._lib) {
+    getProcessMemory =
+        _lib.lookupFunction<_GetProcessMemoryN, LtGetProcessMemory>(
+            'lt_get_process_memory');
+    setSessionStatePath =
+        _lib.lookupFunction<_SetSessionStatePathN, LtSetSessionStatePath>(
+            'lt_set_session_state_path');
+    saveSessionState =
+        _lib.lookupFunction<_SaveSessionStateN, LtSaveSessionState>(
+            'lt_save_session_state');
     createSession = _lib
         .lookup<NativeFunction<_CreateSessionN>>('lt_create_session')
         .asFunction<LtCreateSession>();

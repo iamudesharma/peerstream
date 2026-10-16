@@ -1,0 +1,201 @@
+{
+  "date": "2026-10-15",
+  "scope": "Native30torrent sessions/60position seeks passed, active-footprint growth assertion failed. In-app seed explicitly copied every64KiB output chunk; retained as failed evidence before removing this fixture-only copy. This is not proof that all measured growth came from the seed.",
+  "exitCode": 1,
+  "changedMetadataFiles": [],
+  "verification": [
+    {
+      "cycle": 1,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 289866928
+    },
+    {
+      "cycle": 2,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 297452720
+    },
+    {
+      "cycle": 3,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 299680944
+    },
+    {
+      "cycle": 4,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 301450416
+    },
+    {
+      "cycle": 5,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 304039088
+    },
+    {
+      "cycle": 6,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 305235120
+    },
+    {
+      "cycle": 7,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 300483760
+    },
+    {
+      "cycle": 8,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 299140272
+    },
+    {
+      "cycle": 9,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 305923248
+    },
+    {
+      "cycle": 10,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 304022704
+    },
+    {
+      "cycle": 11,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 326190256
+    },
+    {
+      "cycle": 12,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 332563632
+    },
+    {
+      "cycle": 13,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 324469936
+    },
+    {
+      "cycle": 14,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 322536624
+    },
+    {
+      "cycle": 15,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 324011184
+    },
+    {
+      "cycle": 16,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 334496944
+    },
+    {
+      "cycle": 17,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 324994224
+    },
+    {
+      "cycle": 18,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 324388016
+    },
+    {
+      "cycle": 19,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 326075568
+    },
+    {
+      "cycle": 20,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 334824624
+    },
+    {
+      "cycle": 21,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 339166384
+    },
+    {
+      "cycle": 22,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 331089072
+    },
+    {
+      "cycle": 23,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 334890160
+    },
+    {
+      "cycle": 24,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 337429680
+    },
+    {
+      "cycle": 25,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 334841008
+    },
+    {
+      "cycle": 26,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 335217840
+    },
+    {
+      "cycle": 27,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 344638640
+    },
+    {
+      "cycle": 28,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 339608752
+    },
+    {
+      "cycle": 29,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 332088496
+    },
+    {
+      "cycle": 30,
+      "backend": "native",
+      "torrentRangePlayback": true,
+      "physicalFootprintBytes": 337953968
+    },
+    {
+      "cyclesSummary": {
+        "cycles": 30,
+        "backend": "native",
+        "torrentRangePlayback": true,
+        "positionConfirmedSeeks": 60,
+        "fixtureSeedPayloadBytes": 4863960,
+        "memoryScope": "Active steady playback physical footprint; app plus helper when service-backed.",
+        "warmedFootprintBytes": 303574874.6666667,
+        "settledFootprintBytes": 336550405.3333333,
+        "growthRatio": 1.108624044407083
+      }
+    }
+  ]
+}

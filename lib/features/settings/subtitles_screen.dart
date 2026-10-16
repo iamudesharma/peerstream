@@ -1,3 +1,5 @@
+import '../../core/widgets/storage_feedback.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -32,7 +34,9 @@ class SubtitlesScreen extends ConsumerWidget {
           const SizedBox(height: 16),
           settings.when(
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (_, _) => const SizedBox.shrink(),
+            error: (_, _) => StorageRetryTile(
+              onRetry: () => ref.invalidate(appSettingsProvider),
+            ),
             data: (s) => Column(
               children: [
                 SettingsSection(
@@ -43,11 +47,12 @@ class SubtitlesScreen extends ConsumerWidget {
                       subtitle: 'Automatically fetch subtitles when available',
                       icon: Icons.subtitles_outlined,
                       value: s.autoLoadSubtitles,
-                      onChanged: (value) {
-                        ref
+                      onChanged: (value) => runStorageAction(
+                        context,
+                        () => ref
                             .read(appSettingsProvider.notifier)
-                            .setAutoLoadSubtitles(value);
-                      },
+                            .setAutoLoadSubtitles(value),
+                      ),
                     ),
                   ],
                 ),
@@ -63,13 +68,14 @@ class SubtitlesScreen extends ConsumerWidget {
                         for (final lang in AppSettings.subtitleLanguages)
                           SelectOption(value: lang, label: lang),
                       ],
-                      onChanged: (value) {
-                        ref
+                      onChanged: (value) => runStorageAction(
+                        context,
+                        () => ref
                             .read(appSettingsProvider.notifier)
                             .setSubtitleLanguage(
                               value == 'None' ? null : value,
-                            );
-                      },
+                            ),
+                      ),
                     ),
                   ],
                 ),
@@ -88,11 +94,12 @@ class SubtitlesScreen extends ConsumerWidget {
                             label: AppSettings.subtitleTextScaleLabel(scale),
                           ),
                       ],
-                      onChanged: (value) {
-                        ref
+                      onChanged: (value) => runStorageAction(
+                        context,
+                        () => ref
                             .read(appSettingsProvider.notifier)
-                            .setSubtitleTextScale(value);
-                      },
+                            .setSubtitleTextScale(value),
+                      ),
                     ),
                     const Divider(height: 1),
                     SettingsSelect<SubtitleBackgroundStyle>(
@@ -106,11 +113,12 @@ class SubtitlesScreen extends ConsumerWidget {
                             label: AppSettings.subtitleBackgroundLabel(style),
                           ),
                       ],
-                      onChanged: (value) {
-                        ref
+                      onChanged: (value) => runStorageAction(
+                        context,
+                        () => ref
                             .read(appSettingsProvider.notifier)
-                            .setSubtitleBackground(value);
-                      },
+                            .setSubtitleBackground(value),
+                      ),
                     ),
                   ],
                 ),
