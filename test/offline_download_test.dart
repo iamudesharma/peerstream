@@ -1,11 +1,12 @@
 import 'dart:async';
 
+import 'empty_playback_cache.dart';
+
 import 'package:peerstream/services/experience/playback_experience.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:peerstream/models/media_item.dart';
 import 'package:peerstream/models/torrent_models.dart';
-import 'package:peerstream/services/playback/playback_cache.dart';
 import 'package:peerstream/services/playback/playback_cache_models.dart';
 import 'package:peerstream/services/playback/torrent_cache_identity.dart';
 import 'package:peerstream/services/streaming/offline_download.dart';
@@ -255,7 +256,7 @@ class _Engine
   ) => throw UnimplementedError('Not used by offline coordinator');
 }
 
-class _Cache extends PlaybackCacheStore {
+class _Cache extends EmptyPlaybackCache {
   bool failRecord = false;
   int budget = 2048;
   PlaybackCacheEntry? row;

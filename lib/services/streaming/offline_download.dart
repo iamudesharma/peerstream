@@ -8,6 +8,8 @@ import '../playback/torrent_cache_identity.dart';
 import '../playback/playback_cache_models.dart';
 import '../experience/playback_experience.dart';
 import '../torrent/torrent_engine.dart';
+import 'direct_video_transfer.dart';
+import '../torrent/source_policy_loader.dart';
 
 enum OfflinePhase { preparing, downloading, paused, complete, error }
 
@@ -38,16 +40,24 @@ class OfflineDownload {
     if (_journal.loadError != null) return;
     _restored = true;
     final raw = _journal.section('offlineIntent');
-    if (raw.isNotEmpty && state.value == null) {
+    if (state.value != null) return;
+    TorrentSource? source;
+    if (raw.isNotEmpty) {
       try {
-        final entry = PlaybackCacheEntry.fromJson(raw);
-        userPaused = true;
-        state.value = OfflineJob(
-          entry.source,
-          OfflinePhase.paused,
-          message: 'Resume your saved request',
-        );
+        source = PlaybackCacheEntry.fromJson(raw).source;
       } catch (_) {}
+    }
+    source ??= (await cache.entries())
+        .where((entry) => entry.pinned && !entry.complete)
+        .firstOrNull
+        ?.source;
+    if (source != null && state.value == null) {
+      userPaused = true;
+      state.value = OfflineJob(
+        source,
+        OfflinePhase.paused,
+        message: 'Resume your saved request',
+      );
     }
   }
 
@@ -77,6 +87,7 @@ class OfflineDownload {
     });
   }
 
+  final _direct = DirectVideoTransfer();
   final TorrentEngine engine;
   final PlaybackCacheStore cache;
   final state = ValueNotifier<OfflineJob?>(null);
@@ -99,7 +110,7 @@ class OfflineDownload {
   Future<void> save(TorrentSource source, {required bool playbackActive}) =>
       _serialize(() async {
         if (_disposed) return;
-        if (source.inputType == TorrentInputType.directUrl ||
+        if (source.inputType != TorrentInputType.directUrl &&
             engine is! OfflineDownloadController) {
           throw StateError(
             'Offline saving is available for torrent sources on this device.',
@@ -135,6 +146,10 @@ class OfflineDownload {
     final generation = ++_generation;
     _file = null;
     state.value = OfflineJob(source, OfflinePhase.preparing);
+    if (source.inputType == TorrentInputType.directUrl) {
+      await _startDirect(source, generation);
+      return;
+    }
     final cancel = Completer<void>();
     _cancelPreparation = cancel;
     try {
@@ -221,6 +236,137 @@ class OfflineDownload {
         OfflinePhase.error,
         message: error.toString(),
       );
+      rethrow;
+    }
+  }
+
+  Future<void> _startDirect(TorrentSource source, int generation) async {
+    try {
+      if (!(await loadSourcePolicy()).allows(source)) {
+        throw StateError('This source is blocked by your source settings.');
+      }
+      final existing = await cache.completeFile(source);
+      if (generation != _generation) return;
+      if (existing != null) {
+        await cache.setPinned(torrentCacheKey(source), true);
+        await _intent(null);
+        state.value = OfflineJob(
+          source,
+          OfflinePhase.complete,
+          bytes: existing.file.size,
+          total: existing.file.size,
+        );
+        return;
+      }
+      final limit = (await cache.preferences()).maxCacheBytes;
+      final reserved = (await cache.entries())
+          .where((e) => e.pinned && e.cacheKey != torrentCacheKey(source))
+          .fold<int>(0, (sum, e) => sum + e.file.size);
+      final budget = limit - reserved;
+      if (budget <= 0) {
+        throw StateError('Remove a saved video or increase the storage limit.');
+      }
+      final extension =
+          RegExp(
+                r'\.(mp4|mkv|webm|mov|avi|m4v|ts|mpeg|mpg)$',
+                caseSensitive: false,
+              )
+              .firstMatch(source.fileNameHint ?? source.uri.path)
+              ?.group(1)
+              ?.toLowerCase() ??
+          'video';
+      final name = 'video.$extension';
+      final directory = await cache.directoryPathFor(source);
+      _file = TorrentFileEntry(
+        index: 0,
+        name: name,
+        size: 0,
+        isStreamable: true,
+      );
+      await cache.record(
+        source,
+        _file!,
+        complete: false,
+        byteSize: 0,
+        preserveComplete: true,
+      );
+      await cache.setPinned(torrentCacheKey(source), true);
+      if (generation != _generation) return;
+      var lastUpdate = DateTime.fromMillisecondsSinceEpoch(0);
+      unawaited(
+        _direct
+            .download(
+              source.uri,
+              '$directory/$name',
+              maxBytes: budget,
+              headers: source.headers,
+              progress: (bytes, total) {
+                if (generation != _generation || _disposed) return;
+                _file = TorrentFileEntry(
+                  index: 0,
+                  name: name,
+                  size: total,
+                  isStreamable: true,
+                );
+                final now = DateTime.now();
+                if (now.difference(lastUpdate).inMilliseconds < 200 &&
+                    bytes != total) {
+                  return;
+                }
+                lastUpdate = now;
+                state.value = OfflineJob(
+                  source,
+                  OfflinePhase.downloading,
+                  bytes: bytes,
+                  total: total,
+                );
+              },
+            )
+            .then(
+              (bytes) => _serialize(() async {
+                if (generation != _generation || _disposed) return;
+                _file = TorrentFileEntry(
+                  index: 0,
+                  name: name,
+                  size: bytes,
+                  isStreamable: true,
+                );
+                await cache.record(
+                  source,
+                  _file!,
+                  complete: true,
+                  byteSize: bytes,
+                );
+                await _intent(null);
+                state.value = OfflineJob(
+                  source,
+                  OfflinePhase.complete,
+                  bytes: bytes,
+                  total: bytes,
+                );
+              }),
+            )
+            .catchError((Object error) async {
+              if (generation != _generation || _disposed) return;
+              state.value = OfflineJob(
+                source,
+                OfflinePhase.error,
+                message: error is StateError
+                    ? error.message.toString()
+                    : 'Download interrupted. Reconnect storage or retry.',
+              );
+            }),
+      );
+    } catch (error) {
+      if (generation == _generation) {
+        state.value = OfflineJob(
+          source,
+          OfflinePhase.error,
+          message: error is StateError
+              ? error.message.toString()
+              : 'Could not start the download. Check the source and storage.',
+        );
+      }
       rethrow;
     }
   }
@@ -344,6 +490,7 @@ class OfflineDownload {
 
   Future<void> _release() async {
     ++_generation;
+    await _direct.cancel();
     _poll?.cancel();
     _poll = null;
     await _stats?.cancel();

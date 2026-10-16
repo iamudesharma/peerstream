@@ -40,6 +40,7 @@ import 'package:peerstream/services/playback/playback_cache_models.dart';
 import 'package:peerstream/services/playback/torrent_cache_identity.dart';
 import 'package:peerstream/services/settings/settings_store.dart';
 import 'package:peerstream/services/streaming/streaming_service.dart';
+import 'package:peerstream/services/streaming/offline_download.dart';
 import 'package:peerstream/services/torrent/bundled_torrent_api.dart';
 import 'package:peerstream/services/torrent/native_torrent_engine.dart';
 import 'package:peerstream/services/torrent/source_policy.dart';
@@ -427,9 +428,7 @@ void main() {
             .bytes,
       );
     }
-    final server = (await tester.runAsync(
-      () => HttpServer.bind(InternetAddress.loopbackIPv4, 0),
-    ))!;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final torrent = _bencode({
       'info': {
         'name': 'video.mkv',
@@ -1298,17 +1297,15 @@ class _MatrixVideoSeed {
   static Future<_MatrixVideoSeed> start(
     WidgetTester tester,
     String fixture,
-  ) async {
+  ) async => (await tester.runAsync(() => fromFile(fixture)))!;
+
+  static Future<_MatrixVideoSeed> fromFile(String fixture) async {
     if (_sharedFixturePath != fixture || _sharedFixtureBytes == null) {
-      _sharedFixtureBytes = (await tester.runAsync(
-        () => File(fixture).readAsBytes(),
-      ))!;
+      _sharedFixtureBytes = await File(fixture).readAsBytes();
       _sharedFixturePath = fixture;
     }
     final bytes = _sharedFixtureBytes!;
-    final server = (await tester.runAsync(
-      () => HttpServer.bind(InternetAddress.loopbackIPv4, 0),
-    ))!;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final pieces = <int>[];
     for (var offset = 0; offset < bytes.length; offset += 256 * 1024) {
       pieces.addAll(
@@ -1432,5 +1429,118 @@ class _MatrixVideoSeed {
     releasePartial();
     await subscription.cancel();
     await server.close(force: true);
+  }
+}
+
+/// Shared legal, generated fixture for native download and external-player QA.
+class VideoActionFixture {
+  VideoActionFixture._(this._seed);
+  final _MatrixVideoSeed _seed;
+  late final TorrentSource torrent = _seed.source('cold');
+  late final TorrentSource direct = _seed.source('http');
+  int get size => _seed.bytes.length;
+  String get digest => sha256.convert(_seed.bytes).toString();
+  Future<void> close() => _seed.close();
+}
+
+Future<VideoActionFixture> createVideoActionFixture([
+  String fixture = _fixturePath,
+]) async => VideoActionFixture._(await _MatrixVideoSeed.fromFile(fixture));
+
+Future<void> runVideoDownloadChecks(WidgetTester tester) async {
+  await tester.runAsync(appStorage.initialize);
+  final fixture = (await tester.runAsync(createVideoActionFixture))!;
+  final cache = await _newCache(tester);
+  final engine = NativeTorrentEngine(
+    cache: cache,
+    sessionCacheDirectory: () async => cache.root.path,
+  );
+  final service = StreamingService.withExperience(
+    engine,
+    cache,
+    PlaybackExperience(read: () async => {}, write: (_) async {}),
+  );
+  _Session? player;
+  try {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: Text('Verifying video downloads')),
+      ),
+    );
+    await tester.runAsync(() => service.saveOffline(fixture.torrent));
+    await _waitUntil(
+      tester,
+      () =>
+          service.offline.state.value?.phase == OfflinePhase.complete ||
+          service.offline.state.value?.phase == OfflinePhase.error,
+      timeout: const Duration(seconds: 90),
+    );
+    expect(
+      service.offline.state.value?.phase,
+      OfflinePhase.complete,
+      reason: service.offline.state.value?.message,
+    );
+    final torrentFile = await tester.runAsync(
+      () => cache.completeFile(fixture.torrent),
+    );
+    expect(torrentFile, isNotNull);
+    expect(
+      await tester.runAsync(
+        () async => sha256
+            .convert(await File(torrentFile!.filePath).readAsBytes())
+            .toString(),
+      ),
+      fixture.digest,
+    );
+    await tester.runAsync(service.offline.cancel);
+    await tester.runAsync(() => service.saveOffline(fixture.direct));
+    await _waitUntil(
+      tester,
+      () =>
+          service.offline.state.value?.phase == OfflinePhase.complete ||
+          service.offline.state.value?.phase == OfflinePhase.error,
+      timeout: const Duration(seconds: 30),
+    );
+    expect(
+      service.offline.state.value?.phase,
+      OfflinePhase.complete,
+      reason: service.offline.state.value?.message,
+    );
+    final directFile = await tester.runAsync(
+      () => cache.completeFile(fixture.direct),
+    );
+    expect(directFile, isNotNull);
+    expect(
+      await tester.runAsync(
+        () async => sha256
+            .convert(await File(directFile!.filePath).readAsBytes())
+            .toString(),
+      ),
+      fixture.digest,
+    );
+    await tester.runAsync(fixture.close);
+    // No server remains: actual default-player rendering must use the save.
+    player = await _mount(
+      tester,
+      fixture.direct,
+      engine,
+      cache: cache,
+      sharedService: service,
+    );
+    await _waitUntil(
+      tester,
+      () => player!.visiblePlaybackMs != null,
+      timeout: const Duration(seconds: 15),
+    );
+    expect(service.state.origin, PlaybackOrigin.cache);
+    expect(player.player.state.playing, isTrue);
+    debugPrint(
+      '[VideoActionsVerification] ${jsonEncode({'torrentDownloadedBytes': torrentFile!.file.size, 'directDownloadedBytes': directFile!.file.size, 'exactSHA256': fixture.digest, 'offlineFirstFrameMs': player.visiblePlaybackMs, 'offlineOrigin': service.state.origin.name, 'sourceServerClosed': true, 'testRoot': cache.root.path})}',
+    );
+  } finally {
+    if (player != null) await player.close(tester);
+    await service.dispose();
+    await fixture.close();
+    if (await cache.root.exists()) await cache.root.delete(recursive: true);
   }
 }

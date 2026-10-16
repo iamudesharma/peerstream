@@ -19,6 +19,33 @@ String torrentCacheKey(TorrentSource source) {
       return infoHash;
     }
   }
+  if (source.inputType == TorrentInputType.directUrl) {
+    // A shared HTTP endpoint can serve different videos for different addon
+    // credentials or episodes. Never replay a save from another request.
+    final headers =
+        source.headers.entries
+            .map((entry) => [entry.key.toLowerCase(), entry.value])
+            .toList()
+          ..sort((a, b) {
+            final key = a[0].compareTo(b[0]);
+            return key != 0 ? key : a[1].compareTo(b[1]);
+          });
+    return sha256
+        .convert(
+          utf8.encode(
+            jsonEncode([
+              source.inputType.name,
+              source.uri.toString(),
+              source.id,
+              source.content.routeKey,
+              source.seasonNumber,
+              source.episodeNumber,
+              headers,
+            ]),
+          ),
+        )
+        .toString();
+  }
   return sha256
       .convert(
         utf8.encode('${source.inputType.name}|${source.uri}|${source.id}'),
