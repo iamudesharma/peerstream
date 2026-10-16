@@ -6,8 +6,11 @@ import '../../models/media_item.dart';
 import '../../models/watch_progress.dart';
 import 'playback_cache_models.dart';
 import 'torrent_cache_identity.dart';
+import '../storage/app_storage.dart';
 
 class PlaybackCacheStore {
+  PlaybackCacheStore({AppStorage? storage});
+
   final Map<String, PlaybackCacheEntry> _entries = {};
   PlaybackPreferences _preferences = const PlaybackPreferences(
     maxCacheBytes: 1024 * 1024 * 1024,
@@ -110,6 +113,11 @@ class PlaybackCacheStore {
         await prefs.setInt('peerstream-pref-max-bytes', value.maxCacheBytes);
       } catch (_) {}
     }
+  }
+
+  Future<void> setPinned(String cacheKey, bool pinned) async {
+    final entry = _entries[cacheKey];
+    if (entry != null) _entries[cacheKey] = entry.copyWith(pinned: pinned);
   }
 
   Future<void> remove(String cacheKey) async => _entries.remove(cacheKey);

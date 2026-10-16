@@ -19,21 +19,25 @@ class IncrementalProviderState {
     required this.status,
     this.sources = const [],
     this.error,
+    this.elapsedMs,
   });
 
   final String name;
   final ProviderStatus status;
   final List<TorrentSource> sources;
+  final int? elapsedMs;
   final String? error;
 
   IncrementalProviderState copyWith({
     ProviderStatus? status,
     List<TorrentSource>? sources,
     String? error,
+    int? elapsedMs,
   }) => IncrementalProviderState(
     name: name,
     status: status ?? this.status,
     sources: sources ?? this.sources,
+    elapsedMs: elapsedMs ?? this.elapsedMs,
     error: error ?? this.error,
   );
 }
@@ -81,6 +85,7 @@ Stream<IncrementalProviderState> searchProvidersIncremental(
   }
   for (var i = 0; i < providers.length; i++) {
     final provider = providers[i];
+    final watch = Stopwatch()..start();
     final token = CancelToken();
     if (cancelTokens != null) {
       if (i < cancelTokens.length) {
@@ -97,7 +102,13 @@ Stream<IncrementalProviderState> searchProvidersIncremental(
             episodeNumber: episodeNumber,
             cancelToken: token,
           )
-          .timeout(timeout)
+          .timeout(
+            timeout,
+            onTimeout: () {
+              token.cancel('Source lookup timed out');
+              throw TimeoutException('Source lookup timed out');
+            },
+          )
           .then((sources) {
             final seen = <String>{};
             final deduped = sources
@@ -113,6 +124,7 @@ Stream<IncrementalProviderState> searchProvidersIncremental(
               controller.add(
                 IncrementalProviderState(
                   name: provider.name,
+                  elapsedMs: watch.elapsedMilliseconds,
                   status: ProviderStatus.ready,
                   sources: deduped,
                 ),
@@ -124,6 +136,7 @@ Stream<IncrementalProviderState> searchProvidersIncremental(
               controller.add(
                 IncrementalProviderState(
                   name: provider.name,
+                  elapsedMs: watch.elapsedMilliseconds,
                   status: ProviderStatus.error,
                   error: _friendlyProviderError(error),
                 ),

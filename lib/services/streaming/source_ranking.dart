@@ -1,5 +1,8 @@
 import 'dart:io';
 
+import '../experience/playback_experience.dart';
+import '../playback/torrent_cache_identity.dart';
+
 import '../../models/torrent_models.dart';
 
 /// Playability ranking: platform compatibility and observed reliability
@@ -25,6 +28,11 @@ int compareRankedSources(TorrentSource a, TorrentSource b) {
   final aCompat = _compatibilityPenalty(a);
   final bCompat = _compatibilityPenalty(b);
   if (aCompat != bCompat) return aCompat.compareTo(bCompat);
+
+  final reliability = playbackExperience
+      .score(torrentCacheKey(b))
+      .compareTo(playbackExperience.score(torrentCacheKey(a)));
+  if (reliability != 0) return reliability;
 
   final seedsCmp = (b.seeds ?? -1).compareTo(a.seeds ?? -1);
   if (seedsCmp != 0) return seedsCmp;

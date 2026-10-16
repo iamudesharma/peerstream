@@ -3,7 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
+
+import '../storage/app_storage_native.dart';
 
 import '../../models/torrent_models.dart';
 import '../../models/media_item.dart';
@@ -12,6 +13,9 @@ import 'playback_cache_models.dart';
 import 'torrent_cache_identity.dart';
 
 class PlaybackCacheStore {
+  PlaybackCacheStore({AppStorage? storage}) : _storage = storage ?? appStorage;
+
+  final AppStorage _storage;
   Future<void> _serial = Future.value();
 
   static const _directoryName = 'peerstream-playback-v1';
@@ -179,6 +183,7 @@ class PlaybackCacheStore {
         old.file.size == file.size &&
         old.file.name == file.name;
     state.entries[key] = PlaybackCacheEntry(
+      pinned: old?.pinned ?? false,
       cacheKey: key,
       source: source,
       file: file,
@@ -236,10 +241,20 @@ class PlaybackCacheStore {
     await _write(state);
   });
 
+  Future<void> setPinned(String cacheKey, bool pinned) => _locked(() async {
+    final state = await _read();
+    final entry = state.entries[cacheKey];
+    if (entry == null) throw StateError('Saved video entry was not found');
+    state.entries[cacheKey] = entry.copyWith(pinned: pinned);
+    await _write(state);
+  });
+
   Future<void> clear() => _locked(() async {
+    final state = await _read();
     final root = await _root();
     if (await root.exists()) await root.delete(recursive: true);
-    await _write(_CacheState.empty());
+    state.entries.clear();
+    await _write(state);
   });
 
   Future<void> _prune(_CacheState state, {String? protectedKey}) async {
@@ -248,7 +263,7 @@ class PlaybackCacheStore {
       ..sort((a, b) => a.lastUsedAt.compareTo(b.lastUsedAt));
     for (final entry in ordered) {
       if (used <= state.preferences.maxCacheBytes) break;
-      if (entry.cacheKey == protectedKey) continue;
+      if (entry.cacheKey == protectedKey || entry.pinned) continue;
       final root = await _root();
       final target = Directory(
         '${root.path}${Platform.pathSeparator}${entry.cacheKey}',
@@ -261,15 +276,15 @@ class PlaybackCacheStore {
   }
 
   Future<_CacheState> _read() async {
-    try {
-      final file = await _indexFile();
-      if (!await file.exists()) return _CacheState.empty();
-      final raw = jsonDecode(await file.readAsString());
-      if (raw is! Map) return _CacheState.empty();
-      return _CacheState.fromJson(Map<String, dynamic>.from(raw));
-    } catch (_) {
-      return _CacheState.empty();
+    final file = await _indexFile();
+    if (!await file.exists()) return _CacheState.empty();
+    final raw = jsonDecode(await file.readAsString());
+    if (raw is! Map) {
+      throw const FormatException(
+        'Saved cache index is invalid; existing data was preserved.',
+      );
     }
+    return _CacheState.fromJson(Map<String, dynamic>.from(raw));
   }
 
   Future<void> _write(_CacheState state) async {
@@ -286,7 +301,7 @@ class PlaybackCacheStore {
   }
 
   Future<Directory> _root() async {
-    final support = await getApplicationSupportDirectory();
+    final support = Directory(await _storage.dataDirectoryPath());
     final target = Directory(
       '${support.path}${Platform.pathSeparator}$_directoryName',
     );
@@ -310,7 +325,7 @@ class PlaybackCacheStore {
   /// Old cache location: `.../Library/Caches/<app>/<directoryName>`.
   Future<String?> _legacyRootPath() async {
     try {
-      final cache = await getApplicationCacheDirectory();
+      final cache = Directory(await _storage.cacheDirectoryPath());
       return '${cache.path}${Platform.pathSeparator}$_directoryName';
     } catch (_) {
       return null;
@@ -329,6 +344,14 @@ class PlaybackCacheStore {
     if (await File(stored).exists()) return stored;
 
     var candidate = stored;
+    final marker =
+        '${Platform.pathSeparator}$_directoryName${Platform.pathSeparator}';
+    final offset = stored.indexOf(marker);
+    if (offset >= 0) {
+      final root = await _root();
+      candidate = '${root.path}${stored.substring(offset + marker.length - 1)}';
+      if (await File(candidate).exists()) return candidate;
+    }
     final legacyPath = await _legacyRootPath();
     if (legacyPath != null && stored.startsWith(legacyPath)) {
       final root = await _root();
@@ -355,7 +378,7 @@ class PlaybackCacheStore {
   }
 
   Future<File> _indexFile() async {
-    final support = await getApplicationSupportDirectory();
+    final support = Directory(await _storage.dataDirectoryPath());
     await support.create(recursive: true);
     return File('${support.path}${Platform.pathSeparator}$_indexName');
   }

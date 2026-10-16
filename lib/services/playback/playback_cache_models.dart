@@ -179,8 +179,10 @@ class PlaybackCacheEntry {
     required this.byteSize,
     required this.lastUsedAt,
     this.timeBytePoints = const [],
+    this.pinned = false,
   });
 
+  final bool pinned;
   final String cacheKey;
   final TorrentSource source;
   final TorrentFileEntry file;
@@ -199,12 +201,14 @@ class PlaybackCacheEntry {
       source.episodeNumber == entry.episode;
 
   PlaybackCacheEntry copyWith({
+    bool? pinned,
     bool? complete,
     int? byteSize,
     DateTime? lastUsedAt,
     List<TimeBytePoint>? timeBytePoints,
     String? filePath,
   }) => PlaybackCacheEntry(
+    pinned: pinned ?? this.pinned,
     cacheKey: cacheKey,
     source: source,
     file: file,
@@ -216,6 +220,7 @@ class PlaybackCacheEntry {
   );
 
   Map<String, dynamic> toJson() => {
+    'pinned': pinned,
     'cacheKey': cacheKey,
     'source': {
       'id': source.id,
@@ -267,6 +272,7 @@ class PlaybackCacheEntry {
       }
     }
     return PlaybackCacheEntry(
+      pinned: json['pinned'] == true,
       cacheKey: json['cacheKey'] as String? ?? '',
       source: TorrentSource(
         id: source['id'] as String? ?? '',
