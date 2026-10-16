@@ -18,6 +18,10 @@ import '../../services/streaming/source_ranking.dart';
 import '../../services/torrent/addon_provider.dart';
 import '../../services/torrent/source_discovery.dart';
 import '../player/player_backend.dart';
+import '../player/external_player_screen.dart';
+import '../../services/video/desktop_video.dart';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 enum _SortMode { seeds, size }
 
@@ -770,33 +774,60 @@ class _SourceCard extends ConsumerWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              if (source.inputType != TorrentInputType.directUrl)
-                IconButton(
-                  tooltip: 'Save for offline',
-                  icon: const Icon(Icons.download_outlined),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.download_outlined),
+                label: const Text('Download'),
+                onPressed: kIsWeb
+                    ? null
+                    : () async {
+                        try {
+                          final service = ref.read(streamingServiceProvider);
+                          final pending = service.saveOffline(source);
+                          // Preparation may wait for metadata. Show Downloads now so
+                          // Pause/Cancel remain accessible while that work runs.
+                          if (context.mounted) context.push('/downloads');
+                          await pending;
+                        } catch (_) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Could not start the download. Check the source and storage.',
+                                ),
+                              ),
+                            );
+                          }
+                        }
+                      },
+              ),
+              const SizedBox(width: 8),
+              if (const DesktopVideo().supported)
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('External player'),
                   onPressed: () async {
                     try {
-                      await ref
-                          .read(streamingServiceProvider)
-                          .saveOffline(source);
+                      final player = await chooseExternalVideoPlayer(context);
+                      if (player != null && context.mounted) {
+                        context.push(
+                          '/external-player',
+                          extra: ExternalPlayerRequest(source, player),
+                        );
+                      }
+                    } catch (_) {
                       if (context.mounted) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
                             content: Text(
-                              'Offline save started. Manage it in Playback & Storage.',
+                              'Could not list video players. Try choosing an installed application.',
                             ),
                           ),
-                        );
-                      }
-                    } catch (error) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Could not save: $error')),
                         );
                       }
                     }
                   },
                 ),
+              const SizedBox(width: 8),
               IconButton(
                 tooltip: 'Add to queue',
                 icon: const Icon(Icons.playlist_add),

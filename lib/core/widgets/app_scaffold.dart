@@ -42,6 +42,11 @@ class AppScaffold extends StatelessWidget {
                     onPressed: () => _navigate(context, 1),
                     icon: const Icon(Icons.search_rounded),
                   ),
+                IconButton(
+                  tooltip: 'Downloads',
+                  onPressed: () => context.push('/downloads'),
+                  icon: const Icon(Icons.download_outlined),
+                ),
                 const SizedBox(width: 8),
               ],
             ),
@@ -98,6 +103,19 @@ class AppScaffold extends StatelessWidget {
                               onTap: () => _navigate(context, i),
                             ),
                           ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
+                          child: _NavigationItem(
+                            label: 'Downloads',
+                            icon: Icons.download_outlined,
+                            selected: false,
+                            extended: extended,
+                            onTap: () => context.push('/downloads'),
+                          ),
+                        ),
                         const Spacer(),
                         if (extended)
                           const Padding(

@@ -11,6 +11,8 @@ import 'features/details/details_screen.dart';
 import 'features/home/category_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/player/player_screen.dart';
+import 'features/player/external_player_screen.dart';
+import 'features/downloads/downloads_screen.dart';
 import 'features/search/search_screen.dart';
 import 'features/settings/about_screen.dart';
 import 'features/settings/addons_screen.dart';
@@ -50,6 +52,15 @@ final routerProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(path: '/', builder: (_, _) => const HomeScreen()),
       GoRoute(path: '/library', builder: (_, _) => const LibraryScreen()),
+      GoRoute(path: '/downloads', builder: (_, _) => const DownloadsScreen()),
+      GoRoute(
+        path: '/external-player',
+        builder: (_, state) => state.extra is ExternalPlayerRequest
+            ? ExternalPlayerScreen(
+                request: state.extra as ExternalPlayerRequest,
+              )
+            : const _NotFound(),
+      ),
       GoRoute(path: '/queue', builder: (_, _) => const QueueScreen()),
       GoRoute(path: '/search', builder: (_, _) => const SearchScreen()),
       GoRoute(
