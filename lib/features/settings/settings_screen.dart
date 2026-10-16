@@ -53,6 +53,12 @@ class SettingsScreen extends ConsumerWidget {
             subtitle: 'Cache and playback preferences',
             children: [
               SettingsAction(
+                title: 'Downloads',
+                subtitle: 'Download videos, play saved files, or save a copy',
+                icon: Icons.download_outlined,
+                onTap: () => context.push('/downloads'),
+              ),
+              SettingsAction(
                 title: 'Playback & storage',
                 subtitle: 'Cache limit, saved video, language preferences',
                 icon: Icons.play_circle_outline,

@@ -1523,6 +1523,23 @@ class _DefaultPlayerScreenState extends ConsumerState<DefaultPlayerScreen> {
     initialData: _player.state.rate,
     builder: (context, snapshot) => PlayerSettingsMenu(
       additionalControls: [
+        if (_service.state.source != null)
+          ListTile(
+            leading: const Icon(Icons.download_outlined),
+            title: const Text('Download video'),
+            subtitle: const Text('Starts after playback stops'),
+            onTap: () async {
+              try {
+                await _service.saveOffline(_service.state.source!);
+                _showHud(
+                  'Download queued until playback stops',
+                  icon: Icons.download_outlined,
+                );
+              } catch (_) {
+                _showHud('Could not queue download', icon: Icons.error_outline);
+              }
+            },
+          ),
         if (defaultTargetPlatform == TargetPlatform.macOS)
           ListTile(
             title: Text(_miniPlayer ? 'Restore window' : 'Mini-player'),
