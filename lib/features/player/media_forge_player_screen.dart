@@ -1,3 +1,5 @@
+import '../../core/image_cache.dart';
+
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -18,7 +20,7 @@ import '../../services/streaming/playback_session.dart';
 import '../../services/streaming/source_ranking.dart';
 import '../../services/streaming/streaming_service.dart';
 import '../../services/streaming/torrent_buffered_ranges.dart';
-import '../../services/torrent/native_torrent_engine.dart';
+import '../../services/torrent/torrent_engine.dart';
 import 'default_player_screen.dart';
 import 'player_backend.dart';
 
@@ -383,16 +385,17 @@ class _MediaForgePlayerScreenState extends ConsumerState<MediaForgePlayerScreen>
 
   void _updatePolling() {
     final engine = _service.engine;
-    if (engine is! NativeTorrentEngine) return;
+    if (engine is! EnginePollingController) return;
+    final polling = engine as EnginePollingController;
     final phase = _service.state.phase;
     // Driven by actual playback state (phase, player buffering, latest
     // seek), never by guessed timers.
     if (phase == StreamingPhase.playing &&
         !_lastBuffering &&
         !_seekCoordinator.hasPendingSeek) {
-      engine.useSteadyPolling();
+      polling.useSteadyPolling();
     } else {
-      engine.useStartupPolling();
+      polling.useStartupPolling();
     }
   }
 
@@ -857,6 +860,19 @@ class _MediaForgePlayerScreenState extends ConsumerState<MediaForgePlayerScreen>
   /// Dispose-safe: uses only [_service] and the cached history/details
   /// snapshots — never `ref`, so calling this from dispose() is safe.
   Future<void> _persistProgress({bool allowPendingSeek = false}) async {
+    try {
+      await _writeProgress(allowPendingSeek: allowPendingSeek);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not save playback progress. Check storage.'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _writeProgress({bool allowPendingSeek = false}) async {
     // Persist only known presented progress. In particular, do not overwrite
     // a valid entry with a resume target while the local torrent stream is
     // buffering at that target.
@@ -1202,6 +1218,7 @@ class _MediaForgeOpeningPreview extends StatelessWidget {
         children: [
           if (imageUrl != null)
             CachedNetworkImage(
+              cacheManager: artworkCacheManager,
               imageUrl: imageUrl,
               fit: BoxFit.cover,
               memCacheWidth: backdrop != null ? 1280 : 780,

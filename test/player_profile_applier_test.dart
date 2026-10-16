@@ -3,6 +3,25 @@ import 'package:peerstream/services/streaming/playback_config.dart';
 import 'package:peerstream/services/streaming/player_profile_applier.dart';
 
 void main() {
+  test('automatic zero probe sentinel is never written back to mpv', () async {
+    final writes = <String, String>{};
+    final applier = PlayerProfileApplier(
+      read: (key) async => '0',
+      write: (key, value) async {
+        if (key == 'demuxer-lavf-probesize') {
+          expect(int.parse(value), greaterThanOrEqualTo(32));
+        }
+        writes[key] = value;
+      },
+    );
+    await applier.apply(PlayerProfile.direct);
+    expect(writes, isNot(contains('demuxer-lavf-probesize')));
+    await applier.apply(PlayerProfile.torrent);
+    expect(writes['demuxer-lavf-probesize'], '2097152');
+    await applier.apply(PlayerProfile.direct);
+    expect(writes['demuxer-lavf-probesize'], '5000000');
+  });
+
   test(
     'torrent limits reach the player and reset for subsequent URLs',
     () async {

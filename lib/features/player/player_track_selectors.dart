@@ -1,5 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
+
+import 'player_control_menu.dart';
+import 'live_player_tracks.dart';
 
 List<AudioTrack> realAudioTracks(Tracks tracks) => tracks.audio
     .where((track) => track.id != 'auto' && track.id != 'no')
@@ -33,56 +38,52 @@ class AudioTrackSelector extends StatelessWidget {
     required this.tracks,
     required this.selectedId,
     required this.onSelected,
+    this.player,
     super.key,
   });
 
   final Tracks tracks;
   final String selectedId;
   final Future<void> Function(AudioTrack) onSelected;
+  final Player? player;
 
-  Future<void> _showTracks(BuildContext context) async {
-    final available = realAudioTracks(tracks);
-    final selected = await showModalBottomSheet<AudioTrack>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.8,
-          ),
-          child: ListView(
-            children: [
-              const ListTile(title: Text('Audio language')),
-              _AudioTrackTile(
-                track: AudioTrack.auto(),
-                selected: selectedId == 'auto',
-                onTap: () => Navigator.pop(sheetContext, AudioTrack.auto()),
-              ),
-              if (available.isEmpty)
-                const ListTile(
-                  enabled: false,
-                  title: Text('No embedded audio tracks'),
-                ),
-              for (final track in available)
-                _AudioTrackTile(
-                  track: track,
-                  selected: selectedId == track.id,
-                  onTap: () => Navigator.pop(sheetContext, track),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (selected != null) await onSelected(selected);
+  void _select(AudioTrack track, VoidCallback close) {
+    close();
+    unawaited(onSelected(track));
   }
 
   @override
-  Widget build(BuildContext context) => IconButton(
+  Widget build(BuildContext context) => PlayerControlMenu(
     tooltip: 'Audio track',
-    onPressed: () => _showTracks(context),
     icon: const Icon(Icons.multitrack_audio),
+    menuBuilder: (context, close) => _LiveTrackMenu(
+      player: player,
+      tracks: tracks,
+      selectedId: selectedId,
+      audio: true,
+      builder: (tracks, selectedId) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const ListTile(title: Text('Audio language')),
+          _AudioTrackTile(
+            track: AudioTrack.auto(),
+            selected: selectedId == 'auto',
+            onTap: () => _select(AudioTrack.auto(), close),
+          ),
+          if (realAudioTracks(tracks).isEmpty)
+            const ListTile(
+              enabled: false,
+              title: Text('No embedded audio tracks'),
+            ),
+          for (final track in realAudioTracks(tracks))
+            _AudioTrackTile(
+              track: track,
+              selected: selectedId == track.id,
+              onTap: () => _select(track, close),
+            ),
+        ],
+      ),
+    ),
   );
 }
 
@@ -101,18 +102,10 @@ class _AudioTrackTile extends StatelessWidget {
   Widget build(BuildContext context) => ListTile(
     title: Text(controlsTrackLabel(track.id, track.title, track.language)),
     subtitle: _trackDetails(track).isEmpty ? null : Text(_trackDetails(track)),
+    selected: selected,
     trailing: selected ? const Icon(Icons.check) : null,
     onTap: onTap,
   );
-}
-
-enum _SubtitleAction { off, on, track, local, online }
-
-class _SubtitleSelection {
-  const _SubtitleSelection(this.action, [this.track]);
-
-  final _SubtitleAction action;
-  final SubtitleTrack? track;
 }
 
 class SubtitleTrackSelector extends StatelessWidget {
@@ -123,6 +116,7 @@ class SubtitleTrackSelector extends StatelessWidget {
     required this.onLoadLocal,
     required this.onFindOnline,
     required this.loadingOnline,
+    this.player,
     super.key,
   });
 
@@ -130,116 +124,128 @@ class SubtitleTrackSelector extends StatelessWidget {
   final String selectedId;
   final Future<void> Function(SubtitleTrack) onSelected;
   final Future<void> Function() onLoadLocal;
-  final Future<void> Function() onFindOnline;
+  final Future<void> Function(BuildContext) onFindOnline;
   final bool loadingOnline;
-
-  Future<void> _showTracks(BuildContext context) async {
-    final available = realSubtitleTracks(tracks);
-    final selection = await showModalBottomSheet<_SubtitleSelection>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.8,
-          ),
-          child: ListView(
-            children: [
-              const ListTile(title: Text('Subtitles')),
-              ListTile(
-                title: const Text('Off'),
-                trailing: selectedId == 'no' ? const Icon(Icons.check) : null,
-                onTap: () => Navigator.pop(
-                  sheetContext,
-                  const _SubtitleSelection(_SubtitleAction.off),
-                ),
-              ),
-              ListTile(
-                title: const Text('On'),
-                enabled: available.isNotEmpty,
-                trailing: selectedId != 'no' && available.isNotEmpty
-                    ? const Icon(Icons.check)
-                    : null,
-                onTap: available.isEmpty
-                    ? null
-                    : () => Navigator.pop(
-                        sheetContext,
-                        const _SubtitleSelection(_SubtitleAction.on),
-                      ),
-              ),
-              if (available.isEmpty)
-                const ListTile(
-                  enabled: false,
-                  title: Text('No embedded subtitles'),
-                ),
-              for (final track in available)
-                ListTile(
-                  title: Text(
-                    controlsTrackLabel(track.id, track.title, track.language),
-                  ),
-                  subtitle: _trackDetails(track).isEmpty
-                      ? null
-                      : Text(_trackDetails(track)),
-                  trailing: selectedId == track.id
-                      ? const Icon(Icons.check)
-                      : null,
-                  onTap: () => Navigator.pop(
-                    sheetContext,
-                    _SubtitleSelection(_SubtitleAction.track, track),
-                  ),
-                ),
-              const Divider(height: 1),
-              ListTile(
-                leading: const Icon(Icons.folder_open_outlined),
-                title: const Text('Load subtitle file'),
-                onTap: () => Navigator.pop(
-                  sheetContext,
-                  const _SubtitleSelection(_SubtitleAction.local),
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.search),
-                title: Text(
-                  loadingOnline ? 'Finding subtitles…' : 'Find online',
-                ),
-                enabled: !loadingOnline,
-                onTap: loadingOnline
-                    ? null
-                    : () => Navigator.pop(
-                        sheetContext,
-                        const _SubtitleSelection(_SubtitleAction.online),
-                      ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (selection == null) return;
-    switch (selection.action) {
-      case _SubtitleAction.off:
-        await onSelected(SubtitleTrack.no());
-      case _SubtitleAction.on:
-        if (available.isNotEmpty) await onSelected(available.first);
-      case _SubtitleAction.track:
-        final track = selection.track;
-        if (track != null) await onSelected(track);
-      case _SubtitleAction.local:
-        await onLoadLocal();
-      case _SubtitleAction.online:
-        await onFindOnline();
-    }
-  }
+  final Player? player;
 
   @override
-  Widget build(BuildContext context) => IconButton(
-    tooltip: 'Subtitle track',
-    onPressed: () => _showTracks(context),
-    icon: Icon(
-      selectedId == 'no'
-          ? Icons.subtitles_off_outlined
-          : Icons.subtitles_outlined,
-    ),
-  );
+  Widget build(BuildContext context) {
+    return PlayerControlMenu(
+      tooltip: 'Subtitle track',
+      icon: Icon(
+        selectedId == 'no'
+            ? Icons.subtitles_off_outlined
+            : Icons.subtitles_outlined,
+      ),
+      menuBuilder: (context, close) {
+        void select(SubtitleTrack track) {
+          close();
+          unawaited(onSelected(track));
+        }
+
+        return _LiveTrackMenu(
+          player: player,
+          tracks: tracks,
+          selectedId: selectedId,
+          audio: false,
+          builder: (tracks, selectedId) {
+            final available = realSubtitleTracks(tracks);
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const ListTile(title: Text('Subtitles')),
+                ListTile(
+                  title: const Text('Off'),
+                  trailing: selectedId == 'no' ? const Icon(Icons.check) : null,
+                  onTap: () => select(SubtitleTrack.no()),
+                ),
+                ListTile(
+                  title: const Text('On'),
+                  enabled: available.isNotEmpty,
+                  trailing: selectedId != 'no' && available.isNotEmpty
+                      ? const Icon(Icons.check)
+                      : null,
+                  onTap: available.isEmpty
+                      ? null
+                      : () => select(available.first),
+                ),
+                if (available.isEmpty)
+                  const ListTile(
+                    enabled: false,
+                    title: Text('No embedded subtitles'),
+                  ),
+                for (final track in available)
+                  ListTile(
+                    title: Text(
+                      controlsTrackLabel(track.id, track.title, track.language),
+                    ),
+                    subtitle: _trackDetails(track).isEmpty
+                        ? null
+                        : Text(_trackDetails(track)),
+                    trailing: selectedId == track.id
+                        ? const Icon(Icons.check)
+                        : null,
+                    onTap: () => select(track),
+                  ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.folder_open_outlined),
+                  title: const Text('Load subtitle file'),
+                  onTap: () {
+                    close();
+                    unawaited(onLoadLocal());
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.search),
+                  title: Text(
+                    loadingOnline ? 'Finding subtitles…' : 'Find online',
+                  ),
+                  enabled: !loadingOnline,
+                  onTap: loadingOnline
+                      ? null
+                      : () {
+                          close();
+                          unawaited(onFindOnline(context));
+                        },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+/// The popup keeps its own live subscription after media_kit removes the
+/// toolbar, so late track discovery and native selections still update it.
+class _LiveTrackMenu extends StatelessWidget {
+  const _LiveTrackMenu({
+    required this.player,
+    required this.tracks,
+    required this.selectedId,
+    required this.audio,
+    required this.builder,
+  });
+
+  final Player? player;
+  final Tracks tracks;
+  final String selectedId;
+  final bool audio;
+  final Widget Function(Tracks, String) builder;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = player;
+    if (current == null) return builder(tracks, selectedId);
+    return LivePlayerTracks(
+      tracks: current.stream.tracks,
+      selection: current.stream.track,
+      currentTracks: () => current.state.tracks,
+      currentSelection: () => current.state.track,
+      builder: (context, tracks, selection) =>
+          builder(tracks, audio ? selection.audio.id : selection.subtitle.id),
+    );
+  }
 }
