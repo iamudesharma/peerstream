@@ -1,0 +1,592 @@
+{
+  "date": "2026-10-16",
+  "bridgeVersion": "bridge-1.9.10+lt2.1.1",
+  "productionBackend": "native",
+  "rustServiceAdopted": false,
+  "realUserCacheOwnershipChanged": false,
+  "storageRoot": "/Volumes/AppleExpanded/Library/PeerStream",
+  "checks": {
+    "flutterAnalysisPassed": true,
+    "flutterTestsPassed": 318,
+    "flutterTestsSkipped": 1,
+    "skippedFullVolumeCaseSeparatelyPassed": true,
+    "rustFmtClippyAndThreeCoreTestsPassed": true,
+    "benchmarkSummaryTestsPassed": 4,
+    "normalDebugBuildPassed": true,
+    "packageAudit": {
+      "scope": "Source-built torrent bridge, its transitive libraries, bundled service helper and app signature",
+      "externalOrMissingDependencies": [],
+      "nativeLibraries": [
+        {
+          "name": "libboost_system.dylib",
+          "minimumMacOS": "15.0"
+        },
+        {
+          "name": "libcrypto.3.dylib",
+          "minimumMacOS": "27.0"
+        },
+        {
+          "name": "libssl.3.dylib",
+          "minimumMacOS": "27.0"
+        },
+        {
+          "name": "libtorrent-rasterbar.2.1.1.dylib",
+          "minimumMacOS": "26.0"
+        },
+        {
+          "name": "libtorrent_flutter",
+          "minimumMacOS": "12.0"
+        },
+        {
+          "name": "peerstream-service",
+          "minimumMacOS": "11.0"
+        }
+      ],
+      "requestedMinimumMacOS": "12.0",
+      "incompatibleMinimumOSLibraries": [
+        {
+          "name": "libtorrent-rasterbar.2.1.1.dylib",
+          "minimumMacOS": "26.0"
+        },
+        {
+          "name": "libcrypto.3.dylib",
+          "minimumMacOS": "27.0"
+        },
+        {
+          "name": "libssl.3.dylib",
+          "minimumMacOS": "27.0"
+        },
+        {
+          "name": "libboost_system.dylib",
+          "minimumMacOS": "15.0"
+        }
+      ],
+      "deepSignatureValid": true,
+      "adHocSignature": true,
+      "helperInheritsSandbox": true,
+      "bundledPublicTrustMatchesSource": true,
+      "publicTrustSHA256": "a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505",
+      "notarizationVerified": false,
+      "distributionReady": false,
+      "reason": "Developer ID/notarization and oldest-supported-OS runtime checks are required independently of local ad-hoc signing."
+    },
+    "normalDebugAppRelaunchedAndDiscoverScreenObserved": true,
+    "finalMetadataGuardChangedFiles": []
+  },
+  "localWire": {
+    "native": {
+      "samples": 20,
+      "firstFrameMedianMs": 1917.0,
+      "firstFrameP95Ms": 2912
+    },
+    "service": {
+      "samples": 20,
+      "firstFrameMedianMs": 2419.0,
+      "firstFrameP95Ms": 3169
+    }
+  },
+  "normalComparison": {
+    "originalCompletedTrials": 137,
+    "originalExitCode": 1,
+    "originalAcceptanceComplete": false,
+    "separatePostHarnessFixTrials": 24,
+    "separatePostHarnessFixExitCode": 0,
+    "poolingForAcceptanceAllowed": false,
+    "record": "controlled-matrix-macos-2026-10-16.json"
+  },
+  "resourceCycles": {
+    "date": "2026-10-15",
+    "scope": "Thirty real torrent open/seek/close cycles per backend, two position-confirmed seeks each. Active combined app/helper physical footprint, shared original fixture seed buffer included. No compositor-frame latency claim.",
+    "backends": {
+      "native": {
+        "exitCode": 0,
+        "changedMetadataFiles": [],
+        "playerMetrics": [],
+        "verification": [
+          {
+            "cycle": 1,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 289834160
+          },
+          {
+            "cycle": 2,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 304219312
+          },
+          {
+            "cycle": 3,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 303826096
+          },
+          {
+            "cycle": 4,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 306332848
+          },
+          {
+            "cycle": 5,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 302646448
+          },
+          {
+            "cycle": 6,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 310412464
+          },
+          {
+            "cycle": 7,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 307872944
+          },
+          {
+            "cycle": 8,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 309544112
+          },
+          {
+            "cycle": 9,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 308462768
+          },
+          {
+            "cycle": 10,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 303023280
+          },
+          {
+            "cycle": 11,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 307889328
+          },
+          {
+            "cycle": 12,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 325452976
+          },
+          {
+            "cycle": 13,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 333202608
+          },
+          {
+            "cycle": 14,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 332760240
+          },
+          {
+            "cycle": 15,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 337003696
+          },
+          {
+            "cycle": 16,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 327632048
+          },
+          {
+            "cycle": 17,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 340542640
+          },
+          {
+            "cycle": 18,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 332547248
+          },
+          {
+            "cycle": 19,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 329680048
+          },
+          {
+            "cycle": 20,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 337937584
+          },
+          {
+            "cycle": 21,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 328402096
+          },
+          {
+            "cycle": 22,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 339002544
+          },
+          {
+            "cycle": 23,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 330908848
+          },
+          {
+            "cycle": 24,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 334562480
+          },
+          {
+            "cycle": 25,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 339854512
+          },
+          {
+            "cycle": 26,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 335021232
+          },
+          {
+            "cycle": 27,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 336200880
+          },
+          {
+            "cycle": 28,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 336659632
+          },
+          {
+            "cycle": 29,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 335938736
+          },
+          {
+            "cycle": 30,
+            "backend": "native",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 336921776
+          },
+          {
+            "cyclesSummary": {
+              "cycles": 30,
+              "backend": "native",
+              "torrentRangePlayback": true,
+              "positionConfirmedSeeks": 60,
+              "fixtureSeedPayloadBytes": 4863960,
+              "memoryScope": "Active steady playback physical footprint; app plus helper when service-backed.",
+              "warmedFootprintBytes": 306463920.0,
+              "settledFootprintBytes": 336506714.6666667,
+              "growthRatio": 1.0980304456937922
+            }
+          }
+        ]
+      },
+      "service": {
+        "exitCode": 1,
+        "changedMetadataFiles": [],
+        "playerMetrics": [],
+        "verification": [
+          {
+            "cycle": 1,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 295356264
+          },
+          {
+            "cycle": 2,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 309086056
+          },
+          {
+            "cycle": 3,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 303712104
+          },
+          {
+            "cycle": 4,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 310036328
+          },
+          {
+            "cycle": 5,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 311248744
+          },
+          {
+            "cycle": 6,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 304662376
+          },
+          {
+            "cycle": 7,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 309954408
+          },
+          {
+            "cycle": 8,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 314476392
+          },
+          {
+            "cycle": 9,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 312543080
+          },
+          {
+            "cycle": 10,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 306448232
+          },
+          {
+            "cycle": 11,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 308791144
+          },
+          {
+            "cycle": 12,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 309774184
+          },
+          {
+            "cycle": 13,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 304645992
+          },
+          {
+            "cycle": 14,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 329140072
+          },
+          {
+            "cycle": 15,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 331712360
+          },
+          {
+            "cycle": 16,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 333219688
+          },
+          {
+            "cycle": 17,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 330925928
+          },
+          {
+            "cycle": 18,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 337938280
+          },
+          {
+            "cycle": 19,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 331089768
+          },
+          {
+            "cycle": 20,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 329893736
+          },
+          {
+            "cycle": 21,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 340297576
+          },
+          {
+            "cycle": 22,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 334710632
+          },
+          {
+            "cycle": 23,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 340854632
+          },
+          {
+            "cycle": 24,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 330418024
+          },
+          {
+            "cycle": 25,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 332416872
+          },
+          {
+            "cycle": 26,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 334301032
+          },
+          {
+            "cycle": 27,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 333924200
+          },
+          {
+            "cycle": 28,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 340412264
+          },
+          {
+            "cycle": 29,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 339412840
+          },
+          {
+            "cycle": 30,
+            "backend": "service",
+            "torrentRangePlayback": true,
+            "physicalFootprintBytes": 339429224
+          },
+          {
+            "cyclesSummary": {
+              "cycles": 30,
+              "backend": "service",
+              "torrentRangePlayback": true,
+              "positionConfirmedSeeks": 60,
+              "fixtureSeedPayloadBytes": 4863960,
+              "memoryScope": "Active steady playback physical footprint; app plus helper when service-backed.",
+              "warmedFootprintBytes": 308649149.3333333,
+              "settledFootprintBytes": 339751442.6666667,
+              "growthRatio": 1.1007690881394385
+            }
+          }
+        ]
+      }
+    }
+  },
+  "publicNetworkObservations": {
+    "date": "2026-10-15",
+    "scope": "Separate external-network legal public-source observations, not controlled p95.",
+    "observations": [
+      {
+        "exitCode": 1,
+        "changedMetadataFiles": [],
+        "playerMetrics": [
+          {
+            "firstFrameMs": 503,
+            "visiblePlaybackMs": 503,
+            "playerWarmUpMs": 265,
+            "fileCompleteAtFirstFrame": null,
+            "downloadedBytesAtFirstFrame": 0,
+            "selectedFileBytes": 0,
+            "sourceLookups": 0
+          },
+          {
+            "firstFrameMs": 11031,
+            "visiblePlaybackMs": 11031,
+            "playerWarmUpMs": 110,
+            "fileCompleteAtFirstFrame": false,
+            "downloadedBytesAtFirstFrame": 1835008,
+            "selectedFileBytes": 276134947,
+            "sourceLookups": 0
+          },
+          {
+            "firstFrameMs": 11031,
+            "visiblePlaybackMs": 11031,
+            "playerWarmUpMs": 110,
+            "fileCompleteAtFirstFrame": false,
+            "downloadedBytesAtFirstFrame": 1835008,
+            "selectedFileBytes": 276134947,
+            "sourceLookups": 0,
+            "bridgeVersion": "bridge-1.9.10+lt2.1.1"
+          }
+        ],
+        "verification": []
+      },
+      {
+        "exitCode": 0,
+        "changedMetadataFiles": [],
+        "playerMetrics": [
+          {
+            "firstFrameMs": 426,
+            "visiblePlaybackMs": 426,
+            "playerWarmUpMs": 216,
+            "fileCompleteAtFirstFrame": null,
+            "downloadedBytesAtFirstFrame": 0,
+            "selectedFileBytes": 0,
+            "sourceLookups": 0
+          },
+          {
+            "firstFrameMs": 6435,
+            "visiblePlaybackMs": 6435,
+            "playerWarmUpMs": 120,
+            "fileCompleteAtFirstFrame": false,
+            "downloadedBytesAtFirstFrame": 3145728,
+            "selectedFileBytes": 276134947,
+            "sourceLookups": 0
+          },
+          {
+            "firstFrameMs": 6435,
+            "visiblePlaybackMs": 6435,
+            "playerWarmUpMs": 120,
+            "fileCompleteAtFirstFrame": false,
+            "downloadedBytesAtFirstFrame": 3145728,
+            "selectedFileBytes": 276134947,
+            "sourceLookups": 0,
+            "bridgeVersion": "bridge-1.9.10+lt2.1.1"
+          }
+        ],
+        "verification": []
+      }
+    ]
+  },
+  "portablePlayerRecord": "portable-player-macos-2026-10-15.json",
+  "faultRecord": "native-faults-macos-2026-10-15.json",
+  "tlsRecord": "native-tls-macos-2026-10-15.json",
+  "remainingGates": [
+    "Service memory growth 10.08 percent exceeds 10 percent budget",
+    "Incomplete 160-trial comparison and subset warm memory ratio above 1.10",
+    "Latest bridge two-hour soak",
+    "Compositor-frame seek latency",
+    "Developer ID signing and notarization",
+    "macOS 12 hardware and all-plugin portability",
+    "Independent SSD authorization after parent exit and persistent background/login registration"
+  ],
+  "historyIncident": "Earlier soak inherited real removal; previous contents unknown and no pre-run snapshot exists. Subsequent fixtures isolate removal and saved-data guards pass. No history reconstruction claimed."
+}

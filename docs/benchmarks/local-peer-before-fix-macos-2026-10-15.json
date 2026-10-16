@@ -1,0 +1,72 @@
+{
+  "date": "2026-10-15",
+  "scopeNote": "Completed real-player wire checks before bridge1.9.10; bothstartup targets failed. Initial private-fixture mistake is excluded; these are valid TCP/uTP original-source samples.",
+  "exitCode": 1,
+  "metadataGuard": {
+    "changedFiles": [],
+    "snapshotRetained": null
+  },
+  "results": [
+    {
+      "backend": "native",
+      "kind": "peer",
+      "bridgeVersion": "bridge-1.9.9+lt2.1.1",
+      "fixtureSeedPayloadBytes": 4863960,
+      "audioChangeAcknowledgedMs": 47,
+      "subtitleChangeAcknowledgedMs": 5,
+      "firstFrameMs": 13617,
+      "visiblePlaybackMs": 13617,
+      "playerWarmUpMs": 236,
+      "fileCompleteAtFirstFrame": false,
+      "downloadedBytesAtFirstFrame": 1980376,
+      "selectedFileBytes": 4863960,
+      "sourceLookups": 0,
+      "appPhysicalFootprintBytes": 319571144,
+      "servicePhysicalFootprintBytes": 0,
+      "combinedPhysicalFootprintBytes": 319571144,
+      "seekPositionConfirmedMs": 116,
+      "playbackOrigin": "network",
+      "playableScheme": "http",
+      "fileCompleteBeforeSeek": true,
+      "seekScope": "Player position confirmation; not a compositor-frame latency measurement.",
+      "startupTargetMet": false
+    },
+    {
+      "backend": "service",
+      "kind": "peer",
+      "bridgeVersion": "bridge-1.9.9+lt2.1.1",
+      "fixtureSeedPayloadBytes": 4863960,
+      "audioChangeAcknowledgedMs": 32,
+      "subtitleChangeAcknowledgedMs": 34,
+      "firstFrameMs": 12089,
+      "visiblePlaybackMs": 12089,
+      "playerWarmUpMs": 232,
+      "fileCompleteAtFirstFrame": false,
+      "downloadedBytesAtFirstFrame": 262144,
+      "selectedFileBytes": 4863960,
+      "sourceLookups": 0,
+      "appPhysicalFootprintBytes": 302843032,
+      "servicePhysicalFootprintBytes": 18006760,
+      "combinedPhysicalFootprintBytes": 320849792,
+      "seekPositionConfirmedMs": 115,
+      "playbackOrigin": "network",
+      "playableScheme": "http",
+      "fileCompleteBeforeSeek": false,
+      "seekScope": "Player position confirmation; not a compositor-frame latency measurement.",
+      "startupTargetMet": false
+    }
+  ],
+  "summary": {
+    "native": {
+      "samples": 1,
+      "firstFrameP95Ms": 13617
+    },
+    "service": {
+      "samples": 1,
+      "firstFrameP95Ms": 12089
+    }
+  },
+  "applicationBuildSkipped": true,
+  "scope": "Original fixture over loopback TCP/uTP BitTorrent peer with magnet metadata exchange, no HTTP web seed and only an inert loopback tracker URI (avoids production default public tracker injection). Seed upload budget 1 MiB/s. Fresh application and cache per trial.",
+  "p95AcceptanceEvaluated": false
+}

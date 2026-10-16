@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-14",
+  "bridgeVersion": "bridge-1.9.8+lt2.1.1",
+  "exitCode": 0,
+  "changedMetadataFiles": [],
+  "soak": {
+    "elapsedSeconds": 7200,
+    "nativeTrackChanges": 470,
+    "playingAtEnd": true
+  },
+  "localOpenCloseCycles": {
+    "cycles": 30,
+    "warmedFootprintBytes": 326321304.0,
+    "settledFootprintBytes": 358242821.3333333,
+    "growthRatio": 1.097822351596552
+  },
+  "scope": "Local generated video loop with native track selections and position checks; not two hours torrent network traffic. The initial 30-cycle loop did not seek. Active process footprint includes the test app and its retained player instances.",
+  "soakPhysicalFootprintRangeBytes": {
+    "min": 209323208,
+    "max": 281756872
+  },
+  "cumulativeRebufferDurationMsAtSoakEnd": 17236,
+  "playerSamples": [
+    {
+      "firstFrameMs": 479,
+      "visiblePlaybackMs": 479,
+      "playerWarmUpMs": 242,
+      "fileCompleteAtFirstFrame": null,
+      "downloadedBytesAtFirstFrame": 0,
+      "selectedFileBytes": 0,
+      "sourceLookups": 0
+    },
+    {
+      "firstFrameMs": 905,
+      "visiblePlaybackMs": 905,
+      "playerWarmUpMs": 129,
+      "fileCompleteAtFirstFrame": false,
+      "downloadedBytesAtFirstFrame": 0,
+      "selectedFileBytes": 4863960,
+      "sourceLookups": 0
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "date": "2026-10-15",
+  "scope": "Standalone reads/writes against the exact bundled Mpv.framework and Avformat.framework in the macOS profile app; null audio/video output, no user media or cache mutation.",
+  "mpvProbeSizeInitialValue": 0,
+  "mpvProbeSizeMinimum": 32,
+  "settingZeroResult": -9,
+  "settingAutoResult": -9,
+  "settingFiveMillionResult": 0,
+  "bundledAvformatProbeDefaultBytes": 5000000,
+  "avformatDefaultReadResult": 0,
+  "fix": "Leave untouched automatic options alone; after an explicit torrent override, restore a valid 5000000-byte probe budget instead of the invalid zero sentinel.",
+  "verification": "New unit regression passes and the real-player matrix asserts no probe-size diagnostics. Final matrix results are recorded separately."
+}

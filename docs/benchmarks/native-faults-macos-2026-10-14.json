@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-14",
+  "platform": "macOS arm64",
+  "bridgeVersion": "bridge-1.9.9+lt2.1.1",
+  "nativeFaults": {
+    "corruptSeedRejected": true,
+    "suffixAndOpenEndedTailProbes": true,
+    "cancelledReadersRecover": true,
+    "incompleteHeadersBounded": true,
+    "fullDiskPreservesPreviousResumeAndReportsFailure": true,
+    "releaseStillStopsSessionOnFullDisk": true,
+    "fullDiskAtomicIndexAndRecovery": true,
+    "privateVolumeRemovalDetected": true,
+    "volumeReconnectResumeAndExactBytes": true,
+    "cancelBlockedMissingPieceReaderWithinFiveSeconds": true
+  },
+  "nativeTLS": {
+    "bundledRejectsUntrustedHTTPSWebSeed": true,
+    "frameworkRelativeBundledTrustValidated": true,
+    "untrustedRejectsUntrustedHTTPSWebSeed": true,
+    "explicitTrustedCAAllowsVerifiedHTTPSWebSeed": true
+  },
+  "storageUnitAndDisposableFullVolumeTests": 16,
+  "scope": "Native transport tests use an unsigned standalone helper, packaged bridge, generated original payload and private local seed. Real ENOSPC and removal use an owned disposable 64 MiB image; the user SSD was not detached. Migration crash recovery is covered by injected on-disk journals, not physical power-loss testing.",
+  "independentBackgroundSSDGrantVerified": false
+}
