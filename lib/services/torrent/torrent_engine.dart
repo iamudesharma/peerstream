@@ -18,6 +18,13 @@ abstract interface class TorrentEngine {
   Future<void> dispose();
 }
 
+/// Optional capability for engines that poll native statistics from Flutter.
+/// Service-backed engines can coalesce snapshots in their own process instead.
+abstract interface class EnginePollingController {
+  void useStartupPolling();
+  void useSteadyPolling();
+}
+
 enum HttpServerStatus { notStarted, running, unavailable, unsupported }
 
 class HttpServerInfo {
@@ -159,9 +166,11 @@ class EngineDiagnostics {
     required this.bridgeVersion,
     this.cacheCapacityBytes,
     this.cacheFilledBytes,
+    this.processMemoryBytes,
     this.activeStreams = 0,
   });
 
+  final int? processMemoryBytes;
   final String bridgeVersion;
   final int? cacheCapacityBytes;
   final int? cacheFilledBytes;
@@ -249,4 +258,24 @@ int adaptiveWindowBytes({
   if (peers > 0 && peers < 4) seconds *= 1.3; // thin/unstable swarm
   seconds = seconds.clamp(10, 90);
   return (bitrateBps * seconds).round();
+}
+
+/// Component budgets, not whole-process memory limits.
+enum PlaybackResourceProfile { balanced, lowMemory }
+
+abstract interface class ResourceProfileController {
+  void setResourceProfile(PlaybackResourceProfile profile);
+}
+
+/// Releases native bookkeeping while keeping verified files and resume data.
+abstract interface class InactiveHandleReleaser {
+  Future<void> releaseInactive(TorrentHandle handle);
+}
+
+abstract interface class OfflineDownloadController {
+  Future<void> downloadFile(TorrentHandle handle, TorrentFileEntry file);
+}
+
+abstract interface class MemoryPressureController {
+  Future<void> handleMemoryPressure();
 }

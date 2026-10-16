@@ -4,7 +4,8 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:libtorrent_flutter/libtorrent_flutter.dart' as lt;
-import 'package:path_provider/path_provider.dart';
+
+import '../storage/app_storage.dart';
 
 import '../../models/torrent_models.dart';
 import '../playback/playback_cache.dart';
@@ -16,10 +17,16 @@ import 'source_policy_loader.dart';
 /// `packages/libtorrent_flutter/src/torrent_bridge.cpp`. Bump both together
 /// so runtime diagnostics can confirm all platforms ship the same native
 /// implementation before comparing performance.
-const nativeBridgeVersion = 'bridge-1.9.7+lt2.0.11';
+const nativeBridgeVersion = 'bridge-1.9.10+lt2.1.1';
 
 class NativeTorrentEngine
     implements
+        EnginePollingController,
+        HttpServerDiagnosticsProvider,
+        ResourceProfileController,
+        MemoryPressureController,
+        InactiveHandleReleaser,
+        OfflineDownloadController,
         TorrentEngine,
         FileCompletenessChecker,
         EngineDiagnosticsProvider,
@@ -28,6 +35,50 @@ class NativeTorrentEngine
         StreamTimingProvider,
         WebSeedSupport,
         TorrentStatePersistence {
+  NativeTorrentEngine({
+    PlaybackCacheStore? cache,
+    Future<String> Function()? sessionCacheDirectory,
+  }) : _sessionCacheDirectory =
+           sessionCacheDirectory ?? appStorage.cacheDirectoryPath,
+       _cache = cache ?? PlaybackCacheStore();
+
+  @override
+  Future<void> downloadFile(TorrentHandle handle, TorrentFileEntry file) async {
+    final id = _id(handle);
+    final files = await waitForFiles(handle);
+    final highest = files
+        .map((f) => f.index)
+        .fold<int>(0, (a, b) => a > b ? a : b);
+    final priorities = List<int>.filled(highest + 1, 0);
+    priorities[file.index] = 1;
+    _idleRelease.remove(id)?.cancel();
+    _native.setFilePriorities(id, priorities);
+    _native.resumeTorrent(id);
+    _startStateSaveTimer();
+  }
+
+  @override
+  Future<void> handleMemoryPressure() async {
+    for (final id in _idleRelease.keys.toList()) {
+      await releaseInactive(TorrentHandle('$id'));
+    }
+    setResourceProfile(PlaybackResourceProfile.lowMemory);
+  }
+
+  final _metadataWaiters = <int, Set<Completer<void>>>{};
+  final _idleRelease = <int, Timer>{};
+
+  @override
+  Future<void> releaseInactive(TorrentHandle handle) async {
+    final id = _id(handle);
+    _idleRelease.remove(id)?.cancel();
+    if (_engine == null || _streamIds.containsKey(id)) return;
+    _saveTorrentState(id);
+    _native.removeTorrent(id, deleteFiles: false);
+    _retainedTorrents.removeWhere((_, value) => value == id);
+    _stateDirectories.remove(id);
+  }
+
   final _dio = Dio(
     BaseOptions(
       connectTimeout: const Duration(seconds: 10),
@@ -41,10 +92,20 @@ class NativeTorrentEngine
   // cache key so two libtorrent handles never write the same payload path.
   final Map<String, Future<TorrentHandle>> _addFlights = {};
   final Map<int, String> _stateDirectories = {};
-  final PlaybackCacheStore _cache = PlaybackCacheStore();
+  final Map<int, Uri> _streamUrls = {};
+  @override
+  Future<HttpServerInfo> httpServerInfo() async => HttpServerInfo(
+    status: _streamUrls.isEmpty
+        ? HttpServerStatus.notStarted
+        : HttpServerStatus.running,
+    url: _streamUrls.values.firstOrNull,
+  );
+  final PlaybackCacheStore _cache;
+  final Future<String> Function() _sessionCacheDirectory;
   Directory? _sessionDirectory;
   Timer? _stateSaveTimer;
   lt.LibtorrentFlutter? _engine;
+  Future<void>? _initializing;
 
   /// Sidecar file inside each torrent directory holding libtorrent resume
   /// data: the torrent metadata (info-dict) plus the verified piece bitfield.
@@ -56,14 +117,51 @@ class NativeTorrentEngine
   String? get unsupportedReason => null;
 
   @override
-  Future<void> initialize() async {
+  Future<void> initialize() {
+    final active = _initializing;
+    if (active != null) return active;
+    final work = _initialize();
+    _initializing = work;
+    work.then<void>(
+      (_) => _initializing = null,
+      onError: (Object _, StackTrace _) => _initializing = null,
+    );
+    return work;
+  }
+
+  PlaybackResourceProfile _profile = PlaybackResourceProfile.balanced;
+
+  @override
+  void setResourceProfile(PlaybackResourceProfile profile) {
+    _profile = profile;
+    if (_engine != null) _applyResourceProfile();
+  }
+
+  void _applyResourceProfile() {
+    _engine!.configureSession(
+      lt.BtConfig(
+        cacheSize:
+            (_profile == PlaybackResourceProfile.lowMemory ? 64 : 128) *
+            1024 *
+            1024,
+        readerReadAhead: 85,
+        preloadCache: 10,
+        connectionsLimit: 32,
+        torrentDisconnectTimeout: 120,
+        responsiveMode: true,
+      ),
+    );
+  }
+
+  Future<void> _initialize() async {
     if (_engine != null) return;
-    final cache = await getApplicationCacheDirectory();
+    final cache = Directory(await _sessionCacheDirectory());
     _sessionDirectory = await Directory(
       '${cache.path}${Platform.pathSeparator}peerstream-session',
     ).create(recursive: true);
     await lt.LibtorrentFlutter.init(
       defaultSavePath: _sessionDirectory!.path,
+      sessionStatePath: '${_sessionDirectory!.path}/dht-session.dat',
       // 250ms polls halve buffering UI latency vs 500ms; the native poll
       // only emits on change so idle cost stays low.
       pollInterval: const Duration(milliseconds: 250),
@@ -73,16 +171,7 @@ class NativeTorrentEngine
       fetchTrackers: false,
     );
     _engine = lt.LibtorrentFlutter.instance;
-    _engine!.configureSession(
-      const lt.BtConfig(
-        cacheSize: 128 * 1024 * 1024,
-        readerReadAhead: 85,
-        preloadCache: 10,
-        connectionsLimit: 32,
-        torrentDisconnectTimeout: 120,
-        responsiveMode: true,
-      ),
-    );
+    _applyResourceProfile();
   }
 
   lt.LibtorrentFlutter get _native =>
@@ -101,7 +190,10 @@ class NativeTorrentEngine
     // scheduler (see torrent_bridge.cpp StreamScheduler). Pending disk-read
     // results count against the same budget; actively served pieces are
     // never evicted.
-    final capacity = Platform.isAndroid ? 64 * 1024 * 1024 : 128 * 1024 * 1024;
+    final capacity =
+        Platform.isAndroid || _profile == PlaybackResourceProfile.lowMemory
+        ? 64 * 1024 * 1024
+        : 128 * 1024 * 1024;
     int? filled;
     try {
       final firstStream = _streamIds.values.firstOrNull;
@@ -118,6 +210,7 @@ class NativeTorrentEngine
     } catch (_) {}
     return EngineDiagnostics(
       bridgeVersion: reported,
+      processMemoryBytes: engine.processMemory()?['physicalFootprintBytes'],
       cacheCapacityBytes: capacity,
       cacheFilledBytes: filled,
       activeStreams: engine.activeStreamCount,
@@ -253,12 +346,14 @@ class NativeTorrentEngine
 
   /// Fast polling during startup/seeking, relaxed during steady playback.
   /// The native poll only emits on change so idle cost stays low.
+  @override
   void useStartupPolling() {
     try {
       _engine?.setPollInterval(const Duration(milliseconds: 250));
     } catch (_) {}
   }
 
+  @override
   void useSteadyPolling() {
     try {
       _engine?.setPollInterval(const Duration(seconds: 1));
@@ -293,6 +388,7 @@ class NativeTorrentEngine
   ) async {
     final retainedId = _retainedTorrents[cacheKey];
     if (retainedId != null && _native.torrents.containsKey(retainedId)) {
+      _idleRelease.remove(retainedId)?.cancel();
       _native.resumeTorrent(retainedId);
       return TorrentHandle('$retainedId');
     }
@@ -415,6 +511,9 @@ class NativeTorrentEngine
       for (final id in _stateDirectories.keys.toList()) {
         _saveTorrentState(id);
       }
+      if (_sessionDirectory != null) {
+        _native.saveSessionState('${_sessionDirectory!.path}/dht-session.dat');
+      }
     });
   }
 
@@ -424,6 +523,9 @@ class NativeTorrentEngine
       if (_engine == null) return;
       for (final id in _stateDirectories.keys.toList()) {
         _saveTorrentState(id);
+      }
+      if (_sessionDirectory != null) {
+        _native.saveSessionState('${_sessionDirectory!.path}/dht-session.dat');
       }
     } catch (_) {}
   }
@@ -445,22 +547,35 @@ class NativeTorrentEngine
     if (current?.hasMetadata == true) return readFiles();
     final startedAt = DateTime.now();
     debugPrint('[Torrent] waiting for metadata (id=$id)');
+    final completed = Completer<void>();
+    final waiters = _metadataWaiters.putIfAbsent(id, () => {});
+    waiters.add(completed);
+    final subscription = _native.torrentUpdates.listen(
+      (all) {
+        final torrent = all[id];
+        if (completed.isCompleted) return;
+        if (torrent != null && torrent.errorMsg.isNotEmpty) {
+          completed.completeError(StateError(torrent.errorMsg));
+        } else if (torrent?.hasMetadata == true) {
+          completed.complete();
+        }
+      },
+      onError: (Object error) {
+        if (!completed.isCompleted) completed.completeError(error);
+      },
+    );
     try {
-      await _native.torrentUpdates
-          .firstWhere((all) {
-            final torrent = all[id];
-            if (torrent != null && torrent.errorMsg.isNotEmpty) {
-              throw StateError(torrent.errorMsg);
-            }
-            return torrent?.hasMetadata == true;
-          })
-          .timeout(const Duration(seconds: 90));
+      await completed.future.timeout(const Duration(seconds: 90));
     } on TimeoutException {
       throw StateError(
         'This torrent did not share its file list within 90 seconds '
         '(no metadata from peers/trackers). Try a Direct source or one '
         'with more seeds.',
       );
+    } finally {
+      await subscription.cancel();
+      waiters.remove(completed);
+      if (waiters.isEmpty) _metadataWaiters.remove(id);
     }
     debugPrint(
       '[Torrent] metadata ready (id=$id) after '
@@ -475,7 +590,14 @@ class NativeTorrentEngine
   @override
   Stream<TorrentStats> watch(TorrentHandle handle) {
     final id = _id(handle);
-    return _native.torrentUpdates.map((all) {
+    return _native.torrentUpdates.asyncMap((all) async {
+      final session = _sessionDirectory;
+      if (session != null && !await session.exists()) {
+        _native.pauseTorrent(id);
+        throw const StorageUnavailableException(
+          'Storage drive disconnected. Reconnect it or choose another folder in Playback & Storage.',
+        );
+      }
       final torrent = all[id];
       if (torrent == null) return const TorrentStats();
       if (torrent.errorMsg.isNotEmpty) throw StateError(torrent.errorMsg);
@@ -512,7 +634,10 @@ class NativeTorrentEngine
     // without competing with the urgent startup pieces.
     _native.setCacheSettings(
       stream.id,
-      capacity: Platform.isAndroid ? 64 * 1024 * 1024 : 128 * 1024 * 1024,
+      capacity:
+          Platform.isAndroid || _profile == PlaybackResourceProfile.lowMemory
+          ? 64 * 1024 * 1024
+          : 128 * 1024 * 1024,
       readAheadPct: 85,
       connectionsLimit: 32,
     );
@@ -521,6 +646,7 @@ class NativeTorrentEngine
       preloadBytes: Platform.isAndroid ? 4 * 1024 * 1024 : 8 * 1024 * 1024,
     );
     _streamIds[torrentId] = stream.id;
+    _streamUrls[torrentId] = Uri.parse(stream.url);
     _startStateSaveTimer();
     return TorrentPlaybackStream(
       id: '${stream.id}',
@@ -532,6 +658,11 @@ class NativeTorrentEngine
   @override
   Future<void> stop(TorrentHandle handle, {bool deleteFiles = false}) async {
     final id = _id(handle);
+    for (final waiter in _metadataWaiters.remove(id) ?? <Completer<void>>{}) {
+      if (!waiter.isCompleted) {
+        waiter.completeError(StateError('Source preparation canceled'));
+      }
+    }
     // Save before pausing/removing: resume data must be captured while the
     // handle and its piece map are still valid.
     _saveTorrentState(id);
@@ -546,11 +677,37 @@ class NativeTorrentEngine
       _native.pauseTorrent(id);
     }
     _streamIds.remove(id);
+    _streamUrls.remove(id);
+    if (!deleteFiles) {
+      _idleRelease.remove(id)?.cancel();
+      _idleRelease[id] = Timer(
+        const Duration(seconds: 30),
+        () => unawaited(releaseInactive(handle)),
+      );
+      while (_idleRelease.length > 2) {
+        await releaseInactive(TorrentHandle('${_idleRelease.keys.first}'));
+      }
+    }
   }
 
   @override
   Future<void> dispose() async {
+    try {
+      await _initializing;
+    } catch (_) {}
     if (_engine == null) return;
+    for (final waiters in _metadataWaiters.values) {
+      for (final waiter in waiters) {
+        if (!waiter.isCompleted) {
+          waiter.completeError(StateError('Engine stopped'));
+        }
+      }
+    }
+    _metadataWaiters.clear();
+    for (final timer in _idleRelease.values) {
+      timer.cancel();
+    }
+    _idleRelease.clear();
     _stateSaveTimer?.cancel();
     _stateSaveTimer = null;
     for (final id in _stateDirectories.keys.toList()) {
@@ -561,6 +718,9 @@ class NativeTorrentEngine
     _retainedTorrents.clear();
     _addFlights.clear();
     _stateDirectories.clear();
+    _streamIds.clear();
+    _streamUrls.clear();
+    _sessionDirectory = null;
   }
 
   /// Verified availability snapshot for the selected file: whole-file

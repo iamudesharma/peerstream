@@ -1,3 +1,5 @@
+import 'empty_playback_cache.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media_forge_player/media_forge_player.dart';
 import 'package:peerstream/models/media_item.dart';
@@ -152,7 +154,10 @@ void main() {
 
   group('StreamingService.currentTorrentAvailability', () {
     test('null with no session', () {
-      final service = StreamingService(_AvailabilityEngine(null));
+      final service = StreamingService(
+        _AvailabilityEngine(null),
+        EmptyPlaybackCache(),
+      );
       expect(service.currentTorrentAvailability(), isNull);
     });
 
@@ -164,7 +169,10 @@ void main() {
         bufferedSecondsAhead: 12,
         bufferedPiecesAhead: 6,
       );
-      final service = StreamingService(_AvailabilityEngine(snapshot));
+      final service = StreamingService(
+        _AvailabilityEngine(snapshot),
+        EmptyPlaybackCache(),
+      );
       await service.start(_magnetSource());
       final actual = service.currentTorrentAvailability();
       expect(actual, isNotNull);
@@ -175,7 +183,7 @@ void main() {
     });
 
     test('null when the engine has no availability capability', () async {
-      final service = StreamingService(_PlainEngine());
+      final service = StreamingService(_PlainEngine(), EmptyPlaybackCache());
       await service.start(_magnetSource());
       expect(service.currentTorrentAvailability(), isNull);
       await service.dispose();
