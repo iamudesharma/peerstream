@@ -7,6 +7,7 @@ import 'package:peerstream/core/widgets/media_card.dart';
 import 'package:peerstream/core/widgets/section_header.dart';
 import 'package:peerstream/features/home/featured_media.dart';
 import 'package:peerstream/features/player/player_settings_menu.dart';
+import 'package:peerstream/features/player/player_control_menu.dart';
 import 'package:peerstream/models/media_item.dart';
 
 const _item = MediaItem(
@@ -113,19 +114,22 @@ void main() {
       MaterialApp(
         theme: buildPeerStreamTheme(),
         home: Scaffold(
-          body: Center(
-            child: StatefulBuilder(
-              builder: (context, setState) => PlayerSettingsMenu(
-                rate: rate,
-                onRateSelected: (value) => setState(() => rate = value),
-                fit: fit,
-                aspectRatio: null,
-                onFitSelected: (value) => setState(() => fit = value),
-                onAspectRatioSelected: (_) {},
-                onToggleMute: () {},
-                onShowShortcuts: () {},
-                onToggleStats: () => setState(() => stats = !stats),
-                statsEnabled: stats,
+          body: PlayerMenuOverlay(
+            child: Align(
+              alignment: Alignment.bottomRight,
+              child: StatefulBuilder(
+                builder: (context, setState) => PlayerSettingsMenu(
+                  rate: rate,
+                  onRateSelected: (value) => setState(() => rate = value),
+                  fit: fit,
+                  aspectRatio: null,
+                  onFitSelected: (value) => setState(() => fit = value),
+                  onAspectRatioSelected: (_) {},
+                  onToggleMute: () {},
+                  onShowShortcuts: () {},
+                  onToggleStats: () => setState(() => stats = !stats),
+                  statsEnabled: stats,
+                ),
               ),
             ),
           ),

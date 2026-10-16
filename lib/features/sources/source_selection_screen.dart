@@ -1,3 +1,5 @@
+import '../../services/experience/playback_queue.dart';
+
 import 'package:flutter/material.dart' hide Badge;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -26,12 +28,7 @@ TorrentSource? _bestPrefetchCandidate(List<TorrentSource> sources) {
       .where((s) => s.inputType != TorrentInputType.directUrl)
       .toList();
   if (torrents.isEmpty) return null;
-  torrents.sort((a, b) {
-    final aExact = (a.fileIndex != null || a.fileNameHint != null) ? 1 : 0;
-    final bExact = (b.fileIndex != null || b.fileNameHint != null) ? 1 : 0;
-    if (aExact != bExact) return bExact.compareTo(aExact);
-    return (b.seeds ?? -1).compareTo(a.seeds ?? -1);
-  });
+  torrents.sort(compareRankedSources);
   return torrents.first;
 }
 
@@ -51,10 +48,12 @@ int _compareSources(TorrentSource a, TorrentSource b, _SortMode sort) {
 class SourceSelectionScreen extends ConsumerStatefulWidget {
   const SourceSelectionScreen({
     required this.mediaRef,
+    this.resumeMs,
     this.season,
     this.episode,
     super.key,
   });
+  final int? resumeMs;
   final MediaRef mediaRef;
   final int? season;
   final int? episode;
@@ -362,7 +361,7 @@ class _ContextBar extends StatelessWidget {
               ButtonSegment(
                 value: _SortMode.seeds,
                 icon: Icon(Icons.arrow_downward, size: 14),
-                label: Text('Seeds'),
+                label: Text('Recommended'),
               ),
               ButtonSegment(
                 value: _SortMode.size,
@@ -481,13 +480,28 @@ class _IncrementalBanner extends StatelessWidget {
     final ready = providers
         .where((p) => p.status == ProviderStatus.ready)
         .length;
+    final errors = providers
+        .where((p) => p.status == ProviderStatus.error)
+        .length;
+    final fastest = providers
+        .where((p) => p.status == ProviderStatus.ready && p.elapsedMs != null)
+        .map((p) => p.elapsedMs!)
+        .fold<int?>(
+          null,
+          (best, value) => best == null || value < best ? value : best,
+        );
     final total = providers.length;
     final count = current.allSources.length;
     final complete = current.isComplete;
     if (total == 0) return const SizedBox.shrink();
-    final label = complete
-        ? 'All $total providers answered · $count sources'
-        : '$ready of $total providers answered · $count sources so far';
+    final label =
+        (complete
+            ? '$ready of $total providers responded · $count sources'
+            : '$ready of $total providers answered · $count sources so far') +
+        (errors > 0 ? ' · $errors unavailable' : '') +
+        (fastest == null
+            ? ''
+            : ' · fastest ${(fastest / 1000).toStringAsFixed(1)} s');
     return Container(
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -621,10 +635,15 @@ class _SourceCard extends ConsumerWidget {
     // Carry a saved position when history has one for this exact source,
     // mirroring Continue Watching. The player screens still apply
     // trivial/finished filtering, so this never forces a bad resume.
-    final resumeMs = resumeMsForSource(
-      source: source,
-      history: ref.read(watchHistoryProvider).value,
+    final explicitResume = int.tryParse(
+      GoRouterState.of(context).uri.queryParameters['resume'] ?? '',
     );
+    final resumeMs =
+        explicitResume ??
+        resumeMsForSource(
+          source: source,
+          history: ref.read(watchHistoryProvider).value,
+        );
     context.push(
       Uri(
         path: '/player/${source.content.routeKey}',
@@ -735,7 +754,8 @@ class _SourceCard extends ConsumerWidget {
             ),
           ],
           const SizedBox(height: DesignTokens.space3),
-          Row(
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               MouseRegion(
                 onEnter: (_) {
@@ -750,6 +770,62 @@ class _SourceCard extends ConsumerWidget {
                 ),
               ),
               const SizedBox(width: 8),
+              if (source.inputType != TorrentInputType.directUrl)
+                IconButton(
+                  tooltip: 'Save for offline',
+                  icon: const Icon(Icons.download_outlined),
+                  onPressed: () async {
+                    try {
+                      await ref
+                          .read(streamingServiceProvider)
+                          .saveOffline(source);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Offline save started. Manage it in Playback & Storage.',
+                            ),
+                          ),
+                        );
+                      }
+                    } catch (error) {
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Could not save: $error')),
+                        );
+                      }
+                    }
+                  },
+                ),
+              IconButton(
+                tooltip: 'Add to queue',
+                icon: const Icon(Icons.playlist_add),
+                onPressed: () async {
+                  try {
+                    await ref
+                        .read(playbackQueueProvider.notifier)
+                        .add(
+                          QueueItem(
+                            media: source.content,
+                            title: source.name,
+                            season: source.seasonNumber,
+                            episode: source.episodeNumber,
+                          ),
+                        );
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Added to queue')),
+                      );
+                    }
+                  } catch (_) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Could not add to queue')),
+                      );
+                    }
+                  }
+                },
+              ),
               IconButton(
                 tooltip: 'Copy link',
                 icon: const Icon(Icons.link_outlined),

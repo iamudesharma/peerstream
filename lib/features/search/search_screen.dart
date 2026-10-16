@@ -1,5 +1,8 @@
 import 'dart:async';
 
+import '../../services/experience/playback_experience.dart';
+import '../../models/media_item.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -24,6 +27,41 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _controller = TextEditingController();
   Timer? _debounce;
   String _query = '';
+  String _type = 'All';
+  @override
+  void initState() {
+    super.initState();
+    playbackExperience.load().then((_) {
+      if (!mounted || _controller.text.isNotEmpty) return;
+      final saved = playbackExperience.section('search');
+      setState(() {
+        _query = (saved['query'] as String? ?? '').substring(
+          0,
+          ((saved['query'] as String? ?? '').length).clamp(0, 200),
+        );
+        _controller.text = _query;
+        _type = ['All', 'Movies', 'Series'].contains(saved['type'])
+            ? saved['type'] as String
+            : 'All';
+      });
+    });
+  }
+
+  void _remember() {
+    unawaited(
+      playbackExperience
+          .update((data) => data['search'] = {'query': _query, 'type': _type})
+          .catchError((Object _) {}),
+    );
+  }
+
+  List<MediaItem> _filter(List<MediaItem> items) => items
+      .where(
+        (item) =>
+            _type == 'All' ||
+            item.type == (_type == 'Movies' ? MediaType.movie : MediaType.tv),
+      )
+      .toList();
 
   @override
   void dispose() {
@@ -35,7 +73,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   void _onChanged(String value) {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 400), () {
-      if (mounted) setState(() => _query = value.trim());
+      if (mounted) {
+        setState(() => _query = value.trim());
+        _remember();
+      }
     });
   }
 
@@ -43,6 +84,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     _debounce?.cancel();
     _controller.clear();
     setState(() => _query = '');
+    _remember();
   }
 
   @override
@@ -106,6 +148,25 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                           onPressed: _clear,
                         ),
                 ),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Wrap(
+                spacing: 8,
+                children: [
+                  for (final type in ['All', 'Movies', 'Series'])
+                    ChoiceChip(
+                      label: Text(type),
+                      selected: _type == type,
+                      onSelected: (_) {
+                        setState(() => _type = type);
+                        _remember();
+                      },
+                    ),
+                ],
               ),
             ),
           ),
@@ -179,29 +240,32 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   retryLabel: 'Retry search',
                 ),
               ),
-              data: (items) => items.isEmpty
-                  ? const SliverFillRemaining(
-                      child: AppEmpty(
-                        icon: Icons.search_off_outlined,
-                        title: 'No results found',
-                        hint: 'Check the spelling or try a different title.',
-                      ),
-                    )
-                  : SliverPadding(
-                      padding: const EdgeInsets.all(DesignTokens.pageGutter),
-                      sliver: SliverGrid.builder(
-                        gridDelegate:
-                            const SliverGridDelegateWithMaxCrossAxisExtent(
-                              maxCrossAxisExtent: DesignTokens.gridMaxExtent,
-                              mainAxisExtent: 350,
-                              crossAxisSpacing: 12,
-                              mainAxisSpacing: 16,
-                            ),
-                        itemCount: items.length,
-                        itemBuilder: (_, index) =>
-                            MediaCard(item: items[index]),
-                      ),
-                    ),
+              data: (results) {
+                final items = _filter(results);
+                return items.isEmpty
+                    ? const SliverFillRemaining(
+                        child: AppEmpty(
+                          icon: Icons.search_off_outlined,
+                          title: 'No results found',
+                          hint: 'Check the spelling or try a different title.',
+                        ),
+                      )
+                    : SliverPadding(
+                        padding: const EdgeInsets.all(DesignTokens.pageGutter),
+                        sliver: SliverGrid.builder(
+                          gridDelegate:
+                              const SliverGridDelegateWithMaxCrossAxisExtent(
+                                maxCrossAxisExtent: DesignTokens.gridMaxExtent,
+                                mainAxisExtent: 350,
+                                crossAxisSpacing: 12,
+                                mainAxisSpacing: 16,
+                              ),
+                          itemCount: items.length,
+                          itemBuilder: (_, index) =>
+                              MediaCard(item: items[index]),
+                        ),
+                      );
+              },
             ),
         ],
       ),
