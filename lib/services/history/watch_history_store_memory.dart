@@ -1,3 +1,5 @@
+import '../storage/app_storage_memory.dart';
+
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -8,7 +10,7 @@ import '../../models/watch_progress.dart';
 List<WatchEntry> _entries = const [];
 bool _webLoaded = false;
 
-Future<List<WatchEntry>> readWatchHistory() async {
+Future<List<WatchEntry>> readWatchHistory({AppStorage? storage}) async {
   if (kIsWeb && !_webLoaded) {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -33,7 +35,10 @@ Future<List<WatchEntry>> readWatchHistory() async {
   return List.of(_entries);
 }
 
-Future<void> writeWatchHistory(List<WatchEntry> entries) async {
+Future<void> writeWatchHistory(
+  List<WatchEntry> entries, {
+  AppStorage? storage,
+}) async {
   _entries = normalizeWatchHistory(entries);
   if (kIsWeb) {
     try {

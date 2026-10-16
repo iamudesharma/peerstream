@@ -1,4 +1,7 @@
-import 'package:shared_preferences/shared_preferences.dart';
+import 'settings_values.dart';
+import '../torrent/torrent_engine.dart';
+import '../storage/storage_location.dart';
+
 import 'package:media_forge_player/media_forge_player.dart'
     show VideoEnhancementMode;
 
@@ -13,6 +16,8 @@ class AppSettings {
     this.streamingCatalogsEnabled = true,
     this.useMediaForgePlayer = false,
     this.mediaForgeVideoEnhancementMode = VideoEnhancementMode.off,
+    this.resourceProfile = PlaybackResourceProfile.balanced,
+    this.autoplay = false,
     this.playerVolume = 100,
     this.playerRate = 1,
     this.subtitleTextScale = 1,
@@ -33,6 +38,8 @@ class AppSettings {
   final VideoEnhancementMode mediaForgeVideoEnhancementMode;
 
   /// Last player volume (0–100), restored when the player opens.
+  final PlaybackResourceProfile resourceProfile;
+  final bool autoplay;
   final double playerVolume;
 
   /// Last playback speed, restored when the player opens.
@@ -106,6 +113,8 @@ class AppSettings {
     bool? streamingCatalogsEnabled,
     bool? useMediaForgePlayer,
     VideoEnhancementMode? mediaForgeVideoEnhancementMode,
+    PlaybackResourceProfile? resourceProfile,
+    bool? autoplay,
     double? playerVolume,
     double? playerRate,
     double? subtitleTextScale,
@@ -121,6 +130,8 @@ class AppSettings {
     useMediaForgePlayer: useMediaForgePlayer ?? this.useMediaForgePlayer,
     mediaForgeVideoEnhancementMode:
         mediaForgeVideoEnhancementMode ?? this.mediaForgeVideoEnhancementMode,
+    resourceProfile: resourceProfile ?? this.resourceProfile,
+    autoplay: autoplay ?? this.autoplay,
     playerVolume: playerVolume ?? this.playerVolume,
     playerRate: playerRate ?? this.playerRate,
     subtitleTextScale: subtitleTextScale ?? this.subtitleTextScale,
@@ -149,62 +160,50 @@ SubtitleBackgroundStyle _parseSubtitleBackground(String? value) {
 
 Future<AppSettings> readAppSettings() async {
   try {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = await readSettingsValues();
     return AppSettings(
-      preferredSubtitleLanguage: prefs.getString(_kSubtitleLanguage),
-      preferredAudioLanguage: prefs.getString(_kAudioLanguage),
-      autoLoadSubtitles: prefs.getBool(_kAutoLoadSubtitles) ?? false,
+      preferredSubtitleLanguage: (prefs[_kSubtitleLanguage] as String?),
+      preferredAudioLanguage: (prefs[_kAudioLanguage] as String?),
+      autoLoadSubtitles: (prefs[_kAutoLoadSubtitles] as bool?) ?? false,
       streamingCatalogsEnabled:
-          prefs.getBool(_kStreamingCatalogsEnabled) ?? true,
-      useMediaForgePlayer: prefs.getBool(_kUseMediaForgePlayer) ?? false,
+          (prefs[_kStreamingCatalogsEnabled] as bool?) ?? true,
+      useMediaForgePlayer: (prefs[_kUseMediaForgePlayer] as bool?) ?? false,
       mediaForgeVideoEnhancementMode: VideoEnhancementMode.fromWireName(
-        prefs.getString(_kMediaForgeVideoEnhancementMode) ??
+        (prefs[_kMediaForgeVideoEnhancementMode] as String?) ??
             VideoEnhancementMode.off.wireName,
       ),
-      playerVolume: prefs.getDouble(_kPlayerVolume) ?? 100,
-      playerRate: prefs.getDouble(_kPlayerRate) ?? 1,
-      subtitleTextScale: prefs.getDouble(_kSubtitleTextScale) ?? 1,
+      resourceProfile: prefs['settings.resource_profile'] == 'lowMemory'
+          ? PlaybackResourceProfile.lowMemory
+          : PlaybackResourceProfile.balanced,
+      autoplay: prefs['settings.autoplay'] == true,
+      playerVolume: (prefs[_kPlayerVolume] as num?)?.toDouble() ?? 100,
+      playerRate: (prefs[_kPlayerRate] as num?)?.toDouble() ?? 1,
+      subtitleTextScale: (prefs[_kSubtitleTextScale] as num?)?.toDouble() ?? 1,
       subtitleBackground: _parseSubtitleBackground(
-        prefs.getString(_kSubtitleBackground),
+        (prefs[_kSubtitleBackground] as String?),
       ),
     );
+  } on StorageUnavailableException {
+    rethrow;
   } catch (_) {
     return const AppSettings();
   }
 }
 
 Future<void> writeAppSettings(AppSettings settings) async {
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    if (settings.preferredSubtitleLanguage != null) {
-      await prefs.setString(
-        _kSubtitleLanguage,
-        settings.preferredSubtitleLanguage!,
-      );
-    } else {
-      await prefs.remove(_kSubtitleLanguage);
-    }
-    if (settings.preferredAudioLanguage != null) {
-      await prefs.setString(_kAudioLanguage, settings.preferredAudioLanguage!);
-    } else {
-      await prefs.remove(_kAudioLanguage);
-    }
-    await prefs.setBool(_kAutoLoadSubtitles, settings.autoLoadSubtitles);
-    await prefs.setBool(
-      _kStreamingCatalogsEnabled,
-      settings.streamingCatalogsEnabled,
-    );
-    await prefs.setBool(_kUseMediaForgePlayer, settings.useMediaForgePlayer);
-    await prefs.setString(
-      _kMediaForgeVideoEnhancementMode,
-      settings.mediaForgeVideoEnhancementMode.wireName,
-    );
-    await prefs.setDouble(_kPlayerVolume, settings.playerVolume);
-    await prefs.setDouble(_kPlayerRate, settings.playerRate);
-    await prefs.setDouble(_kSubtitleTextScale, settings.subtitleTextScale);
-    await prefs.setString(
-      _kSubtitleBackground,
-      settings.subtitleBackground.name,
-    );
-  } catch (_) {}
+  await writeSettingsValues({
+    _kSubtitleLanguage: settings.preferredSubtitleLanguage,
+    _kAudioLanguage: settings.preferredAudioLanguage,
+    _kAutoLoadSubtitles: settings.autoLoadSubtitles,
+    _kStreamingCatalogsEnabled: settings.streamingCatalogsEnabled,
+    _kUseMediaForgePlayer: settings.useMediaForgePlayer,
+    _kMediaForgeVideoEnhancementMode:
+        settings.mediaForgeVideoEnhancementMode.wireName,
+    'settings.resource_profile': settings.resourceProfile.name,
+    'settings.autoplay': settings.autoplay,
+    _kPlayerVolume: settings.playerVolume,
+    _kPlayerRate: settings.playerRate,
+    _kSubtitleTextScale: settings.subtitleTextScale,
+    _kSubtitleBackground: settings.subtitleBackground.name,
+  });
 }

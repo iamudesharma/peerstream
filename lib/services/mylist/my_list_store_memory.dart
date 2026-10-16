@@ -1,3 +1,5 @@
+import '../storage/app_storage_memory.dart';
+
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -8,7 +10,7 @@ import '../../models/saved_item.dart';
 List<SavedItem> _items = const [];
 bool _webLoaded = false;
 
-Future<List<SavedItem>> readMyList() async {
+Future<List<SavedItem>> readMyList({AppStorage? storage}) async {
   if (kIsWeb && !_webLoaded) {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -33,7 +35,7 @@ Future<List<SavedItem>> readMyList() async {
   return List.of(_items);
 }
 
-Future<void> writeMyList(List<SavedItem> items) async {
+Future<void> writeMyList(List<SavedItem> items, {AppStorage? storage}) async {
   _items = normalizeMyList(items);
   if (kIsWeb) {
     try {

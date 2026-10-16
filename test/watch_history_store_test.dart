@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:peerstream/services/history/watch_history_store.dart';
+import 'package:peerstream/services/history/watch_history_store_memory.dart';
 
 void main() {
   test('memory store round trip normalizes entries', () async {
